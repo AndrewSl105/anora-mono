@@ -58,20 +58,8 @@ E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
 
 ## Deployment
 
-`release.yml` on push to `main`: builds `ghcr.io/andrewsl105/anora-client:<sha>` and `:latest`, then SSHes to the server and runs `docker compose -f docker-compose.deploy.yml pull anora-client && … up -d anora-client` in `/srv/anora`. It uses the same secrets as Anora Runner: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY` (environment `production`).
+The client runs on the same server and domain as Anora Runner, from Anora Runner's `deploy/docker-compose.deploy.yml` (service `anora-client`), behind Caddy, which sends `/api`, `/webhooks` and `/healthz` to the backend and everything else here. Server setup, `.env`, secrets and the first start are described once, in the [anora-runner README](../anora-runner/README.md#server-setup).
 
-**One-time server changes (not done by this repo):**
+`release.yml` on push to `main`: builds `ghcr.io/andrewsl105/anora-client:<sha>` and `:latest`, then SSHes to the server and, under the shared `/srv/anora/.deploy.lock`, runs `docker compose -f docker-compose.deploy.yml pull anora-client` and `up -d --no-deps anora-client` in `/srv/anora`, so only this service restarts. It uses the same secrets as Anora Runner in its own `production` environment: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`.
 
-1. Add the service to `/srv/anora/docker-compose.deploy.yml` (and to `deploy/docker-compose.deploy.yml` in anora-runner):
-
-   ```yaml
-     anora-client:
-       image: ghcr.io/andrewsl105/anora-client:${CLIENT_TAG:-latest}
-       container_name: anora-client
-       restart: unless-stopped
-       networks: [proxy]
-   ```
-
-2. Reverse proxy on the domain: `/api/*` (with WebSocket upgrade for `/api/v1/ws`), `/webhooks/*` and `/healthz` → `anora:8080`; everything else → `anora-client:80`.
-
-The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `frame-ancestors` for Telegram Web, no `X-Frame-Options`). See `nginx/`.
+The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
