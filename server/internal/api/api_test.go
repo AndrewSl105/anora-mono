@@ -147,6 +147,25 @@ func TestAPIFlow(t *testing.T) {
 		t.Fatalf("events page 2: %v", evs2)
 	}
 
+	// Backward pagination: before_id=0 starts at the newest event.
+	_, all := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events", nil)
+	allItems := all["items"].([]any)
+	code, back := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events?before_id=0&limit=1", nil)
+	backItems := back["items"].([]any)
+	if code != 200 || len(backItems) != 1 || backItems[0].(map[string]any)["id"] != allItems[len(allItems)-1].(map[string]any)["id"] {
+		t.Fatalf("events before_id=0: %v", back)
+	}
+	if len(allItems) > 1 {
+		code, back2 := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events?before_id="+back["next_cursor"].(string), nil)
+		items := back2["items"].([]any)
+		if code != 200 || len(items) != len(allItems)-1 || items[0].(map[string]any)["id"] != allItems[len(allItems)-2].(map[string]any)["id"] {
+			t.Fatalf("events before_id page 2: %v", back2)
+		}
+	}
+	if code, _ := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events?before_id=5&after_id=1", nil); code != 400 {
+		t.Fatalf("before_id with after_id: %d", code)
+	}
+
 	if code, _ := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil); code != 200 {
 		t.Fatal("cancel")
 	}

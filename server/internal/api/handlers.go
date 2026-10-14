@@ -259,13 +259,29 @@ func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	after := r.URL.Query().Get("after_id")
+	qs := r.URL.Query()
+	after := qs.Get("after_id")
 	if after == "" {
-		after = r.URL.Query().Get("cursor")
+		after = qs.Get("cursor")
 	}
-	afterID, _ := strconv.ParseInt(after, 10, 64)
 	limit := limitParam(r)
-	items, err := s.Store.ListEvents(r.Context(), id, afterID, limit+1)
+	var items []*store.Event
+	var err error
+	if qs.Has("before_id") {
+		if after != "" {
+			writeError(w, http.StatusBadRequest, "invalid", "before_id cannot be combined with after_id or cursor")
+			return
+		}
+		beforeID, perr := strconv.ParseInt(qs.Get("before_id"), 10, 64)
+		if perr != nil || beforeID < 0 {
+			writeError(w, http.StatusBadRequest, "invalid", "bad before_id")
+			return
+		}
+		items, err = s.Store.ListEventsBefore(r.Context(), id, beforeID, limit+1)
+	} else {
+		afterID, _ := strconv.ParseInt(after, 10, 64)
+		items, err = s.Store.ListEvents(r.Context(), id, afterID, limit+1)
+	}
 	if err != nil {
 		writeErr(w, r, err)
 		return

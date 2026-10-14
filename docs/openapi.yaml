@@ -298,11 +298,17 @@ paths:
     get:
       operationId: listTaskEvents
       tags: [tasks]
-      summary: Task timeline, oldest first
+      summary: Task timeline, oldest first (or newest first with before_id)
+      description: |
+        Forward (default): events after `after_id`, oldest first.
+        Backward: events before `before_id`, newest first; `before_id=0`
+        starts at the newest event. In backward mode pass `next_cursor` back
+        as `before_id`. `before_id` cannot be combined with `after_id`/`cursor` (400).
       parameters:
         - $ref: '#/components/parameters/TaskID'
         - { name: after_id, in: query, schema: { type: integer, format: int64 }, description: Last event id the client has }
         - { name: cursor, in: query, schema: { type: string }, description: Alias of after_id }
+        - { name: before_id, in: query, schema: { type: integer, format: int64, minimum: 0 }, description: 'Page backwards from this id (exclusive), newest first; 0 = from the newest event' }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -315,6 +321,7 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: '#/components/schemas/Event' } }
                   next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
 
   /api/v1/tasks/{id}/diff:

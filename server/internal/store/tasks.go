@@ -415,6 +415,21 @@ func (s *Store) ListEvents(ctx context.Context, taskID, afterID int64, limit int
 	if err != nil {
 		return nil, err
 	}
+	return collectEvents(rows)
+}
+
+// ListEventsBefore pages backwards: events with id < beforeID (0 = from the
+// newest), newest first.
+func (s *Store) ListEventsBefore(ctx context.Context, taskID, beforeID int64, limit int) ([]*Event, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT id, task_id, run_id, seq, type, payload, created_at FROM events
+		WHERE task_id = $1 AND ($2 = 0 OR id < $2) AND type <> 'heartbeat' ORDER BY id DESC LIMIT $3`, taskID, beforeID, limit)
+	if err != nil {
+		return nil, err
+	}
+	return collectEvents(rows)
+}
+
+func collectEvents(rows pgx.Rows) ([]*Event, error) {
 	defer rows.Close()
 	out := []*Event{}
 	for rows.Next() {

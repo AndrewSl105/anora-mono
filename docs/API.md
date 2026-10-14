@@ -20,7 +20,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
   | 503 | `github_disabled`, `telegram_disabled` | integration not configured |
   | 500 | `internal` | bug; details are in the server log |
 
-- **Pagination**: list endpoints take `?limit=` (default 50, max 200) and `?cursor=`; responses are `{"items": [...], "next_cursor": "..."}`. An empty `next_cursor` means the last page. Pass it back unchanged.
+- **Pagination**: list endpoints take `?limit=` (default 50, max 200) and `?cursor=`; responses are `{"items": [...], "next_cursor": "..."}`. An empty `next_cursor` means the last page. Pass it back unchanged (for `GET /tasks/{id}/events?before_id=`, pass it back as `before_id`).
 - Times are RFC 3339. Ids: projects use a slug (`vatary`); everything else is an integer.
 
 ## Auth
@@ -103,6 +103,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `POST /tasks` `{project_id, prompt, repository_id?, title?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars) |
 | `GET /tasks/{id}` | task view (see above) |
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
+| `GET /tasks/{id}/events?before_id=` | timeline backwards, **newest first**: events older than `before_id`; `before_id=0` starts at the newest event. Pass `next_cursor` back as `before_id` (not as `cursor`, which means `after_id`). Combining `before_id` with `after_id`/`cursor` is `400 invalid` |
 | `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
 | `POST /tasks/{id}/message` `{text}` | `running`/`waiting_input`: injected into the live session (a run handles one prompt, so text that arrives after Claude finished its turn is lost; resend it as a follow-up once the task leaves `running`). `paused`/`pr_open`/`completed`: starts a new run on the same branch with the saved session. Otherwise `409` |
