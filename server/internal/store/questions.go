@@ -88,3 +88,11 @@ func (s *Store) QuestionByTelegramMessage(ctx context.Context, msgID int64) (*Qu
 	qn, err := scanQuestion(s.Pool.QueryRow(ctx, `SELECT `+questionCols+` FROM questions WHERE telegram_message_id = $1`, msgID))
 	return qn, notFound(err)
 }
+
+// AnsweredQuestionOfRun is the question of a run that was answered (used to
+// replay the answer into the resumed run).
+func (s *Store) AnsweredQuestionOfRun(ctx context.Context, runID int64) (*Question, error) {
+	qn, err := scanQuestion(s.Pool.QueryRow(ctx, `SELECT `+questionCols+` FROM questions
+		WHERE run_id = $1 AND answer IS NOT NULL AND answered_via <> 'expired' ORDER BY answered_at DESC LIMIT 1`, runID))
+	return qn, notFound(err)
+}

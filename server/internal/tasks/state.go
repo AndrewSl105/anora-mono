@@ -18,8 +18,8 @@ const (
 var transitions = map[string][]string{
 	Queued:       {Preparing, Cancelled, Failed},
 	Preparing:    {Running, Failed, Cancelled, Queued},
-	Running:      {WaitingInput, Paused, Pushing, Completed, Failed, Cancelled},
-	WaitingInput: {Running, Paused, Pushing, Completed, Failed, Cancelled},
+	Running:      {WaitingInput, Paused, Pushing, PROpen, Completed, Failed, Cancelled},
+	WaitingInput: {Running, Paused, Pushing, PROpen, Completed, Failed, Cancelled},
 	Paused:       {Queued, Cancelled, Failed},
 	Pushing:      {PROpen, Completed, Failed, Cancelled},
 	PROpen:       {Queued, Completed, Failed, Cancelled},

@@ -107,7 +107,11 @@ func (s *Store) UpdateProject(ctx context.Context, id string, f ProjectFields) (
 		add("instructions", *f.Instructions)
 	}
 	if f.Services != nil {
-		add("services", *f.Services)
+		svcs := *f.Services
+		if svcs == nil {
+			svcs = []string{}
+		}
+		add("services", svcs)
 	}
 	if f.Env != nil {
 		b, _ := json.Marshal(*f.Env)

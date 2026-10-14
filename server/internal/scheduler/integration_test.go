@@ -1,0 +1,297 @@
+package scheduler_test
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/andrewsl105/anora-runner/internal/config"
+	"github.com/andrewsl105/anora-runner/internal/events"
+	"github.com/andrewsl105/anora-runner/internal/projects"
+	"github.com/andrewsl105/anora-runner/internal/runnermgr"
+	"github.com/andrewsl105/anora-runner/internal/scheduler"
+	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora-runner/internal/testutil"
+	"github.com/andrewsl105/anora-runner/internal/workspace"
+)
+
+// env is a running scheduler against real Docker with the fake runner.
+type env struct {
+	t      *testing.T
+	st     *store.Store
+	svc    *tasks.Service
+	sched  *scheduler.Scheduler
+	docker *runnermgr.Manager
+	ws     *workspace.Manager
+	bare   string
+	cancel context.CancelFunc
+	done   chan struct{}
+}
+
+func runnerImage() string {
+	if img := os.Getenv("ANORA_TEST_RUNNER_IMAGE"); img != "" {
+		return img
+	}
+	return "anora-agent:dev"
+}
+
+func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env {
+	t.Helper()
+	st := testutil.DB(t)
+	dc, err := runnermgr.NewDockerClient("")
+	if err != nil {
+		t.Skipf("docker client: %v", err)
+	}
+	docker := &runnermgr.Manager{Docker: dc, SidecarMemory: "256m"}
+	ctx := context.Background()
+	if err := docker.Ping(ctx); err != nil {
+		t.Skipf("docker unavailable: %v", err)
+	}
+	if err := docker.HasImage(ctx, runnerImage()); err != nil {
+		t.Skipf("runner image missing: %v", err)
+	}
+
+	bare := newBareRepo(t, "dev")
+	ws := &workspace.Manager{Dir: filepath.Join(t.TempDir(), "workspaces"), RemoteURL: func(string) string { return bare }}
+	cfg := &config.Config{
+		RunnerImage: runnerImage(), RunnerFake: true, MaxConcurrentTasks: 2,
+		RunnerMemory: "512m", RunnerCPUs: 1, SidecarMemory: "256m",
+		DefaultMaxTurns: 10, DefaultMaxBudgetUSD: 1, DefaultMaxDuration: 2 * time.Minute,
+		QuestionTimeout: questionTimeout,
+	}
+	hub := events.NewHub()
+	svc := &tasks.Service{Store: st, Hub: hub}
+	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws})
+	svc.Executor = sched
+
+	ps := &projects.Service{Store: st}
+	name := "Demo"
+	if _, err := ps.Create(ctx, projects.CreateInput{ID: "demo", ProjectFields: store.ProjectFields{Name: &name, Services: &services}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ps.AddRepository(ctx, "demo", projects.RepoInput{FullName: "o/demo", InstallationID: 1, BaseBranch: "dev"}); err != nil {
+		t.Fatal(err)
+	}
+
+	runCtx, cancel := context.WithCancel(ctx)
+	e := &env{t: t, st: st, svc: svc, sched: sched, docker: docker, ws: ws, bare: bare, cancel: cancel, done: make(chan struct{})}
+	go func() { _ = sched.Run(runCtx); close(e.done) }()
+	t.Cleanup(func() {
+		cancel()
+		<-e.done
+		for id := int64(1); id <= 5; id++ {
+			_ = docker.RemoveAll(context.Background(), id)
+			_ = docker.RemoveVolume(context.Background(), id)
+		}
+	})
+	return e
+}
+
+func (e *env) waitStatus(id int64, want string, timeout time.Duration) *store.Task {
+	e.t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		t, err := e.st.GetTask(context.Background(), id)
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		if t.Status == want {
+			return t
+		}
+		if tasks.IsTerminal(t.Status) && !tasks.IsTerminal(want) || time.Now().After(deadline) {
+			e.t.Fatalf("task %d: status %s (reason %v), want %s", id, t.Status, deref(t.StatusReason), want)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+}
+
+func deref(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
+}
+
+func (e *env) eventTypes(id int64) []string {
+	evs, err := e.st.ListEvents(context.Background(), id, 0, 500)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	var out []string
+	for _, ev := range evs {
+		out = append(out, ev.Type)
+	}
+	return out
+}
+
+func TestFakeRunQueuedToCommit(t *testing.T) {
+	e := newEnv(t, time.Minute, []string{"redis"})
+	ctx := context.Background()
+	v, err := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Say hello", Source: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+
+	view, _ := e.svc.Get(ctx, v.ID)
+	if view.OpenQuestion == nil || len(view.OpenQuestion.Options) != 2 {
+		t.Fatalf("open question: %+v", view.OpenQuestion)
+	}
+	if _, err := e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "again", "web"); err != store.ErrConflict {
+		t.Fatalf("second answer: %v", err)
+	}
+	done := e.waitStatus(v.ID, tasks.Completed, time.Minute)
+	if !strings.Contains(deref(done.StatusReason), "committed locally") {
+		t.Fatalf("reason %q", deref(done.StatusReason))
+	}
+
+	// The commit is on the task branch in the workspace.
+	wsDir := e.ws.Path(v.ID)
+	out, err := exec.Command("git", "-C", wsDir, "log", "-1", "--format=%an|%s|%D").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(string(out), "anora[bot]|Say hello|") || !strings.Contains(string(out), "agent/1-say-hello") {
+		t.Fatalf("commit: %s", out)
+	}
+	if b, _ := os.ReadFile(filepath.Join(wsDir, "ANORA_FAKE.md")); !strings.HasPrefix(string(b), "# hello") {
+		t.Fatalf("file: %q", b)
+	}
+
+	types := strings.Join(e.eventTypes(v.ID), ",")
+	for _, want := range []string{"run_started", "started", "question", "answer", "committed", "done", "run_finished"} {
+		if !strings.Contains(types, want) {
+			t.Errorf("missing event %s in %s", want, types)
+		}
+	}
+	run, _ := e.st.LatestRun(ctx, v.ID)
+	if run.ExitCode == nil || *run.ExitCode != 0 || run.LastSeq == 0 {
+		t.Fatalf("run: %+v", run)
+	}
+	final, _ := e.st.GetTask(ctx, v.ID)
+	if final.CostUSDTotal != 0.01 || final.SessionID == nil {
+		t.Fatalf("cost %v session %v", final.CostUSDTotal, final.SessionID)
+	}
+	// Runner, sidecar and network are gone; the state volume stays until cleanup.
+	ids, _ := e.docker.TaskIDsWithResources(ctx)
+	if ids[v.ID] {
+		out, _ := exec.Command("sh", "-c", "docker ps -a --filter label=anora.task_id --format '{{.Names}} {{.Status}}'; docker network ls --filter label=anora.task_id --format '{{.Name}}'").CombinedOutput()
+		t.Fatalf("task resources left behind:\n%s", out)
+	}
+}
+
+func TestFakeRunPauseAndResume(t *testing.T) {
+	e := newEnv(t, 2*time.Second, nil)
+	ctx := context.Background()
+	v, err := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Pause me", Source: "api"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.Paused, 2*time.Minute)
+	view, _ := e.svc.Get(ctx, v.ID)
+	if view.OpenQuestion == nil {
+		t.Fatal("paused task should keep its open question")
+	}
+	if _, err := e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hi", "telegram"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.Completed, 2*time.Minute)
+	run, _ := e.st.LatestRun(ctx, v.ID)
+	if run.Kind != tasks.RunResume || !strings.Contains(run.Input, "hi") {
+		t.Fatalf("resume run: %+v", run)
+	}
+	b, _ := os.ReadFile(filepath.Join(e.ws.Path(v.ID), "ANORA_FAKE.md"))
+	if !strings.HasPrefix(string(b), "# hi") {
+		t.Fatalf("file %q", b)
+	}
+	evs, _ := e.st.ListEvents(ctx, v.ID, 0, 500)
+	var seqs []int64
+	for _, ev := range evs {
+		if ev.Seq != nil {
+			seqs = append(seqs, *ev.Seq)
+		}
+	}
+	for i := 1; i < len(seqs); i++ {
+		if seqs[i] <= seqs[i-1] {
+			t.Fatalf("seq not monotonic across runs: %v", seqs)
+		}
+	}
+}
+
+func TestFakeRunCancelAndFollowUp(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Cancel me", Source: "api"})
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	if _, err := e.svc.Cancel(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.Cancelled, time.Second)
+	deadline := time.Now().Add(time.Minute)
+	for {
+		run, _ := e.st.LatestRun(ctx, v.ID)
+		if run.ExitCode != nil {
+			if *run.ExitCode != runnermgr.ExitCancelled {
+				t.Fatalf("exit code %d", *run.ExitCode)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("runner did not exit after cancel")
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	if _, err := e.svc.Message(ctx, v.ID, "more"); err == nil {
+		t.Fatal("message to a cancelled task must be rejected")
+	}
+
+	// Retry runs again from scratch; answering completes it. A follow-up
+	// message then starts another run on the same branch.
+	if _, err := e.svc.Retry(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	view, _ := e.svc.Get(ctx, v.ID)
+	_, _ = e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web")
+	e.waitStatus(v.ID, tasks.Completed, time.Minute)
+	if _, err := e.svc.Message(ctx, v.ID, "Also add a footer"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	view, _ = e.svc.Get(ctx, v.ID)
+	_, _ = e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hi", "web")
+	e.waitStatus(v.ID, tasks.Completed, time.Minute)
+	out, _ := exec.Command("git", "-C", e.ws.Path(v.ID), "log", "--format=%s", "dev..HEAD").Output()
+	if !strings.Contains(string(out), "Follow-up: Also add a footer") {
+		t.Fatalf("follow-up commit missing: %s", out)
+	}
+}
+
+func newBareRepo(t *testing.T, base string) string {
+	t.Helper()
+	dir := t.TempDir()
+	bare := filepath.Join(dir, "remote.git")
+	work := filepath.Join(dir, "seed")
+	run := func(d string, args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = d
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, out)
+		}
+	}
+	run(dir, "init", "-q", "--bare", "-b", base, bare)
+	run(dir, "init", "-q", "-b", base, work)
+	_ = os.WriteFile(filepath.Join(work, "README.md"), []byte("hi\n"), 0o644)
+	run(work, "add", "-A")
+	run(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
+	run(work, "push", "-q", bare, base)
+	return bare
+}

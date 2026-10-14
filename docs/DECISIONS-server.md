@@ -26,3 +26,13 @@ Deviations from docs/SPEC.md, one line of reasoning each.
 - Runner relies on the SDK's `maxBudgetUsd` for the budget limit instead of comparing reported cost, because the reported total of a resumed session includes earlier runs.
 - Runner `settingSources: ["project"]` loads the repo's `CLAUDE.md` and `.claude/settings.json`; user/local settings are not loaded.
 - The Claude Code binary comes from the SDK's per-platform optional dependency (`@anthropic-ai/claude-agent-sdk-linux-<arch>`), installed by `npm ci` in the build stage for the target platform; it runs on the Playwright noble image (verified `2.1.299` on arm64).
+- Startup reconciliation lives in `internal/scheduler/reconcile.go` rather than `internal/maintenance/`, because it shares the scheduler's run supervision (attach, stream, exit handling); `maintenance/` keeps retention and cleanup.
+- Heartbeat events are not persisted (they would dominate the events table); everything else from the runner is stored verbatim.
+- On re-attach the backend attaches first and replays `events.jsonl` second; duplicates are dropped by `UNIQUE (run_id, seq)`.
+- Runner containers are named `anora-agent-<task>` and run as `1000:1000`; sidecars get the network alias `postgres` / `redis` and are reached as `DATABASE_URL=postgres://app:<random>@postgres:5432/app` and `REDIS_URL=redis://redis:6379/0`. The Postgres password is recovered from the sidecar's env when it is reused.
+- `waiting_input` holds a scheduler slot like `running`, because its container is alive.
+- A resumed run (after a question timeout) gets the answer restated in its prompt, and the backend also writes an `answer` for the original question id so the fake runner's scripted re-ask is satisfied.
+- Exit 4 (limit) with new commits still pushes and opens/updates the PR (status `pr_open`, reason = the limit message); with nothing to push the task fails with the limit message.
+- Without a GitHub App (`Publisher` nil) a run with commits ends `completed` with reason "committed locally"; this is how phase 3 and local development work.
+- Cleanup (container/network removal) happens before the terminal status is written, so observers never see a finished task with live containers.
+- A run's own cost is the runner's cumulative session cost minus what earlier runs of the same session (since the last `initial`/`retry`) already recorded.

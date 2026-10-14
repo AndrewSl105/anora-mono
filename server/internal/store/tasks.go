@@ -441,3 +441,28 @@ func (s *Store) LastEvents(ctx context.Context, taskID int64, types []string, n 
 	}
 	return out, rows.Err()
 }
+
+// SessionBaselineCost is the cost already reported by earlier runs of the
+// same Claude session: runs since the last fresh (initial/retry) run. The
+// runner reports cumulative session cost, so a resumed run's own cost is
+// its reported total minus this baseline.
+func (s *Store) SessionBaselineCost(ctx context.Context, taskID, runID int64) (float64, error) {
+	var c float64
+	err := s.Pool.QueryRow(ctx, `SELECT coalesce(sum(cost_usd), 0)::float8 FROM runs
+		WHERE task_id = $1 AND id < $2 AND started_at IS NOT NULL
+		AND id >= coalesce((SELECT max(id) FROM runs WHERE task_id = $1 AND id < $2 AND kind IN ('initial', 'retry')), 0)`,
+		taskID, runID).Scan(&c)
+	return c, err
+}
+
+// ResetRunStart makes a run pending again (it never got a container).
+func (s *Store) ResetRunStart(ctx context.Context, runID int64) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE runs SET started_at = NULL, container_id = NULL WHERE id = $1 AND finished_at IS NULL`, runID)
+	return err
+}
+
+// PreviousRun is the last started run before runID.
+func (s *Store) PreviousRun(ctx context.Context, taskID, runID int64) (*Run, error) {
+	r, err := scanRun(s.Pool.QueryRow(ctx, `SELECT `+runCols+` FROM runs WHERE task_id = $1 AND id < $2 AND started_at IS NOT NULL ORDER BY id DESC LIMIT 1`, taskID, runID))
+	return r, notFound(err)
+}
