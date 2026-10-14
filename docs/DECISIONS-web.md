@@ -10,7 +10,8 @@ One line each. "Backend ask" marks something Anora Runner should add.
 - **No active-task count on Project.** Projects screen counts tasks from the Active list client-side (first 50 per page loaded).
 - **Only `latest_run` in the API.** The Info tab's runs list is rebuilt from `run_started` / `run_finished` / `usage` events; per-run cost = session total minus the previous run's total (PROTOCOL.md). *Backend ask:* `GET /tasks/{id}/runs`.
 - **Repositories can't be edited.** There is no PATCH for a repository, so base branch and default flag are set only when adding; change them by removing and re-adding. *Backend ask:* `PATCH /projects/{id}/repositories/{repoId}`.
-- **Event payloads are untyped** (`payload: object` in OpenAPI). `src/api/events.ts` hand-writes the payload union from PROTOCOL.md and API.md — the one exception to "never hand-write API types". *Backend ask:* typed payload schemas.
+- ~~Event payloads are untyped~~ — resolved: OpenAPI `Event` is now a discriminated `oneOf`; `src/api/events.ts` only derives `EventOf<K>`/`PayloadOf<K>` from the generated union, and `buildTimeline` narrows with `switch (event.type)`.
+- **One cast at the events response boundary.** openapi-fetch 0.17 (`openapi-typescript-helpers` 0.1.0, both latest) drops properties typed exactly `null` in its `Readable<T>` response transform (`NonNullable<null>` is `never`), so backend events lose `seq: null`; `asEvents()` in `hooks.ts` restores the generated `Event` type. The contract stays as is.
 - **No OpenAPI examples.** MSW mocks (`src/mocks/`) use hand-written fixtures typed from `schema.ts` instead of generated examples.
 - **`Retry-After` on 429 is undocumented.** Used when present; otherwise the message uses the 15-minute window from API.md.
 - **`X-Requested-With` is a required header parameter in OpenAPI**, so generated types demand it per call. Calls pass the shared `CSRF` constant and a middleware also sets it on every non-GET.

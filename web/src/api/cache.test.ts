@@ -4,15 +4,16 @@ import { keys } from './keys'
 import { mergeEvents, upsertTask, type TasksData } from './cache'
 import type { ApiEvent, Task } from './types'
 
-const event = (id: number, type = 'message', text = `t${id}`): ApiEvent => ({
-  id,
-  task_id: 1,
-  run_id: null,
-  seq: null,
-  type,
-  payload: { text, delivery: 'injected' } as unknown as ApiEvent['payload'],
-  created_at: '2026-10-14T10:00:00Z',
-})
+const event = (id: number, type = 'message', text = `t${id}`): ApiEvent =>
+  ({
+    id,
+    task_id: 1,
+    run_id: null,
+    seq: null,
+    type,
+    payload: { text, delivery: 'queued' },
+    created_at: '2026-10-14T10:00:00Z',
+  }) as unknown as ApiEvent
 
 const task = (id: number, status: Task['status'], project = 'p'): Task => ({
   id,
@@ -22,6 +23,10 @@ const task = (id: number, status: Task['status'], project = 'p'): Task => ({
   prompt: '',
   status,
   cost_usd_total: 0,
+  turns: 0,
+  last_activity: null,
+  last_activity_at: null,
+  queued_message: null,
   source: 'web',
   created_at: '2026-10-14T10:00:00Z',
   updated_at: '2026-10-14T10:00:00Z',

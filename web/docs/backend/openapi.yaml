@@ -13,6 +13,7 @@ servers:
   - url: /
 security:
   - session: []
+  - telegramBearer: []
 tags:
   - name: auth
   - name: projects
@@ -67,8 +68,20 @@ paths:
                 init_data: { type: string, description: Telegram.WebApp.initData verbatim }
       responses:
         '200':
-          description: Logged in; sets the anora_session cookie
-          content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
+          description: |
+            Logged in; sets the anora_session cookie and also returns the session as `token`.
+            Telegram Web embeds the Mini App in a cross-site iframe where the SameSite=Lax cookie
+            is not sent: keep `token` in memory (never in storage) and send it as
+            `Authorization: Bearer <token>`; open the WebSocket with a ticket (`POST /api/v1/ws/ticket`).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SessionInfo'
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: 'Session token for `Authorization: Bearer` (Telegram sessions only)' }
         '401': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
@@ -194,7 +207,7 @@ paths:
               properties:
                 full_name: { type: string, example: andrewsl105/vatary-server }
                 installation_id: { type: integer, format: int64 }
-                base_branch: { type: string, default: dev }
+                base_branch: { allOf: [{ $ref: '#/components/schemas/BranchName' }], default: dev }
                 is_default: { type: boolean, default: false }
       responses:
         '201':
@@ -205,6 +218,36 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
 
   /api/v1/projects/{id}/repositories/{repoId}:
+    patch:
+      operationId: updateRepository
+      tags: [projects]
+      summary: Update a repository's base branch or default flag
+      description: |
+        Omitted fields are unchanged. `is_default: true` clears the flag on the
+        project's other repositories; `is_default: false` on the current default
+        is 409 `conflict`. Changing `base_branch` is 409 `in_use` while tasks
+        that are not completed/failed/cancelled use the repository.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: repoId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                base_branch: { $ref: '#/components/schemas/BranchName' }
+                is_default: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Repository' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
     delete:
       operationId: deleteRepository
       tags: [projects]
@@ -298,11 +341,17 @@ paths:
     get:
       operationId: listTaskEvents
       tags: [tasks]
-      summary: Task timeline, oldest first
+      summary: Task timeline, oldest first (or newest first with before_id)
+      description: |
+        Forward (default): events after `after_id`, oldest first.
+        Backward: events before `before_id`, newest first; `before_id=0`
+        starts at the newest event. In backward mode pass `next_cursor` back
+        as `before_id`. `before_id` cannot be combined with `after_id`/`cursor` (400).
       parameters:
         - $ref: '#/components/parameters/TaskID'
         - { name: after_id, in: query, schema: { type: integer, format: int64 }, description: Last event id the client has }
         - { name: cursor, in: query, schema: { type: string }, description: Alias of after_id }
+        - { name: before_id, in: query, schema: { type: integer, format: int64, minimum: 0 }, description: 'Page backwards from this id (exclusive), newest first; 0 = from the newest event' }
         - $ref: '#/components/parameters/Limit'
       responses:
         '200':
@@ -315,6 +364,30 @@ paths:
                 properties:
                   items: { type: array, items: { $ref: '#/components/schemas/Event' } }
                   next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/runs:
+    get:
+      operationId: listTaskRuns
+      tags: [tasks]
+      summary: Runs of a task, oldest first (including a queued run)
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/Limit'
+        - { name: cursor, in: query, schema: { type: string }, description: next_cursor from the previous page }
+      responses:
+        '200':
+          description: A page of runs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Run' } }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
 
   /api/v1/tasks/{id}/diff:
@@ -370,7 +443,12 @@ paths:
     post:
       operationId: sendMessage
       tags: [tasks]
-      summary: Mid-session message or follow-up run
+      summary: Follow-up message (queued while a run is active)
+      description: |
+        `queued`/`preparing`/`running`/`waiting_input`/`pushing`: the text is queued
+        (`queued_message` on the task, event `message` with `delivery: queued`) and
+        starts the next run when the current one ends. `paused`/`pr_open`/`completed`:
+        starts a new run now (`delivery: new_run`). Otherwise `409`.
       parameters:
         - $ref: '#/components/parameters/TaskID'
         - $ref: '#/components/parameters/XRequestedWith'
@@ -386,7 +464,7 @@ paths:
                 text: { type: string }
       responses:
         '200':
-          description: Delivered or queued
+          description: Queued, or a new run was started
           content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -451,11 +529,41 @@ paths:
                   cost_usd_today: { type: number }
                   cost_usd_month: { type: number }
 
+  /api/v1/ws/ticket:
+    post:
+      operationId: createWebSocketTicket
+      tags: [system]
+      summary: Single-use ticket to open the WebSocket without a cookie
+      description: For sessions that authenticate with a bearer token (Telegram Web). The ticket is valid once, for `expires_in` seconds.
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200':
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket, expires_in]
+                properties:
+                  ticket: { type: string }
+                  expires_in: { type: integer, description: Seconds }
+        '401': { $ref: '#/components/responses/Error' }
+
   /api/v1/ws:
     get:
       operationId: openWebSocket
       tags: [system]
       summary: WebSocket (see docs/API.md for messages)
+      description: Authenticated by the session cookie, or by a `ticket` from `POST /api/v1/ws/ticket`.
+      security:
+        - session: []
+        - {}
+      parameters:
+        - name: ticket
+          in: query
+          required: false
+          schema: { type: string }
+          description: Single-use ticket (instead of the cookie)
       responses:
         '101': { description: Switching protocols }
         '401': { $ref: '#/components/responses/Error' }
@@ -496,6 +604,10 @@ components:
       type: apiKey
       in: cookie
       name: anora_session
+    telegramBearer:
+      type: http
+      scheme: bearer
+      description: The `token` from `POST /api/v1/auth/telegram`; accepted only for Telegram sessions.
 
   parameters:
     XRequestedWith:
@@ -603,6 +715,12 @@ components:
         installation_id: { type: integer, format: int64 }
         is_default: { type: boolean }
 
+    BranchName:
+      type: string
+      maxLength: 200
+      pattern: '^[A-Za-z0-9_][A-Za-z0-9._/-]*$'
+      description: Plain git branch name; no "..", "//", trailing "/", "." or ".lock"
+
     GitHubRepo:
       type: object
       required: [full_name, default_branch, private, installation_id]
@@ -618,7 +736,7 @@ components:
 
     Task:
       type: object
-      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, source, created_at, updated_at]
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, created_at, updated_at, last_activity, last_activity_at, queued_message]
       properties:
         id: { type: integer, format: int64 }
         project_id: { type: string }
@@ -633,11 +751,20 @@ components:
         pr_url: { type: [string, 'null'] }
         ci_status: { type: [string, 'null'], enum: [pending, success, failure, null] }
         cost_usd_total: { type: number }
+        turns: { type: integer, description: Claude turns across all runs }
         source: { type: string, enum: [web, telegram, api] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
         paused_at: { type: [string, 'null'], format: date-time }
+        last_activity:
+          type: [string, 'null']
+          maxLength: 120
+          description: 'Latest tool_use summary or status change ("<status>" or "<status>: <reason>"), one line'
+        last_activity_at: { type: [string, 'null'], format: date-time }
+        queued_message:
+          type: [string, 'null']
+          description: Text sent while a run was active (several messages joined by a blank line); it becomes the input of the next run when the current one ends. `null` when nothing is queued.
 
     TaskView:
       allOf:
@@ -650,7 +777,7 @@ components:
 
     Run:
       type: object
-      required: [id, task_id, kind, input, last_seq, cost_usd]
+      required: [id, task_id, kind, input, last_seq, cost_usd, turns]
       properties:
         id: { type: integer, format: int64 }
         task_id: { type: integer, format: int64 }
@@ -659,7 +786,8 @@ components:
         container_id: { type: [string, 'null'] }
         exit_code: { type: [integer, 'null'] }
         last_seq: { type: integer, format: int64 }
-        cost_usd: { type: number }
+        cost_usd: { type: number, description: This run's own cost (not the session total) }
+        turns: { type: integer, description: Last usage.turns the runner reported for this run }
         started_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
 
@@ -678,13 +806,526 @@ components:
         answered_at: { type: [string, 'null'], format: date-time }
 
     Event:
+      description: |
+        Timeline event, discriminated by `type`. Runner events (PROTOCOL.md)
+        have `seq` set and their `payload` is the runner event verbatim
+        (including `type`, `ts`, `seq`); backend events have `seq: null`.
+      oneOf:
+        - $ref: '#/components/schemas/ReadyEvent'
+        - $ref: '#/components/schemas/StartedEvent'
+        - $ref: '#/components/schemas/AssistantTextEvent'
+        - $ref: '#/components/schemas/ToolUseEvent'
+        - $ref: '#/components/schemas/ToolResultEvent'
+        - $ref: '#/components/schemas/QuestionEvent'
+        - $ref: '#/components/schemas/UsageEvent'
+        - $ref: '#/components/schemas/CommittedEvent'
+        - $ref: '#/components/schemas/DoneEvent'
+        - $ref: '#/components/schemas/PausedEvent'
+        - $ref: '#/components/schemas/ErrorEvent'
+        - $ref: '#/components/schemas/StatusEvent'
+        - $ref: '#/components/schemas/AnswerEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/MessageDroppedEvent'
+        - $ref: '#/components/schemas/InterruptEvent'
+        - $ref: '#/components/schemas/RunStartedEvent'
+        - $ref: '#/components/schemas/RunFinishedEvent'
+        - $ref: '#/components/schemas/PrOpenedEvent'
+        - $ref: '#/components/schemas/PrUpdatedEvent'
+        - $ref: '#/components/schemas/PrClosedEvent'
+        - $ref: '#/components/schemas/CiEvent'
+        - $ref: '#/components/schemas/DiffRejectedEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          ready: '#/components/schemas/ReadyEvent'
+          started: '#/components/schemas/StartedEvent'
+          assistant_text: '#/components/schemas/AssistantTextEvent'
+          tool_use: '#/components/schemas/ToolUseEvent'
+          tool_result: '#/components/schemas/ToolResultEvent'
+          question: '#/components/schemas/QuestionEvent'
+          usage: '#/components/schemas/UsageEvent'
+          committed: '#/components/schemas/CommittedEvent'
+          done: '#/components/schemas/DoneEvent'
+          paused: '#/components/schemas/PausedEvent'
+          error: '#/components/schemas/ErrorEvent'
+          status: '#/components/schemas/StatusEvent'
+          answer: '#/components/schemas/AnswerEvent'
+          message: '#/components/schemas/MessageEvent'
+          message_dropped: '#/components/schemas/MessageDroppedEvent'
+          interrupt: '#/components/schemas/InterruptEvent'
+          run_started: '#/components/schemas/RunStartedEvent'
+          run_finished: '#/components/schemas/RunFinishedEvent'
+          pr_opened: '#/components/schemas/PrOpenedEvent'
+          pr_updated: '#/components/schemas/PrUpdatedEvent'
+          pr_closed: '#/components/schemas/PrClosedEvent'
+          ci: '#/components/schemas/CiEvent'
+          diff_rejected: '#/components/schemas/DiffRejectedEvent'
+
+    EventType:
+      type: string
+      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, status, answer, message, message_dropped, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
+
+    EventBase:
       type: object
-      required: [id, task_id, type, payload, created_at]
+      required: [id, task_id, run_id, created_at]
       properties:
         id: { type: integer, format: int64 }
         task_id: { type: integer, format: int64 }
         run_id: { type: [integer, 'null'], format: int64 }
-        seq: { type: [integer, 'null'], format: int64, description: Set for runner events; null for backend events }
-        type: { type: string }
-        payload: { type: object, description: Runner event (PROTOCOL.md) or backend event payload (API.md) }
         created_at: { type: string, format: date-time }
+
+    RunnerPayloadBase:
+      type: object
+      required: [ts, seq]
+      properties:
+        ts: { type: string, format: date-time }
+        seq: { type: integer, format: int64 }
+
+    # ---- runner events ----
+
+    ReadyEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [ready] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ReadyPayload' }
+
+    ReadyPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, runner_version]
+          properties:
+            type: { type: string, enum: [ready] }
+            runner_version: { type: string }
+
+    StartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [started] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/StartedPayload' }
+
+    StartedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, model]
+          properties:
+            type: { type: string, enum: [started] }
+            session_id: { type: string }
+            model: { type: string }
+
+    AssistantTextEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [assistant_text] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/AssistantTextPayload' }
+
+    AssistantTextPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, text]
+          properties:
+            type: { type: string, enum: [assistant_text] }
+            text: { type: string }
+
+    ToolUseEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [tool_use] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ToolUsePayload' }
+
+    ToolUsePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, tool, summary]
+          properties:
+            type: { type: string, enum: [tool_use] }
+            tool: { type: string }
+            summary: { type: string, description: 'Short, human-readable, e.g. "Edit src/tables/export.ts"' }
+
+    ToolResultEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [tool_result] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ToolResultPayload' }
+
+    ToolResultPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, tool, ok]
+          properties:
+            type: { type: string, enum: [tool_result] }
+            tool: { type: string }
+            ok: { type: boolean }
+            summary: { type: string, description: Only when ok is false; first line of the error }
+
+    QuestionEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [question] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/QuestionPayload' }
+
+    QuestionPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, question_id, text]
+          properties:
+            type: { type: string, enum: [question] }
+            question_id: { type: string, description: 'Runner-local id (q1, q2, …); the API question id is "<run_id>-<question_id>"' }
+            text: { type: string }
+            options: { type: array, items: { type: string } }
+
+    UsageEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [usage] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/UsagePayload' }
+
+    UsagePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, cost_usd_total, input_tokens, output_tokens, turns]
+          properties:
+            type: { type: string, enum: [usage] }
+            cost_usd_total: { type: number, description: Cumulative for the Claude session }
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+            turns: { type: integer, description: Turns in this run }
+
+    CommittedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [committed] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/CommittedPayload' }
+
+    CommittedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, sha, files_changed, insertions, deletions]
+          properties:
+            type: { type: string, enum: [committed] }
+            sha: { type: string }
+            files_changed: { type: integer }
+            insertions: { type: integer }
+            deletions: { type: integer }
+
+    DoneEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [done] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/DonePayload' }
+
+    DonePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, summary, no_changes, cost_usd_total]
+          properties:
+            type: { type: string, enum: [done] }
+            session_id: { type: string }
+            summary: { type: string }
+            no_changes: { type: boolean }
+            cost_usd_total: { type: number }
+
+    PausedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [paused] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/PausedPayload' }
+
+    PausedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, reason, question_id]
+          properties:
+            type: { type: string, enum: [paused] }
+            session_id: { type: string }
+            reason: { type: string, enum: [question_timeout] }
+            question_id: { type: string }
+
+    ErrorEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [error] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ErrorPayload' }
+
+    ErrorPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, code, message]
+          properties:
+            type: { type: string, enum: [error] }
+            code: { type: string, description: 'no_auth, bad_command, commit_failed, limit_exceeded, sdk_error or internal' }
+            message: { type: string }
+            session_id: { type: string }
+
+    # ---- backend events ----
+
+    StatusEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [status] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/StatusPayload' }
+
+    StatusPayload:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        reason: { type: string }
+
+    AnswerEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [answer] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/AnswerPayload' }
+
+    AnswerPayload:
+      type: object
+      required: [question_id, text, answered_via]
+      properties:
+        question_id: { type: string, description: API question id ("<run_id>-<runner id>") }
+        text: { type: string }
+        answered_via: { type: string, enum: [web, telegram] }
+
+    MessageEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [message] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/MessagePayload' }
+
+    MessagePayload:
+      type: object
+      required: [text, delivery]
+      properties:
+        text: { type: string }
+        delivery:
+          type: string
+          enum: [queued, new_run, injected]
+          description: '`queued`: waits for the active run to end, then starts the next run. `new_run`: started a run right away. `injected`: only in timelines recorded before messages were queued (such text was not delivered reliably).'
+
+    MessageDroppedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [message_dropped] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/MessageDroppedPayload' }
+
+    MessageDroppedPayload:
+      type: object
+      required: [text, reason]
+      properties:
+        text: { type: string, description: The queued text that was not sent }
+        reason: { type: string, enum: [failed, cancelled], description: The status that ended the task before the text could start a run }
+
+    InterruptEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [interrupt] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/InterruptPayload' }
+
+    InterruptPayload:
+      type: object
+      additionalProperties: false
+      properties: {}
+
+    RunStartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [run_started] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/RunStartedPayload' }
+
+    RunStartedPayload:
+      type: object
+      required: [run_id, kind]
+      properties:
+        run_id: { type: integer, format: int64 }
+        kind: { type: string, enum: [initial, resume, followup, retry] }
+
+    RunFinishedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [run_finished] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/RunFinishedPayload' }
+
+    RunFinishedPayload:
+      type: object
+      required: [run_id, exit_code]
+      properties:
+        run_id: { type: integer, format: int64 }
+        exit_code: { type: integer, description: Runner exit code (PROTOCOL.md) }
+
+    PrOpenedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_opened] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrOpenedPayload' }
+
+    PrOpenedPayload:
+      type: object
+      required: [number, url]
+      properties:
+        number: { type: integer }
+        url: { type: string }
+
+    PrUpdatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_updated] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrUpdatedPayload' }
+
+    PrUpdatedPayload:
+      type: object
+      required: [number, url]
+      properties:
+        number: { type: integer }
+        url: { type: string }
+
+    PrClosedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_closed] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrClosedPayload' }
+
+    PrClosedPayload:
+      type: object
+      required: [number, merged]
+      properties:
+        number: { type: integer }
+        merged: { type: boolean }
+
+    CiEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [ci] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/CiPayload' }
+
+    CiPayload:
+      type: object
+      required: [status, name, url]
+      properties:
+        status: { type: string, enum: [pending, success, failure] }
+        name: { type: string }
+        url: { type: string }
+
+    DiffRejectedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [diff_rejected] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/DiffRejectedPayload' }
+
+    DiffRejectedPayload:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }

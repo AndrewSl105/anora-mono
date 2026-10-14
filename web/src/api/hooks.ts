@@ -24,6 +24,15 @@ import { haptic } from '@/telegram/haptics'
 
 const EVENTS_PAGE = 200
 
+/**
+ * openapi-fetch's response transform (openapi-typescript-helpers 0.1.0
+ * `Readable<T>`) drops properties typed exactly `null`, so backend events lose
+ * `seq: null` in the response type. The payload is the generated `Event` union.
+ */
+function asEvents(items: unknown[]): ApiEvent[] {
+  return items as ApiEvent[]
+}
+
 export function errorMessage(e: unknown): string {
   if (isApiError(e)) {
     const known = (t.errors as Record<string, string>)[e.code]
@@ -87,7 +96,7 @@ export async function fetchEventsIncremental(qc: QueryClient, id: number, signal
         signal,
       }),
     )
-    fetched.push(...page.items)
+    fetched.push(...asEvents(page.items))
     if (!page.next_cursor || page.items.length === 0) break
     after = page.items[page.items.length - 1].id
   }

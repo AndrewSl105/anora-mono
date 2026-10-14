@@ -63,15 +63,15 @@ export function addEvent(taskId: number, type: string, payload: Record<string, u
   const run = runs[runs.length - 1]
   const seq = runner ? list.filter((e) => e.seq !== null).length + 1 : null
   const at = createdAt ?? new Date().toISOString()
-  const event: ApiEvent = {
+  const event = {
     id: db.nextEventId++,
     task_id: taskId,
     run_id: run?.id ?? null,
     seq,
     type,
-    payload: (runner ? { type, ...payload, ts: at, seq } : payload) as ApiEvent['payload'],
+    payload: runner ? { type, ...payload, ts: at, seq } : payload,
     created_at: at,
-  }
+  } as unknown as ApiEvent
   list.push(event)
   db.events.set(taskId, list)
   return event
@@ -87,6 +87,7 @@ export function startRun(taskId: number, kind: Run['kind'], input: string, at?: 
     exit_code: null,
     last_seq: 0,
     cost_usd: 0,
+    turns: 0,
     started_at: at ?? new Date().toISOString(),
     finished_at: null,
   }
@@ -110,6 +111,10 @@ export function makeTask(fields: Partial<Task> & Pick<Task, 'project_id' | 'titl
     pr_url: null,
     ci_status: null,
     cost_usd_total: 0,
+    turns: 0,
+    last_activity: null,
+    last_activity_at: null,
+    queued_message: null,
     source: 'web',
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),

@@ -141,7 +141,7 @@ describe('cache updates and catch-up', () => {
     run_id: 1,
     seq: id,
     type: 'assistant_text',
-    payload: { text: `e${id}` } as unknown as ApiEvent['payload'],
+    payload: { type: 'assistant_text', text: `e${id}`, ts: '2026-10-14T10:00:00Z', seq: id },
     created_at: '2026-10-14T10:00:00Z',
   })
 

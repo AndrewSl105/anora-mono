@@ -1,5 +1,5 @@
 import type { ApiEvent, TaskStatus } from '@/api/types'
-import { fullQuestionId, type PayloadMap } from '@/api/events'
+import { fullQuestionId } from '@/api/events'
 
 export type TimelineItem =
   | { kind: 'claude'; key: string; text: string; at: string }
@@ -38,10 +38,6 @@ export type TimelineSummary = {
   runs: RunInfo[]
 }
 
-function p<K extends keyof PayloadMap>(e: ApiEvent): PayloadMap[K] {
-  return e.payload as unknown as PayloadMap[K]
-}
-
 /** Maps raw events (real, then optimistic local ones) to timeline items. Pure. */
 export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): TimelineSummary {
   const items: TimelineItem[] = []
@@ -59,12 +55,12 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
     const pending = e.id < 0
     switch (e.type) {
       case 'assistant_text': {
-        const text = p<'assistant_text'>(e).text
+        const text = e.payload.text
         if (text?.trim()) items.push({ kind: 'claude', key, text, at })
         break
       }
       case 'tool_use': {
-        const { tool, summary } = p<'tool_use'>(e)
+        const { tool, summary } = e.payload
         const item: Extract<TimelineItem, { kind: 'tool' }> = { kind: 'tool', key, tool, summary: summary || tool, ok: null, at }
         items.push(item)
         openTools.set(tool, item)
@@ -72,7 +68,7 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         break
       }
       case 'tool_result': {
-        const { tool, ok, summary } = p<'tool_result'>(e)
+        const { tool, ok, summary } = e.payload
         const item = openTools.get(tool)
         if (item) {
           item.ok = ok
@@ -82,7 +78,7 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         break
       }
       case 'question': {
-        const q = p<'question'>(e)
+        const q = e.payload
         const questionId = fullQuestionId(e.run_id, q.question_id)
         const item: Extract<TimelineItem, { kind: 'question' }> = {
           kind: 'question',
@@ -97,7 +93,7 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         break
       }
       case 'answer': {
-        const a = p<'answer'>(e)
+        const a = e.payload
         const q = questions.get(a.question_id) ?? [...questions.values()].find((x) => x.questionId.endsWith(`-${a.question_id}`))
         if (q) {
           // A real answer replaces a pending optimistic one.
@@ -108,29 +104,29 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         break
       }
       case 'message': {
-        const m = p<'message'>(e)
+        const m = e.payload
         items.push({ kind: 'user', key, text: m.text, at, delivery: m.delivery, pending })
         break
       }
       case 'usage': {
-        const u = p<'usage'>(e)
+        const u = e.payload
         if (typeof u.turns === 'number') turns = u.turns
         if (e.run_id != null && typeof u.cost_usd_total === 'number') runCostTotals.set(e.run_id, u.cost_usd_total)
         break
       }
       case 'status': {
-        const s = p<'status'>(e)
+        const s = e.payload
         items.push({ kind: 'status', key, status: s.status as TaskStatus, reason: s.reason, at })
         break
       }
       case 'run_started': {
-        const r = p<'run_started'>(e)
+        const r = e.payload
         runs.set(r.run_id, { runId: r.run_id, kind: r.kind, startedAt: at })
         items.push({ kind: 'divider', key, text: `run_started:${r.kind}`, at })
         break
       }
       case 'run_finished': {
-        const r = p<'run_finished'>(e)
+        const r = e.payload
         const run = runs.get(r.run_id) ?? { runId: r.run_id, kind: '—', startedAt: at }
         run.finishedAt = at
         run.exitCode = r.exit_code
@@ -146,38 +142,38 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         items.push({ kind: 'divider', key, text: 'paused', tone: 'warn', at })
         break
       case 'committed': {
-        const c = p<'committed'>(e)
+        const c = e.payload
         items.push({ kind: 'commit', key, sha: c.sha, files: c.files_changed, insertions: c.insertions, deletions: c.deletions, at })
         break
       }
       case 'pr_opened':
       case 'pr_updated': {
-        const pr = p<'pr_opened'>(e)
+        const pr = e.payload
         items.push({ kind: 'pr', key, action: e.type === 'pr_opened' ? 'opened' : 'updated', number: pr.number, url: pr.url, at })
         break
       }
       case 'pr_closed': {
-        const pr = p<'pr_closed'>(e)
+        const pr = e.payload
         items.push({ kind: 'pr', key, action: 'closed', number: pr.number, merged: pr.merged, at })
         break
       }
       case 'ci': {
-        const c = p<'ci'>(e)
+        const c = e.payload
         items.push({ kind: 'ci', key, status: c.status, name: c.name, url: c.url, at })
         break
       }
       case 'done': {
-        const d = p<'done'>(e)
+        const d = e.payload
         items.push({ kind: 'done', key, summary: d.summary, noChanges: d.no_changes, at })
         break
       }
       case 'error': {
-        const er = p<'error'>(e)
+        const er = e.payload
         items.push({ kind: 'error', key, title: er.code, message: er.message, at })
         break
       }
       case 'diff_rejected':
-        items.push({ kind: 'error', key, title: 'diff_rejected', message: p<'diff_rejected'>(e).reason, at })
+        items.push({ kind: 'error', key, title: 'diff_rejected', message: e.payload.reason, at })
         break
       default:
         // ready, started, heartbeat and unknown types are not shown.

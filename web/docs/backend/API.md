@@ -5,7 +5,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`). Unknown request fields are rejected.
-- **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`.
+- **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`. **Telegram sessions** may instead send `Authorization: Bearer <token>` (the `token` from `auth/telegram`), because Telegram Web embeds the Mini App in a cross-site iframe where a `SameSite=Lax` cookie is never sent. Browser (`web`) sessions are cookie-only.
 - **CSRF**: every non-GET request must send `X-Requested-With: anora`, otherwise `403 csrf`.
 - **Errors**: `{"error": {"code": "<machine code>", "message": "<human text>"}}`.
 
@@ -20,7 +20,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
   | 503 | `github_disabled`, `telegram_disabled` | integration not configured |
   | 500 | `internal` | bug; details are in the server log |
 
-- **Pagination**: list endpoints take `?limit=` (default 50, max 200) and `?cursor=`; responses are `{"items": [...], "next_cursor": "..."}`. An empty `next_cursor` means the last page. Pass it back unchanged.
+- **Pagination**: list endpoints take `?limit=` (default 50, max 200) and `?cursor=`; responses are `{"items": [...], "next_cursor": "..."}`. An empty `next_cursor` means the last page. Pass it back unchanged (for `GET /tasks/{id}/events?before_id=`, pass it back as `before_id`).
 - Times are RFC 3339. Ids: projects use a slug (`vatary`); everything else is an integer.
 
 ## Auth
@@ -28,8 +28,8 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 | | |
 |---|---|
 | `POST /auth/login` `{password, totp}` | password **and** current 6-digit TOTP code → sets the cookie. `{"ok":true,"kind":"web"}` |
-| `POST /auth/telegram` `{init_data}` | Mini App: pass `Telegram.WebApp.initData` verbatim. Valid for 1 hour after `auth_date`, only for the owner's Telegram user id → sets the cookie, `kind: "telegram"` |
-| `POST /auth/logout` | deletes the session and clears the cookie |
+| `POST /auth/telegram` `{init_data}` | Mini App: pass `Telegram.WebApp.initData` verbatim. Valid for 1 hour after `auth_date`, only for the owner's Telegram user id → sets the cookie and returns `{"ok":true,"kind":"telegram","token":"…"}`. Keep `token` in memory only (never `localStorage`) and send it as `Authorization: Bearer`; it is the same session as the cookie |
+| `POST /auth/logout` | deletes the session (cookie or bearer token) and clears the cookie |
 | `GET /me` | `{"ok":true,"kind":"web"\|"telegram"}`; use it as the session check on app start |
 
 ## Projects and repositories
@@ -59,8 +59,11 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `PATCH /projects/{id}` | update any writable field |
 | `DELETE /projects/{id}` | archive (sets `archived: true`; nothing is deleted) |
 | `POST /projects/{id}/repositories` `{full_name, installation_id, base_branch?, is_default?}` | add a repo. `base_branch` defaults to `dev`. The first repo, or one with `is_default`, becomes the default |
+| `PATCH /projects/{id}/repositories/{repoId}` `{base_branch?, is_default?}` | omitted fields are unchanged; returns the repository. `is_default: true` makes it the project's only default; `is_default: false` on the current default is `409 conflict` (make another repo the default instead). Changing `base_branch` is `409 in_use` while tasks that are not `completed`/`failed`/`cancelled` use the repo |
 | `DELETE /projects/{id}/repositories/{repoId}` | remove; `409 in_use` while tasks reference it |
 | `GET /github/repositories` | repos the GitHub App can see, for the "add repo" picker: `{"items":[{full_name, default_branch, private, installation_id}]}` |
+
+`base_branch` must be a plain git branch name (letters, digits, `._/-`, not starting with `-` or `.`, no `..`); otherwise `400 invalid`.
 
 `services` accepts `postgres` and `redis`. `env` keys must match `[A-Z_][A-Z0-9_]*`; auth and service variables (`DATABASE_URL`, `REDIS_URL`, Claude tokens, …) are reserved.
 
@@ -73,23 +76,29 @@ A **project** groups repositories and holds run settings. All override fields ar
   "status": "running", "status_reason": null,
   "branch": "agent/12-add-csv-export-to-tables", "session_id": "…",
   "pr_number": null, "pr_url": null, "ci_status": null,
-  "cost_usd_total": 0.42, "source": "web",
-  "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null
+  "cost_usd_total": 0.42, "turns": 17, "source": "web",
+  "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null,
+  "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…",
+  "queued_message": null
 }
 ```
 
-`GET /tasks/{id}` and all task actions return this object plus `repository`, `latest_run` (`{id, kind, input, exit_code, last_seq, cost_usd, started_at, finished_at}` or `null`) and `open_question` (`{id, text, options, created_at, …}` or `null`).
+- `turns`: Claude turns across all runs of the task (sum of each run's last reported `usage.turns`).
+- `last_activity`: one line (max 120 characters) describing the latest thing that happened: the latest `tool_use` summary, or the latest status change as `<status>` / `<status>: <reason>`, whichever came last. `last_activity_at` is when it was set. Both are `null` only for tasks that predate the field and have no surviving events.
+- `queued_message`: text sent with `POST …/message` while a run was active (several messages are joined by a blank line), or `null`. It becomes the input of the next run as soon as the current run ends.
+
+`GET /tasks/{id}` and all task actions return this object plus `repository`, `latest_run` (`{id, kind, input, exit_code, last_seq, cost_usd, turns, started_at, finished_at}` or `null`) and `open_question` (`{id, text, options, created_at, …}` or `null`).
 
 ### Status
 
 | status | meaning | actions available |
 |---|---|---|
-| `queued` | waiting for a slot | cancel |
-| `preparing` | cloning, creating branch and sidecars | cancel |
-| `running` | Claude is working | message (injected), interrupt, cancel |
-| `waiting_input` | Claude asked a question (`open_question`) | answer, message, interrupt, cancel |
+| `queued` | waiting for a slot | message (queued), cancel |
+| `preparing` | cloning, creating branch and sidecars | message (queued), cancel |
+| `running` | Claude is working | message (queued), interrupt, cancel |
+| `waiting_input` | Claude asked a question (`open_question`) | answer, message (queued), interrupt, cancel |
 | `paused` | question not answered in time; containers removed | answer (resumes), message (resumes), cancel |
-| `pushing` | validating diff, pushing, opening the PR | cancel |
+| `pushing` | validating diff, pushing, opening the PR | message (queued), cancel |
 | `pr_open` | PR exists; `ci_status` follows CI | message (new run on the same branch), cancel |
 | `completed` | PR merged/closed, or finished with no changes | message (new run) |
 | `failed` | see `status_reason` | retry |
@@ -103,10 +112,12 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `POST /tasks` `{project_id, prompt, repository_id?, title?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars) |
 | `GET /tasks/{id}` | task view (see above) |
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
+| `GET /tasks/{id}/events?before_id=` | timeline backwards, **newest first**: events older than `before_id`; `before_id=0` starts at the newest event. Pass `next_cursor` back as `before_id` (not as `cursor`, which means `after_id`). Combining `before_id` with `after_id`/`cursor` is `400 invalid` |
+| `GET /tasks/{id}/runs` | the task's runs, oldest first, including a queued one (`started_at: null`): `{id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd, turns, started_at, finished_at}`. `kind` is `initial`, `resume`, `followup` or `retry`; `cost_usd` is the run's own cost. Paginated with `limit`/`cursor` |
 | `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
-| `POST /tasks/{id}/message` `{text}` | `running`/`waiting_input`: injected into the live session (a run handles one prompt, so text that arrives after Claude finished its turn is lost; resend it as a follow-up once the task leaves `running`). `paused`/`pr_open`/`completed`: starts a new run on the same branch with the saved session. Otherwise `409` |
-| `POST /tasks/{id}/interrupt` | stop the current turn; the run then finishes ("Interrupted by the user.") with what it committed, keeping the session for a follow-up message |
+| `POST /tasks/{id}/message` `{text}` | `queued`/`preparing`/`running`/`waiting_input`/`pushing`: **queued** (a run handles one prompt; nothing is injected into a live session). The text is kept in `queued_message` and starts the next run (same branch, same session) as soon as the current run ends: on `pr_open`/`completed` as a follow-up, on `paused` as a resume. If the task fails or is cancelled first, the text is dropped and a `message_dropped` event shows it. `paused`/`pr_open`/`completed`: starts a new run right away. Otherwise `409` |
+| `POST /tasks/{id}/interrupt` | `running`/`waiting_input`: stops Claude and **ends the run** ("Interrupted by the user."); what it committed is pushed as for any finished run, and the session is kept. A queued message then starts the next run; otherwise send a follow-up message |
 | `POST /tasks/{id}/cancel` | ends the task (`cancelled`), stops the runner |
 | `POST /tasks/{id}/retry` | `failed`/`cancelled` only: queues the original prompt again on the same branch |
 | `GET /stats` | `{running, queued, waiting_input, cost_usd_today, cost_usd_month}` (server-local days) |
@@ -121,14 +132,17 @@ A **project** groups repositories and holds run settings. All override fields ar
  "created_at": "…"}
 ```
 
-- **Runner events** have `seq` set and `payload` is the runner event exactly as described in [PROTOCOL.md](PROTOCOL.md): `started`, `assistant_text`, `tool_use`, `tool_result`, `question`, `usage`, `committed`, `done`, `paused`, `error`.
-- **Backend events** have `seq: null`:
+Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` discriminated by the envelope's `type` (`ToolUseEvent`, `StatusEvent`, …), each with its own `payload` schema (`ToolUsePayload`, `StatusPayload`, …). Generate client types from it; `switch (event.type)` narrows the payload.
+
+- **Runner events** have `seq` (and `run_id`) set and `payload` is the runner event exactly as described in [PROTOCOL.md](PROTOCOL.md), including its own `type`, `ts` and `seq`: `ready`, `started`, `assistant_text`, `tool_use`, `tool_result`, `question`, `usage`, `committed`, `done`, `paused`, `error`. In a `question` payload, `question_id` is the runner-local id (`q1`); the API question id (for `/answer`) is `<run_id>-<question_id>`, as in `open_question.id`.
+- **Backend events** have `seq: null`; their payload has no `type`, `ts` or `seq` (use the envelope's `type` and `created_at`):
 
   | type | payload |
   |---|---|
   | `status` | `{status, reason?}` |
   | `answer` | `{question_id, text, answered_via}` (`web` or `telegram`) |
-  | `message` | `{text, delivery: "injected"\|"new_run"}` |
+  | `message` | `{text, delivery: "queued"\|"new_run"}` (`"injected"` only in timelines recorded before messages were queued) |
+  | `message_dropped` | `{text, reason: "failed"\|"cancelled"}`: a queued message that never started a run |
   | `interrupt` | `{}` |
   | `run_started` | `{run_id, kind}` (`initial`, `resume`, `followup`, `retry`) |
   | `run_finished` | `{run_id, exit_code}` |
@@ -140,7 +154,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 
 ## WebSocket
 
-`GET /api/v1/ws` (session cookie required; same origin). After connecting, send one or more subscriptions:
+`GET /api/v1/ws` (session cookie required; same origin). Without a cookie (Telegram Web), first `POST /api/v1/ws/ticket` with the bearer token → `{"ticket":"…","expires_in":30}`, then connect to `/api/v1/ws?ticket=…`. A ticket works once and only within `expires_in` seconds, so fetch a new one for every (re)connect. After connecting, send one or more subscriptions:
 
 ```json
 {"op": "subscribe", "task_id": 123}
@@ -158,6 +172,7 @@ The server pushes:
 
 - `task_id` subscriptions receive that task's `event` and `task` messages.
 - `scope: "tasks"` receives `task` messages for every task (for the list view), no events.
+- A `task` message is sent on every status change and also whenever `turns`, `last_activity`, `last_activity_at` or `queued_message` change (each `tool_use` and `usage` event, each queued message), so the list view stays live without event subscriptions.
 - The server pings every 30 s. Messages to a slow client may be dropped. **On (re)connect, reload missed events with `GET /tasks/{id}/events?after_id=<last id>`**, then rely on pushes.
 
 ## Other

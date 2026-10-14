@@ -145,7 +145,14 @@ export interface paths {
         delete: operations["deleteRepository"];
         options?: never;
         head?: never;
-        patch?: never;
+        /**
+         * Update a repository's base branch or default flag
+         * @description Omitted fields are unchanged. `is_default: true` clears the flag on the
+         *     project's other repositories; `is_default: false` on the current default
+         *     is 409 `conflict`. Changing `base_branch` is 409 `in_use` while tasks
+         *     that are not completed/failed/cancelled use the repository.
+         */
+        patch: operations["updateRepository"];
         trace?: never;
     };
     "/api/v1/github/repositories": {
@@ -207,8 +214,31 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Task timeline, oldest first */
+        /**
+         * Task timeline, oldest first (or newest first with before_id)
+         * @description Forward (default): events after `after_id`, oldest first.
+         *     Backward: events before `before_id`, newest first; `before_id=0`
+         *     starts at the newest event. In backward mode pass `next_cursor` back
+         *     as `before_id`. `before_id` cannot be combined with `after_id`/`cursor` (400).
+         */
         get: operations["listTaskEvents"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tasks/{id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Runs of a task, oldest first (including a queued run) */
+        get: operations["listTaskRuns"];
         put?: never;
         post?: never;
         delete?: never;
@@ -260,7 +290,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Mid-session message or follow-up run */
+        /**
+         * Follow-up message (queued while a run is active)
+         * @description `queued`/`preparing`/`running`/`waiting_input`/`pushing`: the text is queued
+         *     (`queued_message` on the task, event `message` with `delivery: queued`) and
+         *     starts the next run when the current one ends. `paused`/`pr_open`/`completed`:
+         *     starts a new run now (`delivery: new_run`). Otherwise `409`.
+         */
         post: operations["sendMessage"];
         delete?: never;
         options?: never;
@@ -336,6 +372,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ws/ticket": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Single-use ticket to open the WebSocket without a cookie
+         * @description For sessions that authenticate with a bearer token (Telegram Web). The ticket is valid once, for `expires_in` seconds.
+         */
+        post: operations["createWebSocketTicket"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ws": {
         parameters: {
             query?: never;
@@ -343,7 +399,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** WebSocket (see docs/API.md for messages) */
+        /**
+         * WebSocket (see docs/API.md for messages)
+         * @description Authenticated by the session cookie, or by a `ticket` from `POST /api/v1/ws/ticket`.
+         */
         get: operations["openWebSocket"];
         put?: never;
         post?: never;
@@ -472,6 +531,8 @@ export interface components {
             installation_id: number;
             is_default: boolean;
         };
+        /** @description Plain git branch name; no "..", "//", trailing "/", "." or ".lock" */
+        BranchName: string;
         GitHubRepo: {
             full_name: string;
             default_branch: string;
@@ -498,6 +559,8 @@ export interface components {
             /** @enum {string|null} */
             ci_status?: "pending" | "success" | "failure" | null;
             cost_usd_total: number;
+            /** @description Claude turns across all runs */
+            turns: number;
             /** @enum {string} */
             source: "web" | "telegram" | "api";
             /** Format: date-time */
@@ -508,6 +571,12 @@ export interface components {
             finished_at?: string | null;
             /** Format: date-time */
             paused_at?: string | null;
+            /** @description Latest tool_use summary or status change ("<status>" or "<status>: <reason>"), one line */
+            last_activity: string | null;
+            /** Format: date-time */
+            last_activity_at: string | null;
+            /** @description Text sent while a run was active (several messages joined by a blank line); it becomes the input of the next run when the current one ends. `null` when nothing is queued. */
+            queued_message: string | null;
         };
         TaskView: components["schemas"]["Task"] & {
             repository?: components["schemas"]["Repository"] | null;
@@ -526,7 +595,10 @@ export interface components {
             exit_code?: number | null;
             /** Format: int64 */
             last_seq: number;
+            /** @description This run's own cost (not the session total) */
             cost_usd: number;
+            /** @description Last usage.turns the runner reported for this run */
+            turns: number;
             /** Format: date-time */
             started_at?: string | null;
             /** Format: date-time */
@@ -549,23 +621,481 @@ export interface components {
             /** Format: date-time */
             answered_at?: string | null;
         };
-        Event: {
+        /**
+         * @description Timeline event, discriminated by `type`. Runner events (PROTOCOL.md)
+         *     have `seq` set and their `payload` is the runner event verbatim
+         *     (including `type`, `ts`, `seq`); backend events have `seq: null`.
+         */
+        Event: components["schemas"]["ReadyEvent"] | components["schemas"]["StartedEvent"] | components["schemas"]["AssistantTextEvent"] | components["schemas"]["ToolUseEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["QuestionEvent"] | components["schemas"]["UsageEvent"] | components["schemas"]["CommittedEvent"] | components["schemas"]["DoneEvent"] | components["schemas"]["PausedEvent"] | components["schemas"]["ErrorEvent"] | components["schemas"]["StatusEvent"] | components["schemas"]["AnswerEvent"] | components["schemas"]["MessageEvent"] | components["schemas"]["MessageDroppedEvent"] | components["schemas"]["InterruptEvent"] | components["schemas"]["RunStartedEvent"] | components["schemas"]["RunFinishedEvent"] | components["schemas"]["PrOpenedEvent"] | components["schemas"]["PrUpdatedEvent"] | components["schemas"]["PrClosedEvent"] | components["schemas"]["CiEvent"] | components["schemas"]["DiffRejectedEvent"];
+        /** @enum {string} */
+        EventType: "ready" | "started" | "assistant_text" | "tool_use" | "tool_result" | "question" | "usage" | "committed" | "done" | "paused" | "error" | "status" | "answer" | "message" | "message_dropped" | "interrupt" | "run_started" | "run_finished" | "pr_opened" | "pr_updated" | "pr_closed" | "ci" | "diff_rejected";
+        EventBase: {
             /** Format: int64 */
             id: number;
             /** Format: int64 */
             task_id: number;
             /** Format: int64 */
-            run_id?: number | null;
-            /**
-             * Format: int64
-             * @description Set for runner events; null for backend events
-             */
-            seq?: number | null;
-            type: string;
-            /** @description Runner event (PROTOCOL.md) or backend event payload (API.md) */
-            payload: Record<string, never>;
+            run_id: number | null;
             /** Format: date-time */
             created_at: string;
+        };
+        RunnerPayloadBase: {
+            /** Format: date-time */
+            ts: string;
+            /** Format: int64 */
+            seq: number;
+        };
+        ReadyEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "ready";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["ReadyPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ready";
+        };
+        ReadyPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "ready";
+            runner_version: string;
+        };
+        StartedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "started";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["StartedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "started";
+        };
+        StartedPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "started";
+            session_id: string;
+            model: string;
+        };
+        AssistantTextEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "assistant_text";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["AssistantTextPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "assistant_text";
+        };
+        AssistantTextPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "assistant_text";
+            text: string;
+        };
+        ToolUseEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "tool_use";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["ToolUsePayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_use";
+        };
+        ToolUsePayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "tool_use";
+            tool: string;
+            /** @description Short, human-readable, e.g. "Edit src/tables/export.ts" */
+            summary: string;
+        };
+        ToolResultEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "tool_result";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["ToolResultPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tool_result";
+        };
+        ToolResultPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "tool_result";
+            tool: string;
+            ok: boolean;
+            /** @description Only when ok is false; first line of the error */
+            summary?: string;
+        };
+        QuestionEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "question";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["QuestionPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "question";
+        };
+        QuestionPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "question";
+            /** @description Runner-local id (q1, q2, …); the API question id is "<run_id>-<question_id>" */
+            question_id: string;
+            text: string;
+            options?: string[];
+        };
+        UsageEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "usage";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["UsagePayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "usage";
+        };
+        UsagePayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "usage";
+            /** @description Cumulative for the Claude session */
+            cost_usd_total: number;
+            input_tokens: number;
+            output_tokens: number;
+            /** @description Turns in this run */
+            turns: number;
+        };
+        CommittedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "committed";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["CommittedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "committed";
+        };
+        CommittedPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "committed";
+            sha: string;
+            files_changed: number;
+            insertions: number;
+            deletions: number;
+        };
+        DoneEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "done";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["DonePayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "done";
+        };
+        DonePayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "done";
+            session_id: string;
+            summary: string;
+            no_changes: boolean;
+            cost_usd_total: number;
+        };
+        PausedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "paused";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["PausedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "paused";
+        };
+        PausedPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "paused";
+            session_id: string;
+            /** @enum {string} */
+            reason: "question_timeout";
+            question_id: string;
+        };
+        ErrorEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "error";
+            /** Format: int64 */
+            run_id: number;
+            /** Format: int64 */
+            seq: number;
+            payload: components["schemas"]["ErrorPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "error";
+        };
+        ErrorPayload: components["schemas"]["RunnerPayloadBase"] & {
+            /** @enum {string} */
+            type: "error";
+            /** @description no_auth, bad_command, commit_failed, limit_exceeded, sdk_error or internal */
+            code: string;
+            message: string;
+            session_id?: string;
+        };
+        StatusEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "status";
+            seq: null;
+            payload: components["schemas"]["StatusPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "status";
+        };
+        StatusPayload: {
+            status: components["schemas"]["TaskStatus"];
+            reason?: string;
+        };
+        AnswerEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "answer";
+            seq: null;
+            payload: components["schemas"]["AnswerPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "answer";
+        };
+        AnswerPayload: {
+            /** @description API question id ("<run_id>-<runner id>") */
+            question_id: string;
+            text: string;
+            /** @enum {string} */
+            answered_via: "web" | "telegram";
+        };
+        MessageEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "message";
+            seq: null;
+            payload: components["schemas"]["MessagePayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message";
+        };
+        MessagePayload: {
+            text: string;
+            /**
+             * @description `queued`: waits for the active run to end, then starts the next run. `new_run`: started a run right away. `injected`: only in timelines recorded before messages were queued (such text was not delivered reliably).
+             * @enum {string}
+             */
+            delivery: "queued" | "new_run" | "injected";
+        };
+        MessageDroppedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "message_dropped";
+            seq: null;
+            payload: components["schemas"]["MessageDroppedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "message_dropped";
+        };
+        MessageDroppedPayload: {
+            /** @description The queued text that was not sent */
+            text: string;
+            /**
+             * @description The status that ended the task before the text could start a run
+             * @enum {string}
+             */
+            reason: "failed" | "cancelled";
+        };
+        InterruptEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "interrupt";
+            seq: null;
+            payload: components["schemas"]["InterruptPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "interrupt";
+        };
+        InterruptPayload: Record<string, never>;
+        RunStartedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "run_started";
+            seq: null;
+            payload: components["schemas"]["RunStartedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run_started";
+        };
+        RunStartedPayload: {
+            /** Format: int64 */
+            run_id: number;
+            /** @enum {string} */
+            kind: "initial" | "resume" | "followup" | "retry";
+        };
+        RunFinishedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "run_finished";
+            seq: null;
+            payload: components["schemas"]["RunFinishedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "run_finished";
+        };
+        RunFinishedPayload: {
+            /** Format: int64 */
+            run_id: number;
+            /** @description Runner exit code (PROTOCOL.md) */
+            exit_code: number;
+        };
+        PrOpenedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "pr_opened";
+            seq: null;
+            payload: components["schemas"]["PrOpenedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pr_opened";
+        };
+        PrOpenedPayload: {
+            number: number;
+            url: string;
+        };
+        PrUpdatedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "pr_updated";
+            seq: null;
+            payload: components["schemas"]["PrUpdatedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pr_updated";
+        };
+        PrUpdatedPayload: {
+            number: number;
+            url: string;
+        };
+        PrClosedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "pr_closed";
+            seq: null;
+            payload: components["schemas"]["PrClosedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "pr_closed";
+        };
+        PrClosedPayload: {
+            number: number;
+            merged: boolean;
+        };
+        CiEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "ci";
+            seq: null;
+            payload: components["schemas"]["CiPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "ci";
+        };
+        CiPayload: {
+            /** @enum {string} */
+            status: "pending" | "success" | "failure";
+            name: string;
+            url: string;
+        };
+        DiffRejectedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "diff_rejected";
+            seq: null;
+            payload: components["schemas"]["DiffRejectedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "diff_rejected";
+        };
+        DiffRejectedPayload: {
+            reason: string;
         };
     };
     responses: {
@@ -667,13 +1197,21 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Logged in; sets the anora_session cookie */
+            /**
+             * @description Logged in; sets the anora_session cookie and also returns the session as `token`.
+             *     Telegram Web embeds the Mini App in a cross-site iframe where the SameSite=Lax cookie
+             *     is not sent: keep `token` in memory (never in storage) and send it as
+             *     `Authorization: Bearer <token>`; open the WebSocket with a ticket (`POST /api/v1/ws/ticket`).
+             */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["SessionInfo"];
+                    "application/json": components["schemas"]["SessionInfo"] & {
+                        /** @description Session token for `Authorization: Bearer` (Telegram sessions only) */
+                        token: string;
+                    };
                 };
             };
             401: components["responses"]["Error"];
@@ -871,7 +1409,7 @@ export interface operations {
                     /** Format: int64 */
                     installation_id: number;
                     /** @default dev */
-                    base_branch?: string;
+                    base_branch?: components["schemas"]["BranchName"];
                     /** @default false */
                     is_default?: boolean;
                 };
@@ -907,6 +1445,41 @@ export interface operations {
         requestBody?: never;
         responses: {
             200: components["responses"]["OK"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    updateRepository: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                id: string;
+                repoId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    base_branch?: components["schemas"]["BranchName"];
+                    is_default?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Repository"];
+                };
+            };
+            400: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
         };
@@ -1032,6 +1605,8 @@ export interface operations {
                 after_id?: number;
                 /** @description Alias of after_id */
                 cursor?: string;
+                /** @description Page backwards from this id (exclusive), newest first; 0 = from the newest event */
+                before_id?: number;
                 limit?: components["parameters"]["Limit"];
             };
             header?: never;
@@ -1054,6 +1629,38 @@ export interface operations {
                     };
                 };
             };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    listTaskRuns: {
+        parameters: {
+            query?: {
+                limit?: components["parameters"]["Limit"];
+                /** @description next_cursor from the previous page */
+                cursor?: string;
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["TaskID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description A page of runs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Run"][];
+                        next_cursor: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
             404: components["responses"]["Error"];
         };
     };
@@ -1139,7 +1746,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Delivered or queued */
+            /** @description Queued, or a new run was started */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1257,9 +1864,39 @@ export interface operations {
             };
         };
     };
-    openWebSocket: {
+    createWebSocketTicket: {
         parameters: {
             query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Ticket issued */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        ticket: string;
+                        /** @description Seconds */
+                        expires_in: number;
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    openWebSocket: {
+        parameters: {
+            query?: {
+                /** @description Single-use ticket (instead of the cookie) */
+                ticket?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;

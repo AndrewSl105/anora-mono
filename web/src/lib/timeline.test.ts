@@ -11,9 +11,9 @@ function ev(type: string, payload: Record<string, unknown>, opts: { run?: number
     run_id: opts.run ?? 3,
     seq: opts.runner === false ? null : eid,
     type,
-    payload: { type, ...payload } as unknown as ApiEvent['payload'],
+    payload: { type, ...payload },
     created_at: '2026-10-14T10:00:00Z',
-  }
+  } as unknown as ApiEvent
 }
 
 describe('buildTimeline', () => {

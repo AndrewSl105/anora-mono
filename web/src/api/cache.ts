@@ -1,6 +1,7 @@
 import type { InfiniteData, QueryClient } from '@tanstack/react-query'
 import { keys, type TaskFilter } from './keys'
 import type { ApiEvent, Page, Task, TaskView } from './types'
+import type { EventOf, PayloadOf } from './events'
 import { GROUPS } from '@/lib/status'
 
 /** Timeline cache: real events sorted by id, plus optimistic local ones (negative ids). */
@@ -40,16 +41,18 @@ export function appendEvents(qc: QueryClient, taskId: number, events: ApiEvent[]
 }
 
 let localSeq = 0
-export function addLocalEvent(qc: QueryClient, taskId: number, type: string, payload: Record<string, unknown>): ApiEvent {
-  const event: ApiEvent = {
+type LocalType = 'answer' | 'message'
+
+export function addLocalEvent<K extends LocalType>(qc: QueryClient, taskId: number, type: K, payload: PayloadOf<K>): ApiEvent {
+  const event = {
     id: -++localSeq,
     task_id: taskId,
     run_id: null,
     seq: null,
     type,
-    payload: payload as ApiEvent['payload'],
+    payload,
     created_at: new Date().toISOString(),
-  }
+  } as EventOf<K>
   qc.setQueryData<EventsData>(keys.tasks.events(taskId), (prev) => ({
     items: prev?.items ?? [],
     local: [...(prev?.local ?? []), event],
