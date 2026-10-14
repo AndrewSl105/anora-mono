@@ -36,81 +36,122 @@ internal/telegram     the bot
 internal/maintenance  retention, workspace cleanup, idle sidecars
 internal/metrics      Prometheus
 runner/               TypeScript runner (Claude Agent SDK) + Dockerfile
-deploy/               docker-compose.deploy.yml, .env.example
+deploy/               docker-compose.deploy.yml, Caddyfile, .env.example; docker-compose.dev.yml (local)
 ```
 
 ## Server setup
 
-Target: a dedicated Ubuntu 24.04 host with Docker, ports 22/80/443 open, a reverse proxy (Caddy or Nginx Proxy Manager) on an external Docker network called `proxy`.
+One server, one domain: Anora Runner, its Postgres, the Docker socket proxy, the web client ([anora-client](https://github.com/andrewsl105/anora-client)) and Caddy (TLS, routing) all run from `/srv/anora/docker-compose.deploy.yml`. Caddy serves `https://<domain>`: `/api/*` (including the WebSocket `/api/v1/ws`), `/webhooks/*` and `/healthz` go to `anora:8080`, everything else to `anora-client:80`; `/metrics` answers 404 from outside.
 
-### 1. Directories
+Target: a fresh Ubuntu 24.04 VPS with Docker Engine and the Compose plugin, nothing else. Open ports 22, 80 and 443 (and 443/udp for HTTP/3). Point the domain's DNS A/AAAA record at the server before the first start, so Caddy can get the certificate. Below, `anora.example.com` stands for your domain.
+
+### 1. Deploy user and directories
+
+The release workflows log in over SSH as a deploy user that can run Docker. On Ubuntu cloud images the default user (`ubuntu`) already has uid 1000, which is also the uid of Anora Runner and the runner containers; any user in the `docker` group works.
 
 ```sh
+sudo usermod -aG docker "$USER"            # the deploy user; log in again afterwards
 sudo mkdir -p /srv/anora/workspaces /srv/anora/secrets /srv/anora/backups
-# Anora Runner and the runner containers both run as uid 1000.
-sudo chown -R 1000:1000 /srv/anora/workspaces
-docker network create proxy   # if your reverse proxy doesn't already own it
+sudo chown "$USER": /srv/anora              # the workflows write /srv/anora/.deploy.lock
+# Anora Runner and the runner containers run as uid 1000 and share the workspaces.
+sudo chown -R 1000:1000 /srv/anora/workspaces /srv/anora/secrets
 ```
 
-Copy `deploy/docker-compose.deploy.yml` to `/srv/anora/` and `deploy/.env.example` to `/srv/anora/.env`, then fill it in as described below. No source code goes on the server.
+Copy three files from this repository to the server; no source code goes there:
 
-### 2. Owner login (password + TOTP)
+```sh
+scp deploy/docker-compose.deploy.yml deploy/Caddyfile <user>@<server>:/srv/anora/
+scp deploy/.env.example <user>@<server>:/srv/anora/.env
+```
+
+The `proxy` network (Caddy, `anora`, `anora-client`) is created by the compose file (`anora_proxy`); there is no `docker network create` step and no other reverse proxy.
+
+### 2. `.env`
+
+Fill in `/srv/anora/.env` (every variable is described in `deploy/.env.example`). The ones that must be set:
+
+| Variable | Value |
+|---|---|
+| `ANORA_DOMAIN` | `anora.example.com` (Caddy's site address) |
+| `PUBLIC_BASE_URL` | `https://anora.example.com` |
+| `WEB_APP_URL` | `https://anora.example.com` (the client is on the same domain) |
+| `PG_PASSWORD` | `openssl rand -hex 24` |
+| `SESSION_SECRET` | `openssl rand -hex 32` |
+| `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET` | step 3 |
+| `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) | step 4 |
+| `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET` | step 5 |
+| `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `TELEGRAM_MINIAPP_LINK` | step 6 |
+
+Leave `COOKIE_INSECURE=false`, `CORS_ORIGINS` empty (same origin), `ANORA_RUNNER_FAKE=false`, and `WORKSPACES_DIR=/srv/anora/workspaces`. `chmod 600 /srv/anora/.env`.
+
+### 3. Owner login (password + TOTP)
+
+These commands need the image: run the anora-runner release workflow once first (and, for private packages, `docker login ghcr.io` as in step 7).
 
 ```sh
 docker run --rm -it ghcr.io/andrewsl105/anora-runner:latest hash-password   # prints ADMIN_PASSWORD_HASH
 docker run --rm ghcr.io/andrewsl105/anora-runner:latest totp-setup          # prints ADMIN_TOTP_SECRET and an otpauth:// URI
 ```
 
-Add the `otpauth://` URI to your authenticator app (paste it, or render it as a QR code, e.g. `qrencode -t ansiutf8 '<uri>'`). Put both values in `.env`; quote the bcrypt hash with single quotes, because it contains `$`. Also set `SESSION_SECRET` (`openssl rand -hex 32`).
+Add the `otpauth://` URI to your authenticator app (paste it, or render it as a QR code, e.g. `qrencode -t ansiutf8 '<uri>'`). Quote the bcrypt hash with single quotes in `.env`, because it contains `$`.
 
-### 3. Claude auth
+### 4. Claude auth
 
 Run `claude setup-token` on your machine and put the result in `CLAUDE_CODE_OAUTH_TOKEN`. Alternatively set `ANTHROPIC_API_KEY`. Only runner containers receive it.
 
-### 4. GitHub App
+### 5. GitHub App
 
 On GitHub: **Settings → Developer settings → GitHub Apps → New GitHub App** (on your personal account).
 
-- **Homepage URL**: your `PUBLIC_BASE_URL`.
-- **Webhook URL**: `https://<your domain>/webhooks/github`; **Webhook secret**: `openssl rand -hex 32` (put it in `GITHUB_WEBHOOK_SECRET`).
+- **Homepage URL**: `https://anora.example.com`.
+- **Webhook URL**: `https://anora.example.com/webhooks/github`; **Webhook secret**: `openssl rand -hex 32` (put it in `GITHUB_WEBHOOK_SECRET`).
 - **Repository permissions**: Contents *read & write*, Pull requests *read & write*, Metadata *read*, Checks *read*, Actions *read*.
 - **Subscribe to events**: Pull request, Check suite, Workflow run.
 - **Where can this App be installed**: Only on this account.
 
-After creating it, note the **App ID** (`GITHUB_APP_ID`), generate a **private key**, and save it as `/srv/anora/secrets/github-app.pem` (`chmod 600`, owner uid 1000). Then **Install App** on the repositories Anora Runner may work on. In the web app, the "add repository" picker (`GET /api/v1/github/repositories`) lists them together with their installation id.
+After creating it, note the **App ID** (`GITHUB_APP_ID`), generate a **private key**, and save it as `/srv/anora/secrets/github-app.pem` (`sudo chown 1000:1000` and `chmod 600`). Then **Install App** on the repositories Anora Runner may work on; the web app's "add repository" picker lists them.
 
-### 5. Telegram
+### 6. Telegram bot and Mini App
 
-Create a bot with [@BotFather](https://t.me/BotFather) (`TELEGRAM_BOT_TOKEN`) and find your numeric user id, for example with [@userinfobot](https://t.me/userinfobot) (`TELEGRAM_ALLOWED_USER_ID`). The bot ignores everyone else. For a Mini App, register `WEB_APP_URL` with BotFather (`/newapp`) and optionally set `TELEGRAM_MINIAPP_LINK=https://t.me/<bot>/<app>` for deep links in groups.
+1. [@BotFather](https://t.me/BotFather): `/newbot` → `TELEGRAM_BOT_TOKEN`. Find your numeric user id, e.g. with [@userinfobot](https://t.me/userinfobot) → `TELEGRAM_ALLOWED_USER_ID`. The bot and the Mini App accept only this user.
+2. `/newapp` → pick the bot, give a title, a short description and a 640×360 photo, then the **Web App URL** `https://anora.example.com` and a short name (e.g. `anora`). BotFather answers with `t.me/<bot>/<short name>`: put it in `TELEGRAM_MINIAPP_LINK` (used for deep links in group topics).
+3. Optional: `/mybots` → the bot → *Bot Settings* → *Menu Button* → the same URL, so the chat's menu button opens the app.
 
-For one topic per project: create a forum supergroup, add the bot as an admin, open a topic and send `/bind <project>`.
+The bot uses long polling; no Telegram webhook or domain setting is needed. For one topic per project: create a forum supergroup, add the bot as an admin, open a topic and send `/bind <project>`.
 
-### 6. Reverse proxy
+### 7. GitHub secrets (both repositories)
 
-Serve the web client at `/` and route `/api`, `/webhooks` and `/healthz` to `anora:8080` on the same domain, with WebSocket upgrades enabled for `/api/v1/ws`. Do not expose `/metrics`; it only answers requests that come directly from the internal network. Caddy example:
+In **anora-runner** and in **anora-client**: *Settings → Environments → New environment* `production`, with the same three secrets:
 
-```
-anora.example.com {
-	@backend path /api/* /webhooks/* /healthz
-	reverse_proxy @backend anora:8080
-	reverse_proxy web:80
-}
-```
+| Secret | Value |
+|---|---|
+| `DEPLOY_HOST` | the server's address |
+| `DEPLOY_USER` | the deploy user from step 1 |
+| `DEPLOY_SSH_KEY` | a private key whose public key is in that user's `~/.ssh/authorized_keys` (e.g. `ssh-keygen -t ed25519 -f anora-deploy -N ''`) |
 
-(Caddy proxies WebSocket upgrades automatically. In Nginx Proxy Manager, enable "Websockets Support".)
+The images are pushed to GHCR with each repository's `GITHUB_TOKEN`. If the packages (`anora-runner`, `anora-agent`, `anora-client`) are private, log the server in once with a token that has `read:packages`: `echo <token> | docker login ghcr.io -u andrewsl105 --password-stdin`.
 
-### 7. Start
+### 8. First start
+
+Run both release workflows once (push to `main`, or *Actions → release → Run workflow*) so the images exist; their deploy step can fail on a server that has not been started yet, which is fine. Then:
 
 ```sh
 cd /srv/anora
 docker pull ghcr.io/andrewsl105/anora-agent:latest   # runners are never pulled automatically
 docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml logs -f caddy   # wait for "certificate obtained successfully"
 curl -s https://anora.example.com/healthz
 ```
 
-Migrations run on startup. After that, the release workflow deploys every push to `main` (see below).
+Open `https://anora.example.com` in a browser and log in with the password and a TOTP code; open the Mini App from the bot (`/app`, or `t.me/<bot>/<short name>`). Migrations run on startup.
 
-### 8. Backups
+### 9. Updates
+
+- **Releases**: each repository's `release.yml` deploys only its own service: anora-runner pulls `anora-agent` and `anora`, then `docker compose up -d --no-deps anora`; anora-client pulls and restarts `anora-client`. Both take a lock on `/srv/anora/.deploy.lock`, so two deploys never run Compose at the same time.
+- **Deploy files** (`docker-compose.deploy.yml`, `Caddyfile`, new `.env` variables) are not copied by the workflows: copy them as in step 1 and run `docker compose -f docker-compose.deploy.yml up -d`, which recreates only what changed. After a Caddyfile-only change: `docker compose -f docker-compose.deploy.yml exec caddy caddy reload --config /etc/caddy/Caddyfile`.
+- **Upgrading from an external `proxy` network** (older setups): copy the new files, `docker compose -f docker-compose.deploy.yml up -d`, then stop the old reverse proxy and `docker network rm proxy`.
+
+### 10. Backups
 
 Back up Postgres daily with `pg_dump`. Example root crontab line (keeps 14 days):
 
@@ -118,14 +159,12 @@ Back up Postgres daily with `pg_dump`. Example root crontab line (keeps 14 days)
 15 3 * * * docker exec anora-postgres pg_dump -U anora -Fc anora > /srv/anora/backups/anora-$(date +\%F).dump && find /srv/anora/backups -name 'anora-*.dump' -mtime +14 -delete
 ```
 
-Restore with `docker exec -i anora-postgres pg_restore -U anora -d anora --clean < backup.dump`. Workspaces are disposable (the branch lives on GitHub); the database is the state.
+Restore with `docker exec -i anora-postgres pg_restore -U anora -d anora --clean < backup.dump`. Workspaces are disposable (the branch lives on GitHub); the database is the state. Keep the `caddy_data` volume too (certificates), or Caddy requests new ones.
 
 ## CI/CD
 
 - **`ci.yml`** (pull requests): `go vet`, `go test -p 1 ./...` against a Postgres service, with the fake runner image built for the Docker integration tests; `golangci-lint`; and the runner's `npm ci && npm run typecheck && npm test`.
-- **`release.yml`** (push to `main`): builds and pushes `ghcr.io/andrewsl105/anora-runner` and `ghcr.io/andrewsl105/anora-agent` (tags `<sha>` and `latest`, linux/amd64). Then it connects over SSH, pulls **both** images (Anora Runner never pulls the runner image itself) and runs `docker compose -f docker-compose.deploy.yml up -d`.
-
-Repository secrets for the deploy job (environment `production`): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`. If the GHCR packages are private, log the server in once with a token that has `read:packages`: `echo <token> | docker login ghcr.io -u andrewsl105 --password-stdin`.
+- **`release.yml`** (push to `main`): builds and pushes `ghcr.io/andrewsl105/anora-runner` and `ghcr.io/andrewsl105/anora-agent` (tags `<sha>` and `latest`, linux/amd64). Then it connects over SSH, takes `/srv/anora/.deploy.lock`, pulls the agent image (Anora Runner never pulls it itself) and the `anora` service, and restarts only `anora` (`up -d --no-deps anora`). Secrets: see Server setup, step 7.
 
 ## Operations
 

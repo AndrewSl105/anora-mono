@@ -1,6 +1,9 @@
-# /srv/anora/docker-compose.deploy.yml — the only file (with .env) on the server.
-# No service publishes ports; the reverse proxy on the external `proxy`
-# network reaches anora:8080.
+# /srv/anora/docker-compose.deploy.yml — with Caddyfile and .env the only files on the server.
+# Caddy is the only service with published ports (80/443). It terminates TLS for
+# ANORA_DOMAIN and routes /api, /webhooks and /healthz to anora:8080 and
+# everything else to anora-client:80 over the `proxy` network (see Caddyfile).
+# Each release workflow pulls and restarts only its own service:
+#   anora-runner → anora (and pulls the anora-agent image), anora-client → anora-client.
 services:
   anora:
     image: ghcr.io/andrewsl105/anora-runner:${ANORA_TAG:-latest}
@@ -61,11 +64,36 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [internal]
 
+  anora-client:
+    image: ghcr.io/andrewsl105/anora-client:${CLIENT_TAG:-latest}
+    container_name: anora-client
+    restart: unless-stopped
+    networks: [proxy]
+
+  caddy:
+    image: caddy:2.11.7-alpine
+    container_name: anora-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      ANORA_DOMAIN: ${ANORA_DOMAIN:?set ANORA_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificates and ACME account: keep it
+      - caddy_config:/config
+    networks: [proxy]
+
 volumes:
   pgdata:
+  caddy_data:
+  caddy_config:
 
 networks:
-  proxy:
-    external: true
+  # Caddy, anora and anora-client. Owned by this file (Compose names it
+  # anora_proxy); nothing outside this stack needs it.
+  proxy: {}
   internal:
     internal: true

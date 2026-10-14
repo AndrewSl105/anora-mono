@@ -62,11 +62,17 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          script_stop: true
+          # ssh-action v1.2.5 removed script_stop; `set -e` stops on the first failure.
           script: |
+            set -e
             cd /srv/anora
-            # Anora Runner starts runners from the local image and never pulls, so pull both.
-            docker pull ghcr.io/andrewsl105/anora-runner:latest
+            # anora-client's release workflow deploys to the same directory: one deploy at a time.
+            exec 9>/srv/anora/.deploy.lock
+            flock 9
+            # Anora Runner starts runners from the local image and never pulls it.
             docker pull ghcr.io/andrewsl105/anora-agent:latest
-            docker compose -f docker-compose.deploy.yml up -d
+            docker compose -f docker-compose.deploy.yml pull anora
+            # Only this repository's service; Postgres, the Docker proxy, Caddy and the
+            # client keep running (first start and compose file changes: see README).
+            docker compose -f docker-compose.deploy.yml up -d --no-deps anora
             docker image prune -f
