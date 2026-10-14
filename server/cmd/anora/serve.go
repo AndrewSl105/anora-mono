@@ -16,6 +16,8 @@ import (
 	"github.com/andrewsl105/anora-runner/internal/config"
 	"github.com/andrewsl105/anora-runner/internal/events"
 	"github.com/andrewsl105/anora-runner/internal/githubapp"
+	"github.com/andrewsl105/anora-runner/internal/maintenance"
+	"github.com/andrewsl105/anora-runner/internal/metrics"
 	"github.com/andrewsl105/anora-runner/internal/projects"
 	"github.com/andrewsl105/anora-runner/internal/runnermgr"
 	"github.com/andrewsl105/anora-runner/internal/scheduler"
@@ -52,10 +54,12 @@ func runServe() error {
 	docker := &runnermgr.Manager{Docker: dc, SidecarMemory: cfg.SidecarMemory}
 	ws := &workspace.Manager{Dir: cfg.WorkspacesDir}
 
+	met := metrics.New(st)
 	hub := events.NewHub()
 	taskSvc := &tasks.Service{Store: st, Hub: hub}
 	sched := scheduler.New(&scheduler.Scheduler{
 		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws,
+		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},
 	})
 	taskSvc.Executor = sched
 
@@ -66,6 +70,7 @@ func runServe() error {
 		if err != nil {
 			return err
 		}
+		gh.OnError = met.GitHubError
 		ws.Auth = gh.Token
 		var scanner workspace.SecretsScanner
 		if cfg.SecretsScan == "gitleaks" {
@@ -86,6 +91,7 @@ func runServe() error {
 
 	srv := &api.Server{
 		Webhook:  webhook,
+		Metrics:  met.Handler(),
 		Cfg:      cfg,
 		Store:    st,
 		Tasks:    taskSvc,
@@ -115,7 +121,7 @@ func runServe() error {
 		}
 		bot := &telegram.Bot{
 			API: tg, Store: st, Tasks: taskSvc, Hub: hub, OwnerID: cfg.TelegramAllowedUserID,
-			WebAppURL: cfg.WebAppURL, MiniAppLink: cfg.TelegramMiniAppLink,
+			WebAppURL: cfg.WebAppURL, MiniAppLink: cfg.TelegramMiniAppLink, OnError: met.TelegramError,
 		}
 		wg.Add(1)
 		go func() {
@@ -125,6 +131,14 @@ func runServe() error {
 			}
 		}()
 	}
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		(&maintenance.Maintainer{
+			Store: st, Docker: docker, Workspaces: ws,
+			EventRetention: cfg.EventRetention, WorkspaceRetention: cfg.WorkspaceRetention, SidecarIdleTTL: cfg.SidecarIdleTTL,
+		}).Run(ctx)
+	}()
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

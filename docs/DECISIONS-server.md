@@ -49,3 +49,6 @@ Deviations from docs/SPEC.md, one line of reasoning each.
 - "Open in app" is a `web_app` button in the private chat; in groups (where `web_app` buttons are not allowed) it is a `TELEGRAM_MINIAPP_LINK?startapp=task_<id>` deep link if configured, else a plain link to `WEB_APP_URL/tasks/<id>`.
 - Failed and cancelled tasks also get a Retry button; question option buttons carry `ans|<question id>|<index>` (64-byte callback limit).
 - Status events are attached to the task snapshot they produced (`Task.StatusEvent`), so publishing a task change also publishes its timeline event to WebSocket clients and the bot.
+- Maintenance runs every 10 minutes. Event retention deletes only runner events (`seq` set) of terminal tasks, so each timeline keeps its status, PR and CI history. `WORKSPACE_RETENTION` (default 7 days) is configurable.
+- Idle sidecars are removed for tasks in `paused` **or** `pr_open` after `SIDECAR_IDLE_TTL`: a PR can stay open for days, and a follow-up run recreates the sidecars anyway.
+- `/metrics` answers only direct requests from private or loopback addresses without `X-Forwarded-For`, so the reverse proxy cannot expose it. `anora_tasks`, `anora_queue_length` and `anora_cost_usd_total` are read from Postgres at scrape time.

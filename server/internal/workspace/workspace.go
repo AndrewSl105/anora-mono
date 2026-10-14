@@ -178,7 +178,6 @@ func git(ctx context.Context, dir string, pre []string, args ...string) (string,
 	cmd.Env = append(os.Environ(),
 		"GIT_TERMINAL_PROMPT=0",
 		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_ASKPASS=/bin/false",
 	)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr

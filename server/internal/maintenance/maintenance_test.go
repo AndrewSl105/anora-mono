@@ -1,0 +1,84 @@
+package maintenance
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/andrewsl105/anora-runner/internal/projects"
+	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora-runner/internal/testutil"
+)
+
+type fakeDocker struct{ all, sidecars, volumes []int64 }
+
+func (f *fakeDocker) RemoveAll(_ context.Context, id int64) error {
+	f.all = append(f.all, id)
+	return nil
+}
+func (f *fakeDocker) RemoveSidecars(_ context.Context, id int64) error {
+	f.sidecars = append(f.sidecars, id)
+	return nil
+}
+func (f *fakeDocker) RemoveVolume(_ context.Context, id int64) error {
+	f.volumes = append(f.volumes, id)
+	return nil
+}
+
+type fakeWS struct{ removed []int64 }
+
+func (f *fakeWS) Remove(id int64) error { f.removed = append(f.removed, id); return nil }
+
+func TestOnce(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	svc := &tasks.Service{Store: st}
+	name := "P"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "p", ProjectFields: store.ProjectFields{Name: &name}})
+	_, _ = (&projects.Service{Store: st}).AddRepository(ctx, "p", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+
+	done, _ := svc.Create(ctx, tasks.CreateInput{ProjectID: "p", Prompt: "old"})
+	paused, _ := svc.Create(ctx, tasks.CreateInput{ProjectID: "p", Prompt: "paused"})
+	fresh, _ := svc.Create(ctx, tasks.CreateInput{ProjectID: "p", Prompt: "fresh"})
+	_, _ = st.SetStatus(ctx, done.ID, nil, tasks.Completed, "", true)
+	_, _ = st.SetStatus(ctx, paused.ID, nil, tasks.Paused, "", false)
+	_, _ = st.SetStatus(ctx, fresh.ID, nil, tasks.Completed, "", true)
+	run, _ := st.PendingRun(ctx, done.ID)
+	_ = st.MarkRunStarting(ctx, run.ID)
+	_, _ = st.AddRunnerEvent(ctx, done.ID, run.ID, 1, "tool_use", []byte(`{"type":"tool_use"}`))
+	// Age the first task by 8 days.
+	_, _ = st.Pool.Exec(ctx, `UPDATE tasks SET finished_at = now() - interval '8 days', updated_at = now() - interval '8 days' WHERE id = $1`, done.ID)
+	_, _ = st.Pool.Exec(ctx, `UPDATE events SET created_at = now() - interval '31 days' WHERE task_id = $1`, done.ID)
+	_, _ = st.Pool.Exec(ctx, `UPDATE tasks SET updated_at = now() - interval '1 hour' WHERE id = $1`, paused.ID)
+	_ = st.CreateSession(ctx, "expired", "web", time.Now().Add(-time.Hour))
+
+	d, ws := &fakeDocker{}, &fakeWS{}
+	m := &Maintainer{Store: st, Docker: d, Workspaces: ws, EventRetention: 720 * time.Hour,
+		WorkspaceRetention: 7 * 24 * time.Hour, SidecarIdleTTL: 30 * time.Minute}
+	m.Once(ctx)
+
+	if len(ws.removed) != 1 || ws.removed[0] != done.ID || len(d.volumes) != 1 {
+		t.Fatalf("workspace cleanup: ws=%v vol=%v", ws.removed, d.volumes)
+	}
+	if len(d.sidecars) != 1 || d.sidecars[0] != paused.ID {
+		t.Fatalf("idle sidecars: %v", d.sidecars)
+	}
+	evs, _ := st.ListEvents(ctx, done.ID, 0, 100)
+	for _, e := range evs {
+		if e.Seq != nil {
+			t.Fatal("old runner events should be deleted")
+		}
+	}
+	if len(evs) == 0 {
+		t.Fatal("status events must be kept")
+	}
+	if _, err := st.TouchSession(ctx, "expired", time.Hour); err == nil {
+		t.Fatal("expired session not deleted")
+	}
+	// Second pass does nothing new.
+	m.Once(ctx)
+	if len(ws.removed) != 1 {
+		t.Fatal("workspace cleaned twice")
+	}
+}

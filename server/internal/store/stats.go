@@ -94,9 +94,9 @@ func (s *Store) TasksToClean(ctx context.Context, cutoff time.Time) ([]*Task, er
 	return collectTasks(rows)
 }
 
-// IdlePausedTasks are tasks paused before cutoff (their sidecars can go).
-func (s *Store) IdlePausedTasks(ctx context.Context, cutoff time.Time) ([]*Task, error) {
-	rows, err := s.Pool.Query(ctx, `SELECT `+taskCols+` FROM tasks WHERE status = 'paused' AND paused_at < $1 ORDER BY id`, cutoff)
+// IdleTasks are tasks in one of statuses whose last change is before cutoff.
+func (s *Store) IdleTasks(ctx context.Context, statuses []string, cutoff time.Time) ([]*Task, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+taskCols+` FROM tasks WHERE status = ANY($1) AND updated_at < $2 ORDER BY id`, statuses, cutoff)
 	if err != nil {
 		return nil, err
 	}
