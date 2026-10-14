@@ -73,12 +73,16 @@ A **project** groups repositories and holds run settings. All override fields ar
   "status": "running", "status_reason": null,
   "branch": "agent/12-add-csv-export-to-tables", "session_id": "…",
   "pr_number": null, "pr_url": null, "ci_status": null,
-  "cost_usd_total": 0.42, "source": "web",
-  "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null
+  "cost_usd_total": 0.42, "turns": 17, "source": "web",
+  "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null,
+  "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…"
 }
 ```
 
-`GET /tasks/{id}` and all task actions return this object plus `repository`, `latest_run` (`{id, kind, input, exit_code, last_seq, cost_usd, started_at, finished_at}` or `null`) and `open_question` (`{id, text, options, created_at, …}` or `null`).
+- `turns`: Claude turns across all runs of the task (sum of each run's last reported `usage.turns`).
+- `last_activity`: one line (max 120 characters) describing the latest thing that happened: the latest `tool_use` summary, or the latest status change as `<status>` / `<status>: <reason>`, whichever came last. `last_activity_at` is when it was set. Both are `null` only for tasks that predate the field and have no surviving events.
+
+`GET /tasks/{id}` and all task actions return this object plus `repository`, `latest_run` (`{id, kind, input, exit_code, last_seq, cost_usd, turns, started_at, finished_at}` or `null`) and `open_question` (`{id, text, options, created_at, …}` or `null`).
 
 ### Status
 
@@ -159,6 +163,7 @@ The server pushes:
 
 - `task_id` subscriptions receive that task's `event` and `task` messages.
 - `scope: "tasks"` receives `task` messages for every task (for the list view), no events.
+- A `task` message is sent on every status change and also whenever `turns`, `last_activity` or `last_activity_at` change (each `tool_use` and `usage` event), so the list view stays live without event subscriptions.
 - The server pings every 30 s. Messages to a slow client may be dropped. **On (re)connect, reload missed events with `GET /tasks/{id}/events?after_id=<last id>`**, then rely on pushes.
 
 ## Other

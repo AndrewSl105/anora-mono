@@ -492,6 +492,12 @@ func (s *Scheduler) handleEvent(ctx context.Context, t *store.Task, runID int64,
 		}
 	}
 	switch ev.Type {
+	case runnermgr.EvToolUse:
+		if ev.Summary != "" {
+			if nt, err := s.Store.SetLastActivity(ctx, t.ID, ev.Summary); err == nil {
+				s.Hub.PublishTask(nt)
+			}
+		}
 	case runnermgr.EvQuestion:
 		q := store.Question{ID: tasks.QuestionID(runID, ev.QuestionID), TaskID: t.ID, RunID: runID, Text: ev.Text, Options: ev.Options}
 		if _, err := s.Store.CreateQuestion(ctx, q); err != nil {
@@ -507,6 +513,13 @@ func (s *Scheduler) handleEvent(ctx context.Context, t *store.Task, runID int64,
 		}
 		if err := s.Store.SetRunCost(ctx, runID, cost); err != nil {
 			s.log(t, runID).Error("set cost", "err", err)
+		}
+		if ev.Type == runnermgr.EvUsage {
+			if nt, err := s.Store.SetRunTurns(ctx, runID, ev.Turns); err != nil {
+				s.log(t, runID).Error("set turns", "err", err)
+			} else {
+				s.Hub.PublishTask(nt)
+			}
 		}
 	}
 }

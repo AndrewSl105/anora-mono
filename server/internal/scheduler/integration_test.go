@@ -183,6 +183,12 @@ func TestFakeRunQueuedToCommit(t *testing.T) {
 	if final.CostUSDTotal != 0.01 || final.SessionID == nil {
 		t.Fatalf("cost %v session %v", final.CostUSDTotal, final.SessionID)
 	}
+	if final.Turns != 2 || run.Turns != 2 {
+		t.Fatalf("turns: task %d run %d", final.Turns, run.Turns)
+	}
+	if final.LastActivityAt == nil || !strings.HasPrefix(deref(final.LastActivity), "completed: committed locally") {
+		t.Fatalf("last activity %q at %v", deref(final.LastActivity), final.LastActivityAt)
+	}
 	// Runner, sidecar and network are gone; the state volume stays until cleanup.
 	ids, _ := e.docker.TaskIDsWithResources(ctx)
 	if ids[v.ID] {

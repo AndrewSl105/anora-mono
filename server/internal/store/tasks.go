@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -22,6 +24,7 @@ type Task struct {
 	PRURL        *string    `json:"pr_url"`
 	CIStatus     *string    `json:"ci_status"`
 	CostUSDTotal float64    `json:"cost_usd_total"`
+	Turns        int        `json:"turns"`
 	Source       string     `json:"source"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
@@ -29,19 +32,24 @@ type Task struct {
 	PausedAt     *time.Time `json:"paused_at"`
 	CleanedAt    *time.Time `json:"-"`
 
+	// LastActivity is the latest tool_use summary or status change, one line.
+	LastActivity   *string    `json:"last_activity"`
+	LastActivityAt *time.Time `json:"last_activity_at"`
+
 	// StatusEvent is the timeline event written by the status change that
 	// returned this task (nil otherwise); publishers send it along.
 	StatusEvent *Event `json:"-"`
 }
 
 const taskCols = `id, project_id, repository_id, title, prompt, status, status_reason, branch, session_id,
-	pr_number, pr_url, ci_status, cost_usd_total::float8, source, created_at, updated_at, finished_at, paused_at, cleaned_at`
+	pr_number, pr_url, ci_status, cost_usd_total::float8, turns, source, created_at, updated_at, finished_at, paused_at, cleaned_at,
+	last_activity, last_activity_at`
 
 func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ProjectID, &t.RepositoryID, &t.Title, &t.Prompt, &t.Status, &t.StatusReason, &t.Branch,
-		&t.SessionID, &t.PRNumber, &t.PRURL, &t.CIStatus, &t.CostUSDTotal, &t.Source, &t.CreatedAt, &t.UpdatedAt,
-		&t.FinishedAt, &t.PausedAt, &t.CleanedAt)
+		&t.SessionID, &t.PRNumber, &t.PRURL, &t.CIStatus, &t.CostUSDTotal, &t.Turns, &t.Source, &t.CreatedAt, &t.UpdatedAt,
+		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt)
 	if err != nil {
 		return nil, err
 	}
@@ -53,8 +61,9 @@ func (s *Store) CreateTask(ctx context.Context, t Task) (*Task, error) {
 	var out *Task
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
 		var err error
-		out, err = scanTask(tx.QueryRow(ctx, `INSERT INTO tasks (project_id, repository_id, title, prompt, status, source)
-			VALUES ($1, $2, $3, $4, 'queued', $5) RETURNING `+taskCols, t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source))
+		out, err = scanTask(tx.QueryRow(ctx, `INSERT INTO tasks (project_id, repository_id, title, prompt, status, source,
+				last_activity, last_activity_at)
+			VALUES ($1, $2, $3, $4, 'queued', $5, 'queued', now()) RETURNING `+taskCols, t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source))
 		if err != nil {
 			return err
 		}
@@ -141,11 +150,16 @@ func (s *Store) SetStatus(ctx context.Context, id int64, from []string, to strin
 }
 
 func setStatusTx(ctx context.Context, tx pgx.Tx, id int64, from []string, to, reason string, terminal bool) (*Task, error) {
+	activity := to
+	if reason != "" {
+		activity += ": " + reason
+	}
 	t, err := scanTask(tx.QueryRow(ctx, `UPDATE tasks SET status = $2, status_reason = NULLIF($3, ''), updated_at = now(),
 			finished_at = CASE WHEN $4 THEN now() ELSE NULL END,
-			paused_at = CASE WHEN $2 = 'paused' THEN now() ELSE NULL END
+			paused_at = CASE WHEN $2 = 'paused' THEN now() ELSE NULL END,
+			last_activity = $6, last_activity_at = now()
 		WHERE id = $1 AND (coalesce(cardinality($5::text[]), 0) = 0 OR status = ANY($5)) RETURNING `+taskCols,
-		id, to, reason, terminal, from))
+		id, to, reason, terminal, from, ActivityLine(activity)))
 	if err == pgx.ErrNoRows {
 		var exists bool
 		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE id = $1)`, id).Scan(&exists); err != nil {
@@ -202,6 +216,26 @@ func (s *Store) SetPR(ctx context.Context, id int64, number int, url string) err
 func (s *Store) SetCIStatus(ctx context.Context, id int64, status string) error {
 	_, err := s.Pool.Exec(ctx, `UPDATE tasks SET ci_status = $2, updated_at = now() WHERE id = $1`, id, status)
 	return err
+}
+
+// SetLastActivity records what the task is doing now (e.g. a tool_use summary).
+func (s *Store) SetLastActivity(ctx context.Context, id int64, text string) (*Task, error) {
+	t, err := scanTask(s.Pool.QueryRow(ctx, `UPDATE tasks SET last_activity = $2, last_activity_at = now(), updated_at = now()
+		WHERE id = $1 RETURNING `+taskCols, id, ActivityLine(text)))
+	return t, notFound(err)
+}
+
+// maxActivity is the length of Task.LastActivity in runes.
+const maxActivity = 120
+
+// ActivityLine is the first line of s, cut to maxActivity runes.
+func ActivityLine(s string) string {
+	s, _, _ = strings.Cut(strings.TrimSpace(s), "\n")
+	s = strings.TrimSpace(s)
+	if utf8.RuneCountInString(s) <= maxActivity {
+		return s
+	}
+	return strings.TrimSpace(string([]rune(s)[:maxActivity-1])) + "…"
 }
 
 func (s *Store) MarkCleaned(ctx context.Context, id int64) error {
@@ -267,15 +301,16 @@ type Run struct {
 	ExitCode    *int       `json:"exit_code"`
 	LastSeq     int64      `json:"last_seq"`
 	CostUSD     float64    `json:"cost_usd"`
+	Turns       int        `json:"turns"`
 	StartedAt   *time.Time `json:"started_at"`
 	FinishedAt  *time.Time `json:"finished_at"`
 }
 
-const runCols = `id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd::float8, started_at, finished_at`
+const runCols = `id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd::float8, turns, started_at, finished_at`
 
 func scanRun(row interface{ Scan(...any) error }) (*Run, error) {
 	var r Run
-	if err := row.Scan(&r.ID, &r.TaskID, &r.Kind, &r.Input, &r.ContainerID, &r.ExitCode, &r.LastSeq, &r.CostUSD, &r.StartedAt, &r.FinishedAt); err != nil {
+	if err := row.Scan(&r.ID, &r.TaskID, &r.Kind, &r.Input, &r.ContainerID, &r.ExitCode, &r.LastSeq, &r.CostUSD, &r.Turns, &r.StartedAt, &r.FinishedAt); err != nil {
 		return nil, err
 	}
 	return &r, nil
@@ -333,6 +368,16 @@ func (s *Store) SetRunCost(ctx context.Context, runID int64, cost float64) error
 			AND id <> $1) + $2, updated_at = now()
 		WHERE id = (SELECT task_id FROM r)`, runID, cost)
 	return err
+}
+
+// SetRunTurns records a run's turn count (the runner reports it per run) and
+// recomputes the task total. Returns the updated task.
+func (s *Store) SetRunTurns(ctx context.Context, runID int64, turns int) (*Task, error) {
+	t, err := scanTask(s.Pool.QueryRow(ctx, `WITH r AS (UPDATE runs SET turns = $2 WHERE id = $1 RETURNING task_id)
+		UPDATE tasks SET turns = (SELECT coalesce(sum(turns), 0) FROM runs WHERE task_id = (SELECT task_id FROM r)
+			AND id <> $1) + $2, updated_at = now()
+		WHERE id = (SELECT task_id FROM r) RETURNING `+taskCols, runID, turns))
+	return t, notFound(err)
 }
 
 // UnfinishedRuns are runs that started but have no exit code (reconciliation).

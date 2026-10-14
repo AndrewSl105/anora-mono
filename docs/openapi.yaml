@@ -625,7 +625,7 @@ components:
 
     Task:
       type: object
-      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, source, created_at, updated_at]
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, created_at, updated_at, last_activity, last_activity_at]
       properties:
         id: { type: integer, format: int64 }
         project_id: { type: string }
@@ -640,11 +640,17 @@ components:
         pr_url: { type: [string, 'null'] }
         ci_status: { type: [string, 'null'], enum: [pending, success, failure, null] }
         cost_usd_total: { type: number }
+        turns: { type: integer, description: Claude turns across all runs }
         source: { type: string, enum: [web, telegram, api] }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
         paused_at: { type: [string, 'null'], format: date-time }
+        last_activity:
+          type: [string, 'null']
+          maxLength: 120
+          description: 'Latest tool_use summary or status change ("<status>" or "<status>: <reason>"), one line'
+        last_activity_at: { type: [string, 'null'], format: date-time }
 
     TaskView:
       allOf:
@@ -657,7 +663,7 @@ components:
 
     Run:
       type: object
-      required: [id, task_id, kind, input, last_seq, cost_usd]
+      required: [id, task_id, kind, input, last_seq, cost_usd, turns]
       properties:
         id: { type: integer, format: int64 }
         task_id: { type: integer, format: int64 }
@@ -667,6 +673,7 @@ components:
         exit_code: { type: [integer, 'null'] }
         last_seq: { type: integer, format: int64 }
         cost_usd: { type: number }
+        turns: { type: integer, description: Last usage.turns the runner reported for this run }
         started_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }
 
