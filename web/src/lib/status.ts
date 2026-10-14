@@ -51,7 +51,7 @@ export const GROUPS: Record<TaskGroup, TaskStatus[]> = {
 
 export const ACTIVE_STATUSES = GROUPS.active
 
-// Actions per status, from the status table in docs/backend/API.md.
+// Actions per status, from the status table in docs/API.md.
 export type TaskAction = 'cancel' | 'message' | 'interrupt' | 'answer' | 'retry'
 
 const ACTIONS: Record<TaskStatus, TaskAction[]> = {

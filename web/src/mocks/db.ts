@@ -1,7 +1,7 @@
 import type { ApiEvent, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
 
 // In-memory backend for mock mode (VITE_MOCK=1) and tests. Shapes follow
-// docs/backend/openapi.yaml; the OpenAPI file has no examples to generate from.
+// docs/openapi.yaml; the OpenAPI file has no examples to generate from.
 
 const now = Date.now()
 const ago = (min: number) => new Date(now - min * 60_000).toISOString()

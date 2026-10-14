@@ -51,7 +51,7 @@ type Full = Required<Pick<ProjectFields, 'name' | 'instructions' | 'services' | 
   runner_cpus: number
 }
 
-/** "" or 0 means "server default" for overrides (docs/backend/API.md). */
+/** "" or 0 means "server default" for overrides (docs/API.md). */
 function normalize(v: ProjectFormValues): Full {
   return {
     name: v.name.trim(),

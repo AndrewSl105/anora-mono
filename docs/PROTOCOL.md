@@ -75,7 +75,7 @@ Every event is also appended to `/workspace/.anora/events.jsonl`. The runner add
 | variable | meaning |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | Claude auth; the OAuth token wins. Missing both → `error{code:"no_auth"}`, exit `1`. |
-| `ANORA_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `ANORA_FAKE.md`, commits, `done`. |
+| `ANORA_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `ANORA_FAKE.md`, commits, `done`. An `interrupt` while it waits ends the run as `done` ("Interrupted by the user.", no changes), like a real session. |
 | `ANORA_WORKSPACE` | workspace path, default `/workspace` (tests only). |
 
 ## Example
