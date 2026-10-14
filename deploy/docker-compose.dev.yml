@@ -1,0 +1,98 @@
+# Local development: Anora Runner + Postgres + the Docker socket proxy, with
+# the fake runner (no Claude), no GitHub App and no Telegram bot.
+#
+#   docker compose -f deploy/docker-compose.dev.yml build           # anora + anora-agent:dev
+#   docker compose -f deploy/docker-compose.dev.yml run --rm anora hash-password
+#   docker compose -f deploy/docker-compose.dev.yml run --rm anora totp-setup
+#   # put both values in deploy/.env.dev (see the README), then:
+#   docker compose -f deploy/docker-compose.dev.yml up -d
+#
+# Run the commands from the repository root: workspaces live in ./.dev/workspaces
+# and must have the same absolute path on the host and in the container.
+name: anora-dev
+
+services:
+  anora:
+    build: { context: .., dockerfile: Dockerfile }
+    image: anora-runner:dev
+    restart: unless-stopped
+    env_file:
+      # ADMIN_PASSWORD_HASH, ADMIN_TOTP_SECRET (and optionally anything else).
+      - path: .env.dev
+        required: false
+    environment:
+      DATABASE_URL: postgres://anora:anora@anora-postgres:5432/anora?sslmode=disable
+      DOCKER_HOST: tcp://docker-proxy:2375
+      WORKSPACES_DIR: ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+      RUNNER_IMAGE: anora-agent:dev
+      ANORA_RUNNER_FAKE: "true"
+      COOKIE_INSECURE: "true"
+      SECRETS_SCAN: "off"
+      # The Vite dev server; its WebSocket proxy keeps the browser's Origin.
+      CORS_ORIGINS: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      PUBLIC_BASE_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      WEB_APP_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      SESSION_SECRET: dev-only-not-a-secret
+      QUESTION_TIMEOUT: 20m
+    ports:
+      - "127.0.0.1:${ANORA_DEV_PORT:-8080}:8080"
+    volumes:
+      - ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}:${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+    networks: [default, internal]
+    depends_on:
+      anora-postgres:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+      agent:
+        condition: service_completed_successfully
+
+  anora-postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: anora
+      POSTGRES_PASSWORD: anora
+      POSTGRES_DB: anora
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anora -d anora"]
+      interval: 2s
+      retries: 30
+
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      IMAGES: 1
+      POST: 1
+      EXEC: 0
+      BUILD: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [internal]
+
+  # Builds the runner image anora-agent:dev (Anora Runner never pulls or builds
+  # it); the container only prints its version and exits.
+  agent:
+    build: { context: ../runner }
+    image: anora-agent:dev
+    entrypoint: ["node", "-e", "console.log('anora-agent:dev built')"]
+    network_mode: none
+
+volumes:
+  pgdata:
+
+networks:
+  # `default` gives Anora Runner egress (clones of public GitHub repos) and the
+  # published port; `internal` holds Postgres and the Docker proxy only.
+  internal:
+    internal: true

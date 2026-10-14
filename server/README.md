@@ -153,6 +153,33 @@ export ANORA_TEST_DATABASE_URL=postgres://anora:anora@localhost:55432/anora?sslm
 go test -p 1 ./...
 ```
 
-To run the service locally, use a `.env` based on `deploy/.env.example` with `DOCKER_HOST=unix:///var/run/docker.sock`, `COOKIE_INSECURE=true`, `RUNNER_IMAGE=anora-agent:dev` and, without Claude credentials, `ANORA_RUNNER_FAKE=1`. Without a GitHub App the service still runs tasks, and commits stay in the local workspace.
+### Local stack with the web client
 
-Then `go run ./cmd/anora serve`.
+`deploy/docker-compose.dev.yml` runs Anora Runner, Postgres and the Docker socket proxy with the fake runner (`ANORA_RUNNER_FAKE`, no Claude), `COOKIE_INSECURE=true`, no GitHub App and no Telegram bot. It builds `anora-runner:dev` and `anora-agent:dev` from this checkout. Run it from the repository root; workspaces live in `./.dev/workspaces` (same absolute path inside the container).
+
+```sh
+docker compose -f deploy/docker-compose.dev.yml build
+docker compose -f deploy/docker-compose.dev.yml run --rm --no-deps anora hash-password   # at least 12 characters
+docker compose -f deploy/docker-compose.dev.yml run --rm --no-deps anora totp-setup
+# deploy/.env.dev (gitignored):
+#   ADMIN_PASSWORD_HASH='<hash>'
+#   ADMIN_TOTP_SECRET=<secret>
+docker compose -f deploy/docker-compose.dev.yml up -d
+curl -s localhost:8080/healthz
+```
+
+`ANORA_DEV_PORT` (default `8080`) changes the published port and `ANORA_DEV_CLIENT_ORIGIN` (default `http://localhost:5173`) the web client origin, which is allowed for the WebSocket (`CORS_ORIGINS`) and used for links. Then start the client (`anora-client`: `npm run dev`, its Vite proxy targets `http://localhost:8080`) and log in with the password and a code from your authenticator.
+
+Without a GitHub App the "add repository" picker is unavailable, so add a public repository through the API (the clone is anonymous; commits stay local and the task ends `completed`):
+
+```sh
+curl -c /tmp/anora.jar -H 'X-Requested-With: anora' -H 'Content-Type: application/json' \
+  -d '{"password":"…","totp":"123456"}' localhost:8080/api/v1/auth/login
+curl -b /tmp/anora.jar -H 'X-Requested-With: anora' -H 'Content-Type: application/json' \
+  -d '{"full_name":"octocat/Hello-World","installation_id":1,"base_branch":"master"}' \
+  localhost:8080/api/v1/projects/<project>/repositories
+```
+
+Every fake run asks "Which greeting should I write?" (hello/hi), writes `ANORA_FAKE.md`, commits and finishes; an interrupt while it waits ends the run like a real one. Stop with `docker compose -f deploy/docker-compose.dev.yml down` (`-v` also drops the database).
+
+Without Docker Compose: a `.env` based on `deploy/.env.example` with `DOCKER_HOST=unix:///var/run/docker.sock`, `COOKIE_INSECURE=true`, `RUNNER_IMAGE=anora-agent:dev` and `ANORA_RUNNER_FAKE=1`, then `go run ./cmd/anora serve`.
