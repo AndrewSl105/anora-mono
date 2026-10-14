@@ -13,6 +13,7 @@ servers:
   - url: /
 security:
   - session: []
+  - telegramBearer: []
 tags:
   - name: auth
   - name: projects
@@ -67,8 +68,20 @@ paths:
                 init_data: { type: string, description: Telegram.WebApp.initData verbatim }
       responses:
         '200':
-          description: Logged in; sets the anora_session cookie
-          content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
+          description: |
+            Logged in; sets the anora_session cookie and also returns the session as `token`.
+            Telegram Web embeds the Mini App in a cross-site iframe where the SameSite=Lax cookie
+            is not sent: keep `token` in memory (never in storage) and send it as
+            `Authorization: Bearer <token>`; open the WebSocket with a ticket (`POST /api/v1/ws/ticket`).
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/SessionInfo'
+                  - type: object
+                    required: [token]
+                    properties:
+                      token: { type: string, description: 'Session token for `Authorization: Bearer` (Telegram sessions only)' }
         '401': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
         '503': { $ref: '#/components/responses/Error' }
@@ -516,11 +529,41 @@ paths:
                   cost_usd_today: { type: number }
                   cost_usd_month: { type: number }
 
+  /api/v1/ws/ticket:
+    post:
+      operationId: createWebSocketTicket
+      tags: [system]
+      summary: Single-use ticket to open the WebSocket without a cookie
+      description: For sessions that authenticate with a bearer token (Telegram Web). The ticket is valid once, for `expires_in` seconds.
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200':
+          description: Ticket issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ticket, expires_in]
+                properties:
+                  ticket: { type: string }
+                  expires_in: { type: integer, description: Seconds }
+        '401': { $ref: '#/components/responses/Error' }
+
   /api/v1/ws:
     get:
       operationId: openWebSocket
       tags: [system]
       summary: WebSocket (see docs/API.md for messages)
+      description: Authenticated by the session cookie, or by a `ticket` from `POST /api/v1/ws/ticket`.
+      security:
+        - session: []
+        - {}
+      parameters:
+        - name: ticket
+          in: query
+          required: false
+          schema: { type: string }
+          description: Single-use ticket (instead of the cookie)
       responses:
         '101': { description: Switching protocols }
         '401': { $ref: '#/components/responses/Error' }
@@ -561,6 +604,10 @@ components:
       type: apiKey
       in: cookie
       name: anora_session
+    telegramBearer:
+      type: http
+      scheme: bearer
+      description: The `token` from `POST /api/v1/auth/telegram`; accepted only for Telegram sessions.
 
   parameters:
     XRequestedWith:

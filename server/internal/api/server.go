@@ -46,6 +46,7 @@ type Server struct {
 	Metrics  http.Handler
 	Health   func(ctx context.Context) map[string]error
 	Limiter  *auth.FailLimiter
+	Tickets  *auth.Tickets
 	Now      func() time.Time
 }
 
@@ -59,6 +60,9 @@ func (s *Server) now() time.Time {
 func (s *Server) Handler() http.Handler {
 	if s.Limiter == nil {
 		s.Limiter = auth.NewFailLimiter(5, 15*time.Minute)
+	}
+	if s.Tickets == nil {
+		s.Tickets = auth.NewTickets()
 	}
 	mux := http.NewServeMux()
 	a := s.requireSession
@@ -90,7 +94,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", a(s.control(s.Tasks.Cancel)))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", a(s.control(s.Tasks.Retry)))
 	mux.HandleFunc("GET /api/v1/stats", a(s.stats))
-	mux.HandleFunc("GET /api/v1/ws", a(s.websocket))
+	mux.HandleFunc("POST /api/v1/ws/ticket", a(s.wsTicket))
+	mux.HandleFunc("GET /api/v1/ws", s.requireSessionOrTicket(s.websocket))
 
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such endpoint")

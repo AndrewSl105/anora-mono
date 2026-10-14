@@ -34,7 +34,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "bad_credentials", "invalid password or code")
 		return
 	}
-	if err := s.Auth.StartSession(r.Context(), w, "web"); err != nil {
+	if _, err := s.Auth.StartSession(r.Context(), w, "web"); err != nil {
 		writeErr(w, r, err)
 		return
 	}
@@ -63,11 +63,15 @@ func (s *Server) loginTelegram(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "bad_credentials", "invalid Telegram init data")
 		return
 	}
-	if err := s.Auth.StartSession(r.Context(), w, "telegram"); err != nil {
+	token, err := s.Auth.StartSession(r.Context(), w, "telegram")
+	if err != nil {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "kind": "telegram"})
+	// The cookie works where the Mini App is the top-level page (Telegram's
+	// native apps); Telegram Web embeds it cross-site, so the client keeps
+	// this token in memory and sends it as a bearer token instead.
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "kind": "telegram", "token": token})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +80,17 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// wsTicket issues a single-use WebSocket ticket for the current session.
+func (s *Server) wsTicket(w http.ResponseWriter, r *http.Request) {
+	id, _ := r.Context().Value(sessionIDKey).(string)
+	v, err := s.Tickets.Issue(id)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ticket": v, "expires_in": int(s.Tickets.TTL.Seconds())})
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {

@@ -5,7 +5,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`). Unknown request fields are rejected.
-- **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`.
+- **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`. **Telegram sessions** may instead send `Authorization: Bearer <token>` (the `token` from `auth/telegram`), because Telegram Web embeds the Mini App in a cross-site iframe where a `SameSite=Lax` cookie is never sent. Browser (`web`) sessions are cookie-only.
 - **CSRF**: every non-GET request must send `X-Requested-With: anora`, otherwise `403 csrf`.
 - **Errors**: `{"error": {"code": "<machine code>", "message": "<human text>"}}`.
 
@@ -28,8 +28,8 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 | | |
 |---|---|
 | `POST /auth/login` `{password, totp}` | password **and** current 6-digit TOTP code → sets the cookie. `{"ok":true,"kind":"web"}` |
-| `POST /auth/telegram` `{init_data}` | Mini App: pass `Telegram.WebApp.initData` verbatim. Valid for 1 hour after `auth_date`, only for the owner's Telegram user id → sets the cookie, `kind: "telegram"` |
-| `POST /auth/logout` | deletes the session and clears the cookie |
+| `POST /auth/telegram` `{init_data}` | Mini App: pass `Telegram.WebApp.initData` verbatim. Valid for 1 hour after `auth_date`, only for the owner's Telegram user id → sets the cookie and returns `{"ok":true,"kind":"telegram","token":"…"}`. Keep `token` in memory only (never `localStorage`) and send it as `Authorization: Bearer`; it is the same session as the cookie |
+| `POST /auth/logout` | deletes the session (cookie or bearer token) and clears the cookie |
 | `GET /me` | `{"ok":true,"kind":"web"\|"telegram"}`; use it as the session check on app start |
 
 ## Projects and repositories
@@ -154,7 +154,7 @@ Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` disc
 
 ## WebSocket
 
-`GET /api/v1/ws` (session cookie required; same origin). After connecting, send one or more subscriptions:
+`GET /api/v1/ws` (session cookie required; same origin). Without a cookie (Telegram Web), first `POST /api/v1/ws/ticket` with the bearer token → `{"ticket":"…","expires_in":30}`, then connect to `/api/v1/ws?ticket=…`. A ticket works once and only within `expires_in` seconds, so fetch a new one for every (re)connect. After connecting, send one or more subscriptions:
 
 ```json
 {"op": "subscribe", "task_id": 123}

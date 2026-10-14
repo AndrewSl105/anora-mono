@@ -210,6 +210,83 @@ func TestTelegramLogin(t *testing.T) {
 	}
 }
 
+// Telegram Web embeds the Mini App in a cross-site iframe, where the
+// SameSite=Lax cookie is never sent: the session token works as a bearer
+// token (Telegram sessions only) and a single-use ticket opens the WebSocket.
+func TestTelegramBearerAndTicket(t *testing.T) {
+	c, _, secret := setup(t)
+	initData := auth.SignInitData("1:T", map[string]string{"auth_date": jsonNum(time.Now().Unix()), "user": `{"id":42}`})
+	_, body := c.do("POST", "/api/v1/auth/telegram", map[string]string{"init_data": initData})
+	token, _ := body["token"].(string)
+	if token == "" {
+		t.Fatalf("no token: %v", body)
+	}
+
+	noCookies := &http.Client{}
+	req := func(method, path, bearer string) *http.Response {
+		r, _ := http.NewRequest(method, c.base+path, nil)
+		r.Header.Set("X-Requested-With", "anora")
+		if bearer != "" {
+			r.Header.Set("Authorization", "Bearer "+bearer)
+		}
+		resp, err := noCookies.Do(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+	if resp := req("GET", "/api/v1/me", token); resp.StatusCode != 200 || resp.Header.Get("Set-Cookie") != "" {
+		t.Fatalf("bearer /me: %d, set-cookie %q", resp.StatusCode, resp.Header.Get("Set-Cookie"))
+	}
+	if resp := req("GET", "/api/v1/me", token+"x"); resp.StatusCode != 401 {
+		t.Fatalf("forged bearer: %d", resp.StatusCode)
+	}
+
+	// A browser (web) session never works as a bearer token.
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+	u, _ := url.Parse(c.base)
+	var web string
+	for _, ck := range c.http.Jar.Cookies(u) {
+		if ck.Name == auth.CookieName {
+			web = ck.Value
+		}
+	}
+	if resp := req("GET", "/api/v1/me", web); web == "" || web == token || resp.StatusCode != 401 {
+		t.Fatalf("web session as bearer: %d", resp.StatusCode)
+	}
+
+	resp := req("POST", "/api/v1/ws/ticket", token)
+	var tk struct {
+		Ticket    string `json:"ticket"`
+		ExpiresIn int    `json:"expires_in"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&tk)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || tk.Ticket == "" || tk.ExpiresIn != 30 {
+		t.Fatalf("ticket: %d %+v", resp.StatusCode, tk)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(c.base, "http") + "/api/v1/ws?ticket=" + url.QueryEscape(tk.Ticket)
+	conn, _, err := websocket.Dial(ctx, wsURL, nil)
+	if err != nil {
+		t.Fatalf("dial with ticket: %v", err)
+	}
+	conn.CloseNow()
+	if _, _, err := websocket.Dial(ctx, wsURL, nil); err == nil {
+		t.Fatal("ticket accepted twice")
+	}
+
+	// Logout with the bearer token ends the session.
+	if resp := req("POST", "/api/v1/auth/logout", token); resp.StatusCode != 200 {
+		t.Fatalf("logout: %d", resp.StatusCode)
+	}
+	if resp := req("GET", "/api/v1/me", token); resp.StatusCode != 401 {
+		t.Fatalf("bearer after logout: %d", resp.StatusCode)
+	}
+}
+
 func jsonNum(n int64) string { b, _ := json.Marshal(n); return string(b) }
 
 func TestWebSocket(t *testing.T) {

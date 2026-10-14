@@ -59,43 +59,71 @@ func (m *Manager) CheckLogin(password, code string) error {
 	return nil
 }
 
-// StartSession creates a session row and sets the cookie.
-func (m *Manager) StartSession(ctx context.Context, w http.ResponseWriter, kind string) error {
+// StartSession creates a session row, sets the cookie, and returns the signed
+// session value (the bearer token of a Telegram session).
+func (m *Manager) StartSession(ctx context.Context, w http.ResponseWriter, kind string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return err
+		return "", err
 	}
 	id := base64.RawURLEncoding.EncodeToString(b)
 	if err := m.Store.CreateSession(ctx, id, kind, m.now().Add(SessionTTL)); err != nil {
-		return err
+		return "", err
 	}
-	m.setCookie(w, m.sign(id), SessionTTL)
-	return nil
+	token := m.sign(id)
+	m.setCookie(w, token, SessionTTL)
+	return token, nil
 }
 
 // Session validates the cookie, slides its expiry and refreshes the cookie.
+// Without a valid cookie it accepts "Authorization: Bearer <token>", but only
+// for Telegram sessions: a Mini App in a cross-site iframe (Telegram Web)
+// never gets its SameSite=Lax cookie, while browser logins stay cookie-only.
 func (m *Manager) Session(ctx context.Context, w http.ResponseWriter, r *http.Request) (*store.AuthSession, error) {
-	c, err := r.Cookie(CookieName)
-	if err != nil {
-		return nil, ErrNoSession
+	if c, err := r.Cookie(CookieName); err == nil {
+		if id, ok := m.verify(c.Value); ok {
+			if s, err := m.Store.TouchSession(ctx, id, SessionTTL); err == nil {
+				if w != nil {
+					m.setCookie(w, c.Value, SessionTTL)
+				}
+				return s, nil
+			}
+		}
 	}
-	id, ok := m.verify(c.Value)
+	id, ok := m.verify(BearerToken(r))
 	if !ok {
 		return nil, ErrNoSession
 	}
 	s, err := m.Store.TouchSession(ctx, id, SessionTTL)
-	if err != nil {
+	if err != nil || s.Kind != "telegram" {
 		return nil, ErrNoSession
-	}
-	if w != nil {
-		m.setCookie(w, c.Value, SessionTTL)
 	}
 	return s, nil
 }
 
+// SessionByID checks that a session (e.g. the one a WebSocket ticket was
+// issued for) is still live and slides its expiry.
+func (m *Manager) SessionByID(ctx context.Context, id string) (*store.AuthSession, error) {
+	s, err := m.Store.TouchSession(ctx, id, SessionTTL)
+	if err != nil {
+		return nil, ErrNoSession
+	}
+	return s, nil
+}
+
+// BearerToken returns the token of an "Authorization: Bearer" header, or "".
+func BearerToken(r *http.Request) string {
+	scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(token)
+}
+
+// EndSession deletes the session of the cookie or the bearer token and clears the cookie.
 func (m *Manager) EndSession(ctx context.Context, w http.ResponseWriter, r *http.Request) error {
-	if c, err := r.Cookie(CookieName); err == nil {
-		if id, ok := m.verify(c.Value); ok {
+	for _, v := range []string{cookieValue(r), BearerToken(r)} {
+		if id, ok := m.verify(v); ok {
 			if err := m.Store.DeleteSession(ctx, id); err != nil {
 				return err
 			}
@@ -103,6 +131,13 @@ func (m *Manager) EndSession(ctx context.Context, w http.ResponseWriter, r *http
 	}
 	m.setCookie(w, "", -1)
 	return nil
+}
+
+func cookieValue(r *http.Request) string {
+	if c, err := r.Cookie(CookieName); err == nil {
+		return c.Value
+	}
+	return ""
 }
 
 func (m *Manager) setCookie(w http.ResponseWriter, value string, ttl time.Duration) {

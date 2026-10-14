@@ -99,3 +99,27 @@ func TestFailLimiter(t *testing.T) {
 }
 
 const knownHash = "f40685b907b704614da5e7875b365289d3ce75f9f94aa66ee808b0d9dba48ed0"
+
+func TestTickets(t *testing.T) {
+	now := time.Unix(0, 0)
+	tk := NewTickets()
+	tk.now = func() time.Time { return now }
+	v, err := tk.Issue("sess")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id, ok := tk.Redeem(v); !ok || id != "sess" {
+		t.Fatal("fresh ticket rejected")
+	}
+	if _, ok := tk.Redeem(v); ok {
+		t.Fatal("ticket redeemed twice")
+	}
+	v, _ = tk.Issue("sess")
+	now = now.Add(TicketTTL + time.Second)
+	if _, ok := tk.Redeem(v); ok {
+		t.Fatal("expired ticket accepted")
+	}
+	if _, ok := tk.Redeem("unknown"); ok {
+		t.Fatal("unknown ticket accepted")
+	}
+}

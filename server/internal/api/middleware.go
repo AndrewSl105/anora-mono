@@ -9,11 +9,16 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/andrewsl105/anora-runner/internal/store"
 )
 
 type ctxKey int
 
-const sessionKindKey ctxKey = 1
+const (
+	sessionKindKey ctxKey = 1
+	sessionIDKey   ctxKey = 2
+)
 
 type statusRecorder struct {
 	http.ResponseWriter
@@ -53,7 +58,7 @@ func (s *Server) cors(next http.Handler) http.Handler {
 			h := w.Header()
 			h.Set("Access-Control-Allow-Origin", origin)
 			h.Set("Access-Control-Allow-Credentials", "true")
-			h.Set("Access-Control-Allow-Headers", "Content-Type, X-Requested-With")
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Requested-With")
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 			h.Add("Vary", "Origin")
 			if r.Method == http.MethodOptions {
@@ -87,8 +92,36 @@ func (s *Server) requireSession(next http.HandlerFunc) http.HandlerFunc {
 			writeError(w, http.StatusUnauthorized, "unauthorized", "login required")
 			return
 		}
-		next(w, r.WithContext(context.WithValue(r.Context(), sessionKindKey, sess.Kind)))
+		next(w, withSession(r, sess))
 	}
+}
+
+// requireSessionOrTicket is requireSession for the WebSocket handshake, which
+// also accepts a single-use ?ticket= from POST /api/v1/ws/ticket.
+func (s *Server) requireSessionOrTicket(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		v := r.URL.Query().Get("ticket")
+		if v == "" {
+			s.requireSession(next)(w, r)
+			return
+		}
+		id, ok := s.Tickets.Redeem(v)
+		if !ok {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "invalid or expired ticket")
+			return
+		}
+		sess, err := s.Auth.SessionByID(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		next(w, withSession(r, sess))
+	}
+}
+
+func withSession(r *http.Request, sess *store.AuthSession) *http.Request {
+	ctx := context.WithValue(r.Context(), sessionKindKey, sess.Kind)
+	return r.WithContext(context.WithValue(ctx, sessionIDKey, sess.ID))
 }
 
 // clientIP trusts X-Forwarded-For only when the direct peer is a private
