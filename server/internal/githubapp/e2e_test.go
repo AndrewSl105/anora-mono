@@ -2,6 +2,7 @@ package githubapp
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,7 +42,8 @@ func TestEndToEndPR(t *testing.T) {
 	bare := bareRepo(t)
 	ws := &workspace.Manager{Dir: filepath.Join(t.TempDir(), "ws"), RemoteURL: func(string) string { return bare }, Auth: app.Token}
 	cfg := &config.Config{RunnerImage: image, RunnerFake: true, MaxConcurrentTasks: 1, RunnerMemory: "512m", RunnerCPUs: 1,
-		DefaultMaxTurns: 5, DefaultMaxBudgetUSD: 1, DefaultMaxDuration: time.Minute, QuestionTimeout: time.Minute}
+		DefaultMaxTurns: 5, DefaultMaxBudgetUSD: 1, DefaultMaxDuration: time.Minute, QuestionTimeout: time.Minute,
+		RunnerUser: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}
 	hub := events.NewHub()
 	svc := &tasks.Service{Store: st, Hub: hub}
 	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws,

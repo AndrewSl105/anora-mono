@@ -105,8 +105,8 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
 | `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
-| `POST /tasks/{id}/message` `{text}` | `running`/`waiting_input`: injected into the live session. `paused`/`pr_open`/`completed`: starts a new run on the same branch with the saved session. Otherwise `409` |
-| `POST /tasks/{id}/interrupt` | stop the current turn, keep the session |
+| `POST /tasks/{id}/message` `{text}` | `running`/`waiting_input`: injected into the live session (a run handles one prompt, so text that arrives after Claude finished its turn is lost; resend it as a follow-up once the task leaves `running`). `paused`/`pr_open`/`completed`: starts a new run on the same branch with the saved session. Otherwise `409` |
+| `POST /tasks/{id}/interrupt` | stop the current turn; the run then finishes ("Interrupted by the user.") with what it committed, keeping the session for a follow-up message |
 | `POST /tasks/{id}/cancel` | ends the task (`cancelled`), stops the runner |
 | `POST /tasks/{id}/retry` | `failed`/`cancelled` only: queues the original prompt again on the same branch |
 | `GET /stats` | `{running, queued, waiting_input, cost_usd_today, cost_usd_month}` (server-local days) |

@@ -44,6 +44,9 @@ type Config struct {
 	RunnerMemory       string
 	RunnerCPUs         float64
 	SidecarMemory      string
+	// RunnerUser is the uid:gid runner containers run as (tests on hosts whose
+	// user is not uid 1000 override it).
+	RunnerUser string
 
 	DefaultModel        string
 	DefaultMaxTurns     int
@@ -97,6 +100,7 @@ func Load() (*Config, error) {
 		RunnerMemory:       e.str("RUNNER_MEMORY", "3g"),
 		RunnerCPUs:         e.float("RUNNER_CPUS", 2),
 		SidecarMemory:      e.str("SIDECAR_MEMORY", "512m"),
+		RunnerUser:         e.str("RUNNER_USER", "1000:1000"),
 
 		DefaultModel:        e.str("DEFAULT_MODEL", ""),
 		DefaultMaxTurns:     e.int("DEFAULT_MAX_TURNS", 150),

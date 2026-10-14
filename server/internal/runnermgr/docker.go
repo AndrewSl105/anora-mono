@@ -234,6 +234,8 @@ type RunnerSpec struct {
 	Env       map[string]string
 	Memory    string
 	CPUs      float64
+	// User is "uid:gid"; default 1000:1000 (shared with Anora Runner).
+	User string
 }
 
 // Runner is an attached runner container.
@@ -290,7 +292,7 @@ func (m *Manager) StartRunner(ctx context.Context, s RunnerSpec) (*Runner, error
 			AttachStdin:  true,
 			AttachStdout: true,
 			AttachStderr: true,
-			User:         "1000:1000",
+			User:         cmpOr(s.User, "1000:1000"),
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(NetworkName(s.TaskID)),
@@ -372,6 +374,22 @@ func (m *Manager) attach(ctx context.Context, id string) (*Runner, error) {
 		}
 	}()
 	return r, nil
+}
+
+// IsRunning reports whether the container is still running.
+func (m *Manager) IsRunning(ctx context.Context, containerID string) (bool, error) {
+	res, err := m.Docker.ContainerInspect(ctx, containerID, client.ContainerInspectOptions{})
+	if err != nil {
+		return false, err
+	}
+	return res.Container.State.Running, nil
+}
+
+func cmpOr(v, def string) string {
+	if v == "" {
+		return def
+	}
+	return v
 }
 
 // Wait blocks until the container stops and returns its exit code.

@@ -289,6 +289,7 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		Workspace: s.Workspace.Path(t.ID), Env: env,
 		Memory: deref(project.RunnerMemory, s.Cfg.RunnerMemory),
 		CPUs:   deref(project.RunnerCPUs, s.Cfg.RunnerCPUs),
+		User:   s.Cfg.RunnerUser,
 	})
 	if err != nil {
 		_, _ = s.Store.FinishRun(ctx, run.ID, -1)
@@ -404,19 +405,40 @@ type runOutcome struct {
 	committed bool
 }
 
-// supervise streams events until the runner's output ends, then waits for
-// the exit code and applies it.
+// maxReattach bounds re-attaching to a runner whose output stream was cut
+// while the container kept running (e.g. the Docker proxy's idle timeout).
+const maxReattach = 50
+
+// supervise streams events until the runner exits, then waits for the exit
+// code and applies it. A stream that ends while the container still runs is
+// re-attached; events.jsonl fills any gap.
 func (s *Scheduler) supervise(ctx context.Context, t *store.Task, run *store.Run, r *runnermgr.Runner, started time.Time) {
 	var baseline float64
 	if run.Kind == tasks.RunResume || run.Kind == tasks.RunFollowup {
 		baseline, _ = s.Store.SessionBaselineCost(ctx, t.ID, run.ID)
 	}
 	var out runOutcome
+	reattached := 0
 	for {
 		select {
 		case ev, ok := <-r.Events:
 			if !ok {
-				goto exited
+				running, err := s.Docker.IsRunning(ctx, r.ContainerID)
+				if err != nil || !running || reattached >= maxReattach {
+					goto exited
+				}
+				r.Close()
+				nr, err := s.Docker.Attach(ctx, r.ContainerID)
+				if err != nil {
+					s.log(t, run.ID).Error("re-attach after stream end", "err", err)
+					goto exited
+				}
+				reattached++
+				s.log(t, run.ID).Warn("runner output stream ended while running; re-attached", "count", reattached)
+				r = nr
+				s.register(t.ID, run.ID, r)
+				s.replayFile(ctx, t, run.ID, &out)
+				continue
 			}
 			s.handleEvent(ctx, t, run.ID, baseline, ev, &out)
 		case line, ok := <-r.BadLines:
@@ -431,6 +453,8 @@ exited:
 	if err != nil {
 		s.log(t, run.ID).Error("wait runner", "err", err)
 	}
+	// Anything the stream missed (a cut connection) is in the event log.
+	s.replayFile(ctx, t, run.ID, &out)
 	s.finishRun(ctx, t.ID, run, code, out, started)
 }
 
@@ -513,6 +537,12 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 		_ = s.Docker.RemoveAll(ctx, taskID)
 		return
 	}
+	// The owner may have acted already (e.g. cancel then retry): the exit of
+	// this run must not touch a newer run's state or containers.
+	if !tasks.IsLive(t.Status) {
+		log.Info("task moved on before the runner exit was handled", "status", t.Status)
+		return
+	}
 
 	switch code {
 	case runnermgr.ExitPaused:
@@ -552,9 +582,11 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 		s.afterRun(ctx, t, summary, turns, limit)
 	case runnermgr.ExitCancelled:
 		_ = s.Docker.RemoveAll(ctx, taskID)
-		if _, err := s.Tasks.SetStatus(ctx, taskID, tasks.Cancelled, "runner cancelled"); err != nil && !errors.Is(err, store.ErrConflict) {
+		nt, err := s.Store.SetStatus(ctx, taskID, []string{tasks.Running, tasks.WaitingInput}, tasks.Cancelled, "runner cancelled", true)
+		if err != nil && !errors.Is(err, store.ErrConflict) {
 			log.Error("set cancelled", "err", err)
 		}
+		s.Hub.PublishTask(nt)
 	default:
 		reason := fmt.Sprintf("runner exited with code %d", code)
 		if out.lastError != nil {

@@ -64,6 +64,7 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 		RunnerMemory: "512m", RunnerCPUs: 1, SidecarMemory: "256m",
 		DefaultMaxTurns: 10, DefaultMaxBudgetUSD: 1, DefaultMaxDuration: 2 * time.Minute,
 		QuestionTimeout: questionTimeout,
+		RunnerUser:      fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 	}
 	hub := events.NewHub()
 	svc := &tasks.Service{Store: st, Hub: hub}
@@ -296,4 +297,123 @@ func newBareRepo(t *testing.T, base string) string {
 	run(work, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "init")
 	run(work, "push", "-q", bare, base)
 	return bare
+}
+
+func TestStreamCutIsReattached(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Survive a cut", Source: "api"})
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	if !e.sched.CutStream(v.ID) {
+		t.Fatal("no live runner")
+	}
+	time.Sleep(500 * time.Millisecond)
+	view, _ := e.svc.Get(ctx, v.ID)
+	// The answer must reach the runner through the new attach.
+	if _, err := e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web"); err != nil {
+		t.Fatal(err)
+	}
+	done := e.waitStatus(v.ID, tasks.Completed, time.Minute)
+	if !strings.Contains(deref(done.StatusReason), "committed locally") {
+		t.Fatalf("reason %q", deref(done.StatusReason))
+	}
+	types := strings.Join(e.eventTypes(v.ID), ",")
+	if !strings.Contains(types, "committed") || !strings.Contains(types, ",done") {
+		t.Fatalf("events lost across the cut: %s", types)
+	}
+}
+
+// TestReconcile simulates a restart: a run whose container vanished, a task
+// stuck in preparing, and a runner that finished while the service was down.
+func TestReconcile(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	// Stop the env's scheduler loop so the test controls Reconcile.
+	e.cancel()
+	<-e.done
+
+	mk := func(prompt string) *store.Task {
+		v, err := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: prompt, Source: "api"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v.Task
+	}
+
+	// 1. running, but no container: lost.
+	lost := mk("lost")
+	lr, _ := e.st.PendingRun(ctx, lost.ID)
+	_ = e.st.MarkRunStarting(ctx, lr.ID)
+	for _, s := range []string{tasks.Preparing, tasks.Running} {
+		_, _ = e.st.SetStatus(ctx, lost.ID, nil, s, "", false)
+	}
+
+	// 2. preparing: back to queued with its run pending again.
+	prep := mk("prep")
+	pr, _ := e.st.PendingRun(ctx, prep.ID)
+	_ = e.st.MarkRunStarting(ctx, pr.ID)
+	_, _ = e.st.SetStatus(ctx, prep.ID, nil, tasks.Preparing, "", false)
+
+	// 3. a runner that ran to completion while we were "down".
+	done := mk("Say hello")
+	dr, _ := e.st.PendingRun(ctx, done.ID)
+	branch := "agent/x"
+	_ = e.st.SetBranch(ctx, done.ID, branch)
+	if err := e.ws.Prepare(ctx, done.ID, workspace.Repo{FullName: "o/demo", BaseBranch: "dev"}, branch); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.docker.EnsureNetwork(ctx, done.ID, "demo"); err != nil {
+		t.Fatal(err)
+	}
+	_, _ = e.docker.EnsureVolume(ctx, done.ID, "demo")
+	_ = e.st.MarkRunStarting(ctx, dr.ID)
+	r, err := e.docker.StartRunner(ctx, runnermgr.RunnerSpec{TaskID: done.ID, RunID: dr.ID, Project: "demo", Image: runnerImage(),
+		Workspace: e.ws.Path(done.ID), Env: map[string]string{"ANORA_RUNNER_FAKE": "1"}, Memory: "512m", CPUs: 1,
+		User: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = e.st.SetRunContainer(ctx, dr.ID, r.ContainerID)
+	for _, s := range []string{tasks.Preparing, tasks.Running} {
+		_, _ = e.st.SetStatus(ctx, done.ID, nil, s, "", false)
+	}
+	_ = r.Send(runnermgr.NewRun(runnermgr.RunCommand{TaskID: fmt.Sprint(done.ID), Prompt: "Say hello",
+		Limits: runnermgr.Limits{MaxTurns: 5, MaxBudgetUSD: 1, MaxDurationSec: 60, QuestionTimeoutSec: 30},
+		Commit: runnermgr.CommitInfo{Message: "Say hello", AuthorName: "anora[bot]", AuthorEmail: "a@b"}}))
+	_ = r.Send(runnermgr.NewAnswer("q1", "hello"))
+	if code, _ := e.docker.Wait(ctx, r.ContainerID); code != 0 {
+		t.Fatalf("runner exit %d", code)
+	}
+	r.Close() // nobody consumed the stream: every event is only in events.jsonl
+
+	// 4. an orphaned network of a task that no longer exists.
+	_, _ = e.docker.EnsureNetwork(ctx, 999_999_999, "gone")
+
+	if err := e.sched.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	if tk, _ := e.st.GetTask(ctx, lost.ID); tk.Status != tasks.Failed || deref(tk.StatusReason) != "lost" {
+		t.Fatalf("lost: %s %v", tk.Status, deref(tk.StatusReason))
+	}
+	if tk, _ := e.st.GetTask(ctx, prep.ID); tk.Status != tasks.Queued {
+		t.Fatalf("prep: %s", tk.Status)
+	}
+	if run, err := e.st.PendingRun(ctx, prep.ID); err != nil || run.ID != pr.ID {
+		t.Fatalf("prep run not pending again: %v", err)
+	}
+	tk, _ := e.st.GetTask(ctx, done.ID)
+	if tk.Status != tasks.Completed || !strings.Contains(deref(tk.StatusReason), "committed locally") {
+		t.Fatalf("done: %s %v", tk.Status, deref(tk.StatusReason))
+	}
+	types := strings.Join(e.eventTypes(done.ID), ",")
+	for _, want := range []string{"started", "question", "committed", "done", "run_finished"} {
+		if !strings.Contains(types, want) {
+			t.Errorf("replay missed %s: %s", want, types)
+		}
+	}
+	ids, _ := e.docker.TaskIDsWithResources(ctx)
+	if ids[999_999_999] || ids[done.ID] {
+		t.Fatalf("leftover resources: %v", ids)
+	}
 }
