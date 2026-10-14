@@ -78,12 +78,14 @@ A **project** groups repositories and holds run settings. All override fields ar
   "pr_number": null, "pr_url": null, "ci_status": null,
   "cost_usd_total": 0.42, "turns": 17, "source": "web",
   "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null,
-  "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…"
+  "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…",
+  "queued_message": null
 }
 ```
 
 - `turns`: Claude turns across all runs of the task (sum of each run's last reported `usage.turns`).
 - `last_activity`: one line (max 120 characters) describing the latest thing that happened: the latest `tool_use` summary, or the latest status change as `<status>` / `<status>: <reason>`, whichever came last. `last_activity_at` is when it was set. Both are `null` only for tasks that predate the field and have no surviving events.
+- `queued_message`: text sent with `POST …/message` while a run was active (several messages are joined by a blank line), or `null`. It becomes the input of the next run as soon as the current run ends.
 
 `GET /tasks/{id}` and all task actions return this object plus `repository`, `latest_run` (`{id, kind, input, exit_code, last_seq, cost_usd, turns, started_at, finished_at}` or `null`) and `open_question` (`{id, text, options, created_at, …}` or `null`).
 
@@ -91,12 +93,12 @@ A **project** groups repositories and holds run settings. All override fields ar
 
 | status | meaning | actions available |
 |---|---|---|
-| `queued` | waiting for a slot | cancel |
-| `preparing` | cloning, creating branch and sidecars | cancel |
-| `running` | Claude is working | message (injected), interrupt, cancel |
-| `waiting_input` | Claude asked a question (`open_question`) | answer, message, interrupt, cancel |
+| `queued` | waiting for a slot | message (queued), cancel |
+| `preparing` | cloning, creating branch and sidecars | message (queued), cancel |
+| `running` | Claude is working | message (queued), interrupt, cancel |
+| `waiting_input` | Claude asked a question (`open_question`) | answer, message (queued), interrupt, cancel |
 | `paused` | question not answered in time; containers removed | answer (resumes), message (resumes), cancel |
-| `pushing` | validating diff, pushing, opening the PR | cancel |
+| `pushing` | validating diff, pushing, opening the PR | message (queued), cancel |
 | `pr_open` | PR exists; `ci_status` follows CI | message (new run on the same branch), cancel |
 | `completed` | PR merged/closed, or finished with no changes | message (new run) |
 | `failed` | see `status_reason` | retry |
@@ -114,8 +116,8 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `GET /tasks/{id}/runs` | the task's runs, oldest first, including a queued one (`started_at: null`): `{id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd, turns, started_at, finished_at}`. `kind` is `initial`, `resume`, `followup` or `retry`; `cost_usd` is the run's own cost. Paginated with `limit`/`cursor` |
 | `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
-| `POST /tasks/{id}/message` `{text}` | `running`/`waiting_input`: injected into the live session (a run handles one prompt, so text that arrives after Claude finished its turn is lost; resend it as a follow-up once the task leaves `running`). `paused`/`pr_open`/`completed`: starts a new run on the same branch with the saved session. Otherwise `409` |
-| `POST /tasks/{id}/interrupt` | stop the current turn; the run then finishes ("Interrupted by the user.") with what it committed, keeping the session for a follow-up message |
+| `POST /tasks/{id}/message` `{text}` | `queued`/`preparing`/`running`/`waiting_input`/`pushing`: **queued** (a run handles one prompt; nothing is injected into a live session). The text is kept in `queued_message` and starts the next run (same branch, same session) as soon as the current run ends: on `pr_open`/`completed` as a follow-up, on `paused` as a resume. If the task fails or is cancelled first, the text is dropped and a `message_dropped` event shows it. `paused`/`pr_open`/`completed`: starts a new run right away. Otherwise `409` |
+| `POST /tasks/{id}/interrupt` | `running`/`waiting_input`: stops Claude and **ends the run** ("Interrupted by the user."); what it committed is pushed as for any finished run, and the session is kept. A queued message then starts the next run; otherwise send a follow-up message |
 | `POST /tasks/{id}/cancel` | ends the task (`cancelled`), stops the runner |
 | `POST /tasks/{id}/retry` | `failed`/`cancelled` only: queues the original prompt again on the same branch |
 | `GET /stats` | `{running, queued, waiting_input, cost_usd_today, cost_usd_month}` (server-local days) |
@@ -139,7 +141,8 @@ Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` disc
   |---|---|
   | `status` | `{status, reason?}` |
   | `answer` | `{question_id, text, answered_via}` (`web` or `telegram`) |
-  | `message` | `{text, delivery: "injected"\|"new_run"}` |
+  | `message` | `{text, delivery: "queued"\|"new_run"}` (`"injected"` only in timelines recorded before messages were queued) |
+  | `message_dropped` | `{text, reason: "failed"\|"cancelled"}`: a queued message that never started a run |
   | `interrupt` | `{}` |
   | `run_started` | `{run_id, kind}` (`initial`, `resume`, `followup`, `retry`) |
   | `run_finished` | `{run_id, exit_code}` |
@@ -169,7 +172,7 @@ The server pushes:
 
 - `task_id` subscriptions receive that task's `event` and `task` messages.
 - `scope: "tasks"` receives `task` messages for every task (for the list view), no events.
-- A `task` message is sent on every status change and also whenever `turns`, `last_activity` or `last_activity_at` change (each `tool_use` and `usage` event), so the list view stays live without event subscriptions.
+- A `task` message is sent on every status change and also whenever `turns`, `last_activity`, `last_activity_at` or `queued_message` change (each `tool_use` and `usage` event, each queued message), so the list view stays live without event subscriptions.
 - The server pings every 30 s. Messages to a slow client may be dropped. **On (re)connect, reload missed events with `GET /tasks/{id}/events?after_id=<last id>`**, then rely on pushes.
 
 ## Other

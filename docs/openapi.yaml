@@ -430,7 +430,12 @@ paths:
     post:
       operationId: sendMessage
       tags: [tasks]
-      summary: Mid-session message or follow-up run
+      summary: Follow-up message (queued while a run is active)
+      description: |
+        `queued`/`preparing`/`running`/`waiting_input`/`pushing`: the text is queued
+        (`queued_message` on the task, event `message` with `delivery: queued`) and
+        starts the next run when the current one ends. `paused`/`pr_open`/`completed`:
+        starts a new run now (`delivery: new_run`). Otherwise `409`.
       parameters:
         - $ref: '#/components/parameters/TaskID'
         - $ref: '#/components/parameters/XRequestedWith'
@@ -446,7 +451,7 @@ paths:
                 text: { type: string }
       responses:
         '200':
-          description: Delivered or queued
+          description: Queued, or a new run was started
           content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
@@ -684,7 +689,7 @@ components:
 
     Task:
       type: object
-      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, created_at, updated_at, last_activity, last_activity_at]
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, created_at, updated_at, last_activity, last_activity_at, queued_message]
       properties:
         id: { type: integer, format: int64 }
         project_id: { type: string }
@@ -710,6 +715,9 @@ components:
           maxLength: 120
           description: 'Latest tool_use summary or status change ("<status>" or "<status>: <reason>"), one line'
         last_activity_at: { type: [string, 'null'], format: date-time }
+        queued_message:
+          type: [string, 'null']
+          description: Text sent while a run was active (several messages joined by a blank line); it becomes the input of the next run when the current one ends. `null` when nothing is queued.
 
     TaskView:
       allOf:
@@ -770,6 +778,7 @@ components:
         - $ref: '#/components/schemas/StatusEvent'
         - $ref: '#/components/schemas/AnswerEvent'
         - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/MessageDroppedEvent'
         - $ref: '#/components/schemas/InterruptEvent'
         - $ref: '#/components/schemas/RunStartedEvent'
         - $ref: '#/components/schemas/RunFinishedEvent'
@@ -795,6 +804,7 @@ components:
           status: '#/components/schemas/StatusEvent'
           answer: '#/components/schemas/AnswerEvent'
           message: '#/components/schemas/MessageEvent'
+          message_dropped: '#/components/schemas/MessageDroppedEvent'
           interrupt: '#/components/schemas/InterruptEvent'
           run_started: '#/components/schemas/RunStartedEvent'
           run_finished: '#/components/schemas/RunFinishedEvent'
@@ -806,7 +816,7 @@ components:
 
     EventType:
       type: string
-      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, status, answer, message, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
+      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, status, answer, message, message_dropped, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
 
     EventBase:
       type: object
@@ -1117,7 +1127,27 @@ components:
       required: [text, delivery]
       properties:
         text: { type: string }
-        delivery: { type: string, enum: [injected, new_run] }
+        delivery:
+          type: string
+          enum: [queued, new_run, injected]
+          description: '`queued`: waits for the active run to end, then starts the next run. `new_run`: started a run right away. `injected`: only in timelines recorded before messages were queued (such text was not delivered reliably).'
+
+    MessageDroppedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [message_dropped] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/MessageDroppedPayload' }
+
+    MessageDroppedPayload:
+      type: object
+      required: [text, reason]
+      properties:
+        text: { type: string, description: The queued text that was not sent }
+        reason: { type: string, enum: [failed, cancelled], description: The status that ended the task before the text could start a run }
 
     InterruptEvent:
       allOf:

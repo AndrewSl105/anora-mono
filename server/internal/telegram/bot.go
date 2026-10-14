@@ -276,7 +276,7 @@ func (b *Bot) onTask(ctx context.Context, t *store.Task) {
 	if _, msgID := b.ensureStatus(ctx, t); msgID != 0 {
 		b.requestEdit(ctx, t.ID)
 	}
-	if t.Status == tasks.Failed && t.StatusEvent != nil {
+	if t.Status == tasks.Failed && len(t.StatusEvents) > 0 {
 		to, _ := b.targetFor(ctx, t)
 		_, _ = b.send(ctx, to, fmt.Sprintf("❌ <b>#%d failed</b>: %s", t.ID, esc(cut(deref(t.StatusReason), 500))),
 			b.taskButtons(t, to.chatID == b.OwnerID))

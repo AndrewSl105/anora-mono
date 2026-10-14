@@ -76,14 +76,19 @@ type MessageAction int
 
 const (
 	MessageReject MessageAction = iota
-	MessageInject
+	// MessageQueue keeps the text until the active run ends, then starts it
+	// as the next run. A run handles one prompt, so nothing is injected.
+	MessageQueue
 	MessageNewRun
 )
 
+// QueueStates accept a message as queued: a run is pending or active.
+var QueueStates = []string{Queued, Preparing, Running, WaitingInput, Pushing}
+
 func MessageActionFor(status string) MessageAction {
 	switch status {
-	case Running, WaitingInput:
-		return MessageInject
+	case Queued, Preparing, Running, WaitingInput, Pushing:
+		return MessageQueue
 	case Paused, PROpen, Completed:
 		return MessageNewRun
 	}

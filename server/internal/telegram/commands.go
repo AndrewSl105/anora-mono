@@ -18,7 +18,7 @@ var commandList = []telego.BotCommand{
 	{Command: "new", Description: "New task: /new <project> <prompt>"},
 	{Command: "tasks", Description: "Active tasks"},
 	{Command: "task", Description: "Task details: /task <id>"},
-	{Command: "msg", Description: "Message a task: /msg <id> <text>"},
+	{Command: "msg", Description: "Follow-up for a task: /msg <id> <text>"},
 	{Command: "cancel", Description: "Cancel: /cancel <id>"},
 	{Command: "retry", Description: "Retry: /retry <id>"},
 	{Command: "projects", Description: "List projects"},
@@ -30,7 +30,7 @@ const help = `<b>Anora Runner</b>
 /new &lt;project&gt; &lt;prompt&gt; — new task (in a bound topic: /new &lt;prompt&gt; or just write)
 /tasks — active tasks
 /task &lt;id&gt; — details
-/msg &lt;id&gt; &lt;text&gt; — follow-up or mid-session message
+/msg &lt;id&gt; &lt;text&gt; — follow-up (queued while a run is active)
 /cancel &lt;id&gt; · /retry &lt;id&gt;
 /projects — projects
 /bind &lt;project&gt; — link this forum topic to a project
@@ -126,10 +126,10 @@ func (b *Bot) onMessage(ctx context.Context, m *telego.Message) {
 			b.reply(ctx, m, "⚠️ "+esc(errText(err)), nil)
 			return
 		}
-		if v.Status == tasks.Queued {
-			b.reply(ctx, m, fmt.Sprintf("Queued a new run for #%d.", id), nil)
+		if v.QueuedMessage != nil {
+			b.reply(ctx, m, fmt.Sprintf("Queued for #%d: it starts as a new run when the current run ends.", id), nil)
 		} else {
-			b.reply(ctx, m, fmt.Sprintf("Sent to #%d.", id), nil)
+			b.reply(ctx, m, fmt.Sprintf("Started a new run for #%d.", id), nil)
 		}
 	case "cancel", "retry":
 		id, _, ok := splitID(args)

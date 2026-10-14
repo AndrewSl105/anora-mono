@@ -284,6 +284,41 @@ func TestFakeRunCancelAndFollowUp(t *testing.T) {
 	}
 }
 
+// A message sent while a run is active is queued and starts the next run when
+// the current one ends; nothing is injected into the live session.
+func TestMessageWhileRunningIsQueued(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Queue me", Source: "api"})
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	view, err := e.svc.Message(ctx, v.ID, "Also add a footer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if view.QueuedMessage == nil || *view.QueuedMessage != "Also add a footer" {
+		t.Fatalf("queued_message %v", view.QueuedMessage)
+	}
+	_, _ = e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web")
+
+	// The first run completes, the queued text starts a follow-up run, which
+	// (fake runner) asks again.
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	view, _ = e.svc.Get(ctx, v.ID)
+	if view.QueuedMessage != nil || view.LatestRun.Kind != tasks.RunFollowup || view.LatestRun.Input != "Also add a footer" {
+		t.Fatalf("follow-up run %+v queued %v", view.LatestRun, view.QueuedMessage)
+	}
+	_, _ = e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hi", "web")
+	e.waitStatus(v.ID, tasks.Completed, time.Minute)
+	out, _ := exec.Command("git", "-C", e.ws.Path(v.ID), "log", "--format=%s", "dev..HEAD").Output()
+	if !strings.Contains(string(out), "Follow-up: Also add a footer") {
+		t.Fatalf("follow-up commit missing: %s", out)
+	}
+	types := strings.Join(e.eventTypes(v.ID), ",")
+	if strings.Count(types, "run_started") != 2 {
+		t.Fatalf("events %s", types)
+	}
+}
+
 func newBareRepo(t *testing.T, base string) string {
 	t.Helper()
 	dir := t.TempDir()

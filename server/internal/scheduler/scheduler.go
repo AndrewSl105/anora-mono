@@ -115,14 +115,6 @@ func (s *Scheduler) Answer(taskID int64, runnerQuestionID, text string) error {
 	return r.Send(runnermgr.NewAnswer(runnerQuestionID, text))
 }
 
-func (s *Scheduler) Message(taskID int64, text string) error {
-	r, ok := s.liveRunner(taskID)
-	if !ok {
-		return tasks.ErrNotRunning
-	}
-	return r.Send(runnermgr.NewMessage(text))
-}
-
 func (s *Scheduler) Interrupt(taskID int64) error {
 	r, ok := s.liveRunner(taskID)
 	if !ok {
@@ -559,22 +551,19 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 
 	switch code {
 	case runnermgr.ExitPaused:
-		nt, err := s.Tasks.SetStatus(ctx, taskID, tasks.Paused, "no answer within the question timeout")
-		if err != nil {
-			log.Error("set paused", "err", err)
-			return
-		}
-		// An answer that arrived while the runner was exiting resumes right away.
+		// An answer that arrived while the runner was exiting joins the queued
+		// input, so moving to paused starts the resume run right away.
 		if out.paused != nil {
 			qid := tasks.QuestionID(run.ID, out.paused.QuestionID)
 			if q, err := s.Store.GetQuestion(ctx, qid); err == nil && q.Answer != nil && q.AnsweredVia != nil && *q.AnsweredVia != "expired" {
-				if rt, err := s.Store.Requeue(ctx, taskID, []string{tasks.Paused}, tasks.RunResume, tasks.ResumeInput(q.Text, *q.Answer)); err == nil {
-					s.Hub.PublishTask(rt)
-					return
+				if _, _, err := s.Store.QueueMessage(ctx, taskID, []string{tasks.Running, tasks.WaitingInput}, tasks.ResumeInput(q.Text, *q.Answer), false); err != nil {
+					log.Error("queue late answer", "err", err)
 				}
 			}
 		}
-		_ = nt
+		if _, err := s.Tasks.SetStatus(ctx, taskID, tasks.Paused, "no answer within the question timeout"); err != nil {
+			log.Error("set paused", "err", err)
+		}
 	case runnermgr.ExitDone, runnermgr.ExitLimitExceeded:
 		_ = s.Store.CloseOpenQuestions(ctx, taskID, "")
 		limit := ""

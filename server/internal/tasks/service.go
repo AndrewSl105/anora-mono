@@ -23,9 +23,8 @@ var (
 type Executor interface {
 	// Wake nudges the scheduler to look for queued tasks.
 	Wake()
-	// Answer, Message and Interrupt write to a live runner's stdin.
+	// Answer and Interrupt write to a live runner's stdin.
 	Answer(taskID int64, runnerQuestionID, text string) error
-	Message(taskID int64, text string) error
 	Interrupt(taskID int64) error
 	// Cancel stops a task's runner (if any) and cleans up its containers.
 	Cancel(ctx context.Context, taskID int64) error
@@ -184,43 +183,57 @@ func (s *Service) Answer(ctx context.Context, taskID int64, questionID, text, vi
 	return s.Get(ctx, taskID)
 }
 
-// Message injects text into a live session or starts a follow-up run.
+// Message queues text while a run is pending or active (it becomes the next
+// run when the current one ends) or starts a follow-up run right away.
 func (s *Service) Message(ctx context.Context, taskID int64, text string) (*View, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, fmt.Errorf("%w: text is required", ErrInvalid)
 	}
-	t, err := s.Store.GetTask(ctx, taskID)
-	if err != nil {
-		return nil, err
-	}
-	switch MessageActionFor(t.Status) {
-	case MessageInject:
-		if s.Executor == nil {
-			return nil, ErrNotRunning
-		}
-		if err := s.Executor.Message(taskID, text); err != nil {
+	// The task can move on between reading and writing (a run ending); the
+	// conditional writes then fail with ErrConflict and the state is re-read.
+	for attempt := 0; ; attempt++ {
+		t, err := s.Store.GetTask(ctx, taskID)
+		if err != nil {
 			return nil, err
 		}
-		ev, _ := s.Store.AddBackendEvent(ctx, taskID, nil, "message", map[string]any{"text": text, "delivery": "injected"})
+		err = s.message(ctx, t, text)
+		if errors.Is(err, ErrConflict) && attempt < 2 {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		return s.Get(ctx, taskID)
+	}
+}
+
+func (s *Service) message(ctx context.Context, t *store.Task, text string) error {
+	switch MessageActionFor(t.Status) {
+	case MessageQueue:
+		nt, ev, err := s.Store.QueueMessage(ctx, t.ID, QueueStates, text, true)
+		if err != nil {
+			return err
+		}
 		s.publishEvent(ev)
+		s.publishTask(nt)
 	case MessageNewRun:
 		kind := RunFollowup
 		if t.Status == Paused {
 			kind = RunResume
 		}
-		nt, err := s.Store.Requeue(ctx, taskID, []string{t.Status}, kind, text)
+		nt, err := s.Store.Requeue(ctx, t.ID, []string{t.Status}, kind, text)
 		if err != nil {
-			return nil, err
+			return err
 		}
-		ev, _ := s.Store.AddBackendEvent(ctx, taskID, nil, "message", map[string]any{"text": text, "delivery": "new_run"})
+		ev, _ := s.Store.AddBackendEvent(ctx, t.ID, nil, "message", map[string]any{"text": text, "delivery": "new_run"})
 		s.publishEvent(ev)
 		s.publishTask(nt)
 		s.wake()
 	default:
-		return nil, fmt.Errorf("%w: cannot send a message to a task in state %s", ErrConflict, t.Status)
+		return fmt.Errorf("%w: cannot send a message to a task in state %s", ErrConflict, t.Status)
 	}
-	return s.Get(ctx, taskID)
+	return nil
 }
 
 func (s *Service) Interrupt(ctx context.Context, taskID int64) (*View, error) {

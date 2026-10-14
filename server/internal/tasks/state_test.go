@@ -39,9 +39,9 @@ func TestFrom(t *testing.T) {
 
 func TestMessageAction(t *testing.T) {
 	cases := map[string]MessageAction{
-		Running: MessageInject, WaitingInput: MessageInject,
+		Queued: MessageQueue, Preparing: MessageQueue, Running: MessageQueue, WaitingInput: MessageQueue, Pushing: MessageQueue,
 		Paused: MessageNewRun, PROpen: MessageNewRun, Completed: MessageNewRun,
-		Queued: MessageReject, Failed: MessageReject, Pushing: MessageReject, Cancelled: MessageReject,
+		Failed: MessageReject, Cancelled: MessageReject,
 	}
 	for s, want := range cases {
 		if got := MessageActionFor(s); got != want {

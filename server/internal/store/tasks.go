@@ -36,20 +36,24 @@ type Task struct {
 	LastActivity   *string    `json:"last_activity"`
 	LastActivityAt *time.Time `json:"last_activity_at"`
 
-	// StatusEvent is the timeline event written by the status change that
-	// returned this task (nil otherwise); publishers send it along.
-	StatusEvent *Event `json:"-"`
+	// QueuedMessage is text sent while a run was active; it becomes the
+	// input of the next run when the current one ends.
+	QueuedMessage *string `json:"queued_message"`
+
+	// StatusEvents are the timeline events written by the status change that
+	// returned this task, oldest first (empty otherwise); publishers send them along.
+	StatusEvents []*Event `json:"-"`
 }
 
 const taskCols = `id, project_id, repository_id, title, prompt, status, status_reason, branch, session_id,
 	pr_number, pr_url, ci_status, cost_usd_total::float8, turns, source, created_at, updated_at, finished_at, paused_at, cleaned_at,
-	last_activity, last_activity_at`
+	last_activity, last_activity_at, queued_message`
 
 func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ProjectID, &t.RepositoryID, &t.Title, &t.Prompt, &t.Status, &t.StatusReason, &t.Branch,
 		&t.SessionID, &t.PRNumber, &t.PRURL, &t.CIStatus, &t.CostUSDTotal, &t.Turns, &t.Source, &t.CreatedAt, &t.UpdatedAt,
-		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt)
+		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt, &t.QueuedMessage)
 	if err != nil {
 		return nil, err
 	}
@@ -70,7 +74,8 @@ func (s *Store) CreateTask(ctx context.Context, t Task) (*Task, error) {
 		if _, err := insertRun(ctx, tx, out.ID, "initial", t.Prompt); err != nil {
 			return err
 		}
-		out.StatusEvent, err = insertBackendEvent(ctx, tx, out.ID, nil, "status", map[string]any{"status": "queued"})
+		ev, err := insertBackendEvent(ctx, tx, out.ID, nil, "status", map[string]any{"status": "queued"})
+		out.StatusEvents = []*Event{ev}
 		return err
 	})
 	if isFKViolation(err) {
@@ -177,8 +182,80 @@ func setStatusTx(ctx context.Context, tx pgx.Tx, id int64, from []string, to, re
 	if reason != "" {
 		payload["reason"] = reason
 	}
-	t.StatusEvent, err = insertBackendEvent(ctx, tx, id, nil, "status", payload)
-	return t, err
+	ev, err := insertBackendEvent(ctx, tx, id, nil, "status", payload)
+	if err != nil {
+		return nil, err
+	}
+	t.StatusEvents = []*Event{ev}
+	if t.QueuedMessage == nil {
+		return t, nil
+	}
+	return drainQueuedTx(ctx, tx, t)
+}
+
+// drainQueuedTx applies a queued message once the run it waited for is over:
+// a state that accepts messages starts it as the next run right away; a
+// failed or cancelled task drops it with a visible event.
+func drainQueuedTx(ctx context.Context, tx pgx.Tx, t *Task) (*Task, error) {
+	text := *t.QueuedMessage
+	switch t.Status {
+	case "paused", "pr_open", "completed":
+		kind := "followup"
+		if t.Status == "paused" {
+			kind = "resume"
+		}
+		events := t.StatusEvents
+		nt, err := setStatusTx(ctx, tx, t.ID, []string{t.Status}, "queued", "", false)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM runs WHERE task_id = $1 AND started_at IS NULL`, t.ID); err != nil {
+			return nil, err
+		}
+		if _, err := insertRun(ctx, tx, t.ID, kind, text); err != nil {
+			return nil, err
+		}
+		if err := tx.QueryRow(ctx, `UPDATE tasks SET queued_message = NULL WHERE id = $1 RETURNING queued_message`, t.ID).Scan(&nt.QueuedMessage); err != nil {
+			return nil, err
+		}
+		nt.StatusEvents = append(events, nt.StatusEvents...)
+		return nt, nil
+	case "failed", "cancelled":
+		ev, err := insertBackendEvent(ctx, tx, t.ID, nil, "message_dropped", map[string]any{"text": text, "reason": t.Status})
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.Exec(ctx, `UPDATE tasks SET queued_message = NULL WHERE id = $1`, t.ID); err != nil {
+			return nil, err
+		}
+		t.QueuedMessage = nil
+		t.StatusEvents = append(t.StatusEvents, ev)
+	}
+	return t, nil
+}
+
+// QueueMessage appends text to the task's queued message while the task is in
+// one of `from`, records a message event with delivery "queued", and returns
+// the task. ErrConflict when the task has left those states.
+func (s *Store) QueueMessage(ctx context.Context, id int64, from []string, text string, event bool) (*Task, *Event, error) {
+	var out *Task
+	var ev *Event
+	err := s.Tx(ctx, func(tx pgx.Tx) error {
+		var err error
+		out, err = scanTask(tx.QueryRow(ctx, `UPDATE tasks
+			SET queued_message = CASE WHEN queued_message IS NULL THEN $3 ELSE queued_message || E'\n\n' || $3 END,
+				updated_at = now()
+			WHERE id = $1 AND status = ANY($2) RETURNING `+taskCols, id, from, text))
+		if err == pgx.ErrNoRows {
+			return ErrConflict
+		}
+		if err != nil || !event {
+			return err
+		}
+		ev, err = insertBackendEvent(ctx, tx, id, nil, "message", map[string]any{"text": text, "delivery": "queued"})
+		return err
+	})
+	return out, ev, err
 }
 
 // Requeue queues a new pending run and moves the task to queued, atomically.
