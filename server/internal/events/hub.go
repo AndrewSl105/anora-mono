@@ -56,8 +56,14 @@ func (h *Hub) PublishEvent(ev *store.Event) {
 	}
 }
 
+// PublishTask publishes a task snapshot, preceded by the status event that
+// produced it, if any.
 func (h *Hub) PublishTask(t *store.Task) {
-	if t != nil {
-		h.publish(Message{TaskID: t.ID, Task: t})
+	if t == nil {
+		return
 	}
+	if t.StatusEvent != nil {
+		h.PublishEvent(t.StatusEvent)
+	}
+	h.publish(Message{TaskID: t.ID, Task: t})
 }

@@ -196,15 +196,6 @@ func (s *Store) ListProjects(ctx context.Context, includeArchived bool, cursor s
 	return out, nil
 }
 
-func (s *Store) ProjectByThread(ctx context.Context, threadID int64) (*Project, error) {
-	var id string
-	err := s.Pool.QueryRow(ctx, `SELECT id FROM projects WHERE telegram_thread_id = $1 AND NOT archived`, threadID).Scan(&id)
-	if err != nil {
-		return nil, notFound(err)
-	}
-	return s.GetProject(ctx, id)
-}
-
 func (s *Store) ListRepositories(ctx context.Context, projectID string) ([]Repository, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT id, project_id, full_name, base_branch, installation_id, is_default
 		FROM repositories WHERE project_id = $1 ORDER BY is_default DESC, id`, projectID)

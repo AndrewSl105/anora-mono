@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mymmrac/telego"
+
 	"github.com/andrewsl105/anora-runner/internal/api"
 	"github.com/andrewsl105/anora-runner/internal/auth"
 	"github.com/andrewsl105/anora-runner/internal/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/andrewsl105/anora-runner/internal/scheduler"
 	"github.com/andrewsl105/anora-runner/internal/store"
 	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora-runner/internal/telegram"
 	"github.com/andrewsl105/anora-runner/internal/workspace"
 )
 
@@ -82,7 +85,7 @@ func runServe() error {
 	}
 
 	srv := &api.Server{
-		Webhook: webhook,
+		Webhook:  webhook,
 		Cfg:      cfg,
 		Store:    st,
 		Tasks:    taskSvc,
@@ -105,6 +108,23 @@ func runServe() error {
 	}
 
 	var wg sync.WaitGroup
+	if cfg.TelegramEnabled() {
+		tg, err := telego.NewBot(cfg.TelegramBotToken, telego.WithDiscardLogger())
+		if err != nil {
+			return fmt.Errorf("telegram: %w", err)
+		}
+		bot := &telegram.Bot{
+			API: tg, Store: st, Tasks: taskSvc, Hub: hub, OwnerID: cfg.TelegramAllowedUserID,
+			WebAppURL: cfg.WebAppURL, MiniAppLink: cfg.TelegramMiniAppLink,
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := bot.Run(ctx, tg); err != nil {
+				slog.Error("telegram bot stopped", "err", err)
+			}
+		}()
+	}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()

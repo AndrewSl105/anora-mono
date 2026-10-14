@@ -9,8 +9,13 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 
 	"github.com/pquerna/otp/totp"
 
@@ -176,3 +181,60 @@ func TestTelegramLogin(t *testing.T) {
 }
 
 func jsonNum(n int64) string { b, _ := json.Marshal(n); return string(b) }
+
+func TestWebSocket(t *testing.T) {
+	c, _, secret := setup(t)
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+	c.do("POST", "/api/v1/projects", map[string]any{"id": "demo", "name": "Demo"})
+	c.do("POST", "/api/v1/projects/demo/repositories", map[string]any{"full_name": "o/r", "installation_id": 1})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	wsURL := "ws" + strings.TrimPrefix(c.base, "http") + "/api/v1/ws"
+	if _, _, err := websocket.Dial(ctx, wsURL, nil); err == nil {
+		t.Fatal("websocket without session must fail")
+	}
+	u, _ := url.Parse(c.base)
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{HTTPClient: c.http, HTTPHeader: http.Header{
+		"Cookie": {cookieHeader(c.http.Jar.Cookies(u))},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.CloseNow()
+	_ = wsjson.Write(ctx, conn, map[string]any{"op": "subscribe", "scope": "tasks"})
+	_ = wsjson.Write(ctx, conn, map[string]any{"op": "bogus"})
+	var msg map[string]any
+	if err := wsjson.Read(ctx, conn, &msg); err != nil || msg["op"] != "error" {
+		t.Fatalf("expected error op, got %v %v", msg, err)
+	}
+	_, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "demo", "prompt": "hello"})
+	id := int64(task["id"].(float64))
+	if err := wsjson.Read(ctx, conn, &msg); err != nil || msg["op"] != "task" {
+		t.Fatalf("expected task push, got %v %v", msg, err)
+	}
+
+	// Per-task subscription also receives timeline events.
+	_ = wsjson.Write(ctx, conn, map[string]any{"op": "subscribe", "task_id": id})
+	time.Sleep(100 * time.Millisecond)
+	c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil)
+	gotEvent := false
+	for i := 0; i < 4 && !gotEvent; i++ {
+		if err := wsjson.Read(ctx, conn, &msg); err != nil {
+			t.Fatal(err)
+		}
+		gotEvent = msg["op"] == "event"
+	}
+	if !gotEvent {
+		t.Fatal("no event push for subscribed task")
+	}
+}
+
+func cookieHeader(cs []*http.Cookie) string {
+	var parts []string
+	for _, c := range cs {
+		parts = append(parts, c.Name+"="+c.Value)
+	}
+	return strings.Join(parts, "; ")
+}

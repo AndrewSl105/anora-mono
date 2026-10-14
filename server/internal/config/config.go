@@ -30,6 +30,8 @@ type Config struct {
 	TelegramBotToken      string
 	TelegramAllowedUserID int64
 	WebAppURL             string
+	// TelegramMiniAppLink is the optional t.me/<bot>/<app> link for deep links in groups.
+	TelegramMiniAppLink string
 
 	AdminPasswordHash string
 	AdminTOTPSecret   string
@@ -83,6 +85,7 @@ func Load() (*Config, error) {
 		TelegramBotToken:      e.str("TELEGRAM_BOT_TOKEN", ""),
 		TelegramAllowedUserID: e.int64("TELEGRAM_ALLOWED_USER_ID", 0),
 		WebAppURL:             strings.TrimRight(e.str("WEB_APP_URL", ""), "/"),
+		TelegramMiniAppLink:   e.str("TELEGRAM_MINIAPP_LINK", ""),
 
 		AdminPasswordHash: e.str("ADMIN_PASSWORD_HASH", ""),
 		AdminTOTPSecret:   e.str("ADMIN_TOTP_SECRET", ""),

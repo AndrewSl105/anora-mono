@@ -43,3 +43,9 @@ Deviations from docs/SPEC.md, one line of reasoning each.
 - CI status: `requested`/`in_progress` → `pending`; a `failure` sticks until the next push starts new checks, so a later green suite cannot hide a red one.
 - A merged or closed PR completes the task and removes its containers; `OnCIFailed` is a logged no-op hook for future auto-fixing.
 - Docker integration tests must run with `go test -p 1`: startup reconciliation correctly removes containers of tasks unknown to its database, which includes another test package's tasks.
+- Migration 00002 adds `projects.telegram_chat_id` and `tasks.telegram_chat_id/thread_id/message_id`: a bound topic needs its forum chat id, and each task's status message must stay editable across restarts.
+- Telegram messages use parse mode HTML; user text is cut before escaping, and every message is clamped below 4096 characters.
+- A task's Telegram messages go to the chat/topic it was created from, else the project's bound topic, else the owner's private chat.
+- "Open in app" is a `web_app` button in the private chat; in groups (where `web_app` buttons are not allowed) it is a `TELEGRAM_MINIAPP_LINK?startapp=task_<id>` deep link if configured, else a plain link to `WEB_APP_URL/tasks/<id>`.
+- Failed and cancelled tasks also get a Retry button; question option buttons carry `ans|<question id>|<index>` (64-byte callback limit).
+- Status events are attached to the task snapshot they produced (`Task.StatusEvent`), so publishing a task change also publishes its timeline event to WebSocket clients and the bot.

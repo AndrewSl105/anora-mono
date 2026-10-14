@@ -28,6 +28,10 @@ type Task struct {
 	FinishedAt   *time.Time `json:"finished_at"`
 	PausedAt     *time.Time `json:"paused_at"`
 	CleanedAt    *time.Time `json:"-"`
+
+	// StatusEvent is the timeline event written by the status change that
+	// returned this task (nil otherwise); publishers send it along.
+	StatusEvent *Event `json:"-"`
 }
 
 const taskCols = `id, project_id, repository_id, title, prompt, status, status_reason, branch, session_id,
@@ -57,7 +61,7 @@ func (s *Store) CreateTask(ctx context.Context, t Task) (*Task, error) {
 		if _, err := insertRun(ctx, tx, out.ID, "initial", t.Prompt); err != nil {
 			return err
 		}
-		_, err = insertBackendEvent(ctx, tx, out.ID, nil, "status", map[string]any{"status": "queued"})
+		out.StatusEvent, err = insertBackendEvent(ctx, tx, out.ID, nil, "status", map[string]any{"status": "queued"})
 		return err
 	})
 	if isFKViolation(err) {
@@ -159,7 +163,7 @@ func setStatusTx(ctx context.Context, tx pgx.Tx, id int64, from []string, to, re
 	if reason != "" {
 		payload["reason"] = reason
 	}
-	_, err = insertBackendEvent(ctx, tx, id, nil, "status", payload)
+	t.StatusEvent, err = insertBackendEvent(ctx, tx, id, nil, "status", payload)
 	return t, err
 }
 
