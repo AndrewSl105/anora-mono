@@ -59,7 +59,7 @@ func TestEncodeCommand(t *testing.T) {
 
 // Every persisted runner event type has a typed schema in the API contract.
 func TestOpenAPIHasEveryRunnerEvent(t *testing.T) {
-	spec, err := os.ReadFile("../../docs/openapi.yaml")
+	spec, err := os.ReadFile("../../../docs/openapi.yaml") // the repository root docs/
 	if err != nil {
 		t.Fatal(err)
 	}
