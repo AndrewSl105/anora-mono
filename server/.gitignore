@@ -5,23 +5,6 @@
 *.out
 coverage.*
 
-# Node (runner)
-node_modules/
-runner/dist/
-
-# Env and secrets
-.env
-.env.*
-!.env.example
-*.pem
-
 # Local state
 .anora/
 workspaces/
-
-# OS / editors
-.DS_Store
-.idea/
-.vscode/
-.claude/
-.dev/

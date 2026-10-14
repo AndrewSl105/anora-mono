@@ -1,6 +1,10 @@
 # Local dev state (workspaces of the dev stack)
 .dev/
 
+# Node (agent, web)
+node_modules/
+agent/dist/
+
 # Env and secrets
 deploy/.env
 deploy/.env.*
