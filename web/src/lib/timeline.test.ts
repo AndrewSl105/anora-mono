@@ -18,7 +18,7 @@ function ev(type: string, payload: Record<string, unknown>, opts: { run?: number
 
 describe('buildTimeline', () => {
   it('maps messages, tools and dividers', () => {
-    const { items, latestTool } = buildTimeline([
+    const items = buildTimeline([
       ev('run_started', { run_id: 3, kind: 'initial' }, { runner: false }),
       ev('started', { session_id: 's', model: 'm' }),
       ev('assistant_text', { text: 'Hello' }),
@@ -28,11 +28,10 @@ describe('buildTimeline', () => {
     ])
     expect(items.map((i) => i.kind)).toEqual(['divider', 'claude', 'tool'])
     expect(items[2]).toMatchObject({ kind: 'tool', summary: 'Edit src/a.ts', ok: true })
-    expect(latestTool).toBe('Edit src/a.ts')
   })
 
   it('marks a failed tool with its error summary', () => {
-    const { items } = buildTimeline([
+    const items = buildTimeline([
       ev('tool_use', { tool: 'Bash', summary: 'Bash npm test' }),
       ev('tool_result', { tool: 'Bash', ok: false, summary: 'FAIL x.test.ts' }),
     ])
@@ -40,7 +39,7 @@ describe('buildTimeline', () => {
   })
 
   it('attaches an answer to its question by full id', () => {
-    const { items } = buildTimeline([
+    const items = buildTimeline([
       ev('question', { question_id: 'q1', text: 'Which?', options: ['a', 'b'] }, { run: 7 }),
       ev('answer', { question_id: '7-q1', text: 'a', answered_via: 'telegram' }, { runner: false }),
     ])
@@ -49,28 +48,13 @@ describe('buildTimeline', () => {
   })
 
   it('shows optimistic local messages as pending', () => {
-    const local = ev('message', { text: 'hi', delivery: 'injected' }, { id: -1 })
-    const { items } = buildTimeline([], [local])
+    const local = ev('message', { text: 'hi', delivery: 'queued' }, { id: -1 })
+    const items = buildTimeline([], [local])
     expect(items[0]).toMatchObject({ kind: 'user', text: 'hi', pending: true })
   })
 
-  it('takes turns from the latest usage and derives per-run cost', () => {
-    const { turns, runs } = buildTimeline([
-      ev('run_started', { run_id: 1, kind: 'initial' }, { run: 1, runner: false }),
-      ev('usage', { cost_usd_total: 0.5, turns: 4 }, { run: 1 }),
-      ev('run_finished', { run_id: 1, exit_code: 0 }, { run: 1, runner: false }),
-      ev('run_started', { run_id: 2, kind: 'followup' }, { run: 2, runner: false }),
-      ev('usage', { cost_usd_total: 0.8, turns: 9 }, { run: 2 }),
-    ])
-    expect(turns).toBe(9)
-    expect(runs).toHaveLength(2)
-    expect(runs[0]).toMatchObject({ runId: 1, kind: 'initial', exitCode: 0, cost: 0.5 })
-    expect(runs[1].cost).toBeCloseTo(0.3)
-    expect(runs[1].finishedAt).toBeUndefined()
-  })
-
   it('renders status, commit, PR, CI, done and errors', () => {
-    const { items } = buildTimeline([
+    const items = buildTimeline([
       ev('status', { status: 'pushing' }, { runner: false }),
       ev('committed', { sha: 'abc', files_changed: 2, insertions: 5, deletions: 1 }),
       ev('done', { summary: 'ok', no_changes: false }),

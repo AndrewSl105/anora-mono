@@ -7,8 +7,12 @@ import { keys } from '@/api/keys'
 const RealtimeContext = createContext<RealtimeClient | null>(null)
 
 export function handleMessage(qc: QueryClient, msg: ServerMessage) {
-  if (msg.op === 'event') appendEvents(qc, msg.task_id, [msg.event])
-  else if (msg.op === 'task') upsertTask(qc, msg.task)
+  if (msg.op === 'event') {
+    appendEvents(qc, msg.task_id, [msg.event])
+    if (msg.event.type === 'run_started' || msg.event.type === 'run_finished') {
+      void qc.invalidateQueries({ queryKey: keys.tasks.runs(msg.task_id), exact: true })
+    }
+  } else if (msg.op === 'task') upsertTask(qc, msg.task)
 }
 
 /** After every (re)connect: fetch events missed while offline, refresh lists. */

@@ -147,7 +147,7 @@ describe('cache updates and catch-up', () => {
 
   it('appends pushed events, deduplicated and in order', () => {
     const qc = new QueryClient()
-    qc.setQueryData<EventsData>(keys.tasks.events(1), { items: [event(1), event(2)], local: [] })
+    qc.setQueryData<EventsData>(keys.tasks.events(1), { items: [event(1), event(2)], local: [], older: '' })
     handleMessage(qc, { op: 'event', task_id: 1, event: event(4) })
     handleMessage(qc, { op: 'event', task_id: 1, event: event(2) })
     handleMessage(qc, { op: 'event', task_id: 1, event: event(3) })
@@ -158,7 +158,7 @@ describe('cache updates and catch-up', () => {
     const qc = new QueryClient()
     const { fetchEventsIncremental } = await import('@/api/hooks')
     qc.setQueryDefaults(keys.tasks.events(1), { queryFn: () => fetchEventsIncremental(qc, 1) })
-    qc.setQueryData<EventsData>(keys.tasks.events(1), { items: [event(1), event(2)], local: [] })
+    qc.setQueryData<EventsData>(keys.tasks.events(1), { items: [event(1), event(2)], local: [], older: '' })
     const calls: string[] = []
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = new URL((input as Request).url)
@@ -171,6 +171,25 @@ describe('cache updates and catch-up', () => {
     catchUp(qc, [1])
     await vi.waitFor(() => expect(qc.getQueryData<EventsData>(keys.tasks.events(1))!.items).toHaveLength(4))
     expect(calls[0]).toBe('/api/v1/tasks/1/events?after_id=2&limit=200')
+    fetchSpy.mockRestore()
+  })
+
+  it('opens a timeline at its end with before_id=0 and keeps the older cursor', async () => {
+    const qc = new QueryClient()
+    const { fetchEventsIncremental } = await import('@/api/hooks')
+    const calls: string[] = []
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+      const url = new URL((input as Request).url)
+      calls.push(url.pathname + url.search)
+      return new Response(JSON.stringify({ items: [event(9), event(8)], next_cursor: '8' }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    vi.useRealTimers()
+    const data = await fetchEventsIncremental(qc, 1)
+    expect(calls).toEqual(['/api/v1/tasks/1/events?before_id=0&limit=200'])
+    expect(data.items.map((e) => e.id)).toEqual([8, 9])
+    expect(data.older).toBe('8')
     fetchSpy.mockRestore()
   })
 })

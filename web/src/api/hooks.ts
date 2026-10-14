@@ -12,11 +12,12 @@ import {
   addLocalEvent,
   lastEventId,
   mergeEvents,
+  prependEvents,
   removeLocalEvent,
   upsertTask,
   type EventsData,
 } from './cache'
-import type { ApiEvent, Health, Project, ProjectFields, TaskView } from './types'
+import type { ApiEvent, Health, Project, ProjectFields, Run, TaskView } from './types'
 import { isApiError } from './errors'
 import { GROUPS } from '@/lib/status'
 import { t } from '@/i18n/en'
@@ -81,13 +82,20 @@ export function useTask(id: number) {
 }
 
 /**
- * Loads the timeline forward from the last event id in the cache. The first call
- * loads everything; a refetch (e.g. after a WebSocket reconnect) only fetches
- * what was missed. See docs/DECISIONS.md for why this is not a backward pager.
+ * The first load opens the timeline at its end: the newest page
+ * (`before_id=0`, newest first); older pages load on scroll-up
+ * (`useLoadOlderEvents`). A refetch (e.g. after a WebSocket reconnect) catches
+ * up forward from the last event id in the cache.
  */
 export async function fetchEventsIncremental(qc: QueryClient, id: number, signal?: AbortSignal): Promise<EventsData> {
   const key = keys.tasks.events(id)
   let after = lastEventId(qc.getQueryData<EventsData>(key))
+  if (!after) {
+    const page = await call(
+      api.GET('/api/v1/tasks/{id}/events', { params: { path: { id }, query: { before_id: 0, limit: EVENTS_PAGE } }, signal }),
+    )
+    return prependEvents(qc.getQueryData<EventsData>(key), asEvents(page.items), page.next_cursor)
+  }
   const fetched: ApiEvent[] = []
   for (let i = 0; i < 500; i++) {
     const page = await call(
@@ -111,6 +119,35 @@ export function useTaskEvents(id: number) {
     queryFn: ({ signal }) => fetchEventsIncremental(qc, id, signal),
     staleTime: Infinity,
     refetchOnWindowFocus: false,
+  })
+}
+
+/** Loads the next older timeline page (scroll-up). */
+export function useLoadOlderEvents(id: number) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: async (before: string) =>
+      call(api.GET('/api/v1/tasks/{id}/events', { params: { path: { id }, query: { before_id: Number(before), limit: EVENTS_PAGE } } })),
+    onSuccess: (page) =>
+      qc.setQueryData<EventsData>(keys.tasks.events(id), (prev) => prependEvents(prev, asEvents(page.items), page.next_cursor)),
+    onError: toastError,
+  })
+}
+
+export function useTaskRuns(id: number) {
+  return useQuery({
+    queryKey: keys.tasks.runs(id),
+    queryFn: async ({ signal }) => {
+      const items: Run[] = []
+      let cursor: string | undefined
+      do {
+        const page = await call(api.GET('/api/v1/tasks/{id}/runs', { params: { path: { id }, query: { limit: 200, cursor } }, signal }))
+        items.push(...page.items)
+        cursor = page.next_cursor || undefined
+      } while (cursor)
+      return items
+    },
+    staleTime: 30_000,
   })
 }
 
@@ -277,6 +314,21 @@ export function useAddRepository(projectId: string) {
   return useMutation({
     mutationFn: (body: { full_name: string; installation_id: number; base_branch?: string; is_default?: boolean }) =>
       call(api.POST('/api/v1/projects/{id}/repositories', { params: { path: { id: projectId }, header: CSRF }, body })),
+    onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects.all }),
+    onError: toastError,
+  })
+}
+
+export function useUpdateRepository(projectId: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ repoId, ...body }: { repoId: number; base_branch?: string; is_default?: boolean }) =>
+      call(
+        api.PATCH('/api/v1/projects/{id}/repositories/{repoId}', {
+          params: { path: { id: projectId, repoId }, header: CSRF },
+          body,
+        }),
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: keys.projects.all }),
     onError: toastError,
   })

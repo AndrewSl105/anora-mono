@@ -4,8 +4,12 @@ import type { ApiEvent, Page, Task, TaskView } from './types'
 import type { EventOf, PayloadOf } from './events'
 import { GROUPS } from '@/lib/status'
 
-/** Timeline cache: real events sorted by id, plus optimistic local ones (negative ids). */
-export type EventsData = { items: ApiEvent[]; local: ApiEvent[] }
+/**
+ * Timeline cache: real events sorted by id, plus optimistic local ones
+ * (negative ids). `older` is the before_id cursor of the next older page
+ * ("" once the start of the timeline is loaded).
+ */
+export type EventsData = { items: ApiEvent[]; local: ApiEvent[]; older: string }
 
 export type TasksData = InfiniteData<Page<Task>, string | undefined>
 
@@ -15,7 +19,7 @@ export function lastEventId(data: EventsData | undefined): number {
 
 /** Merges events by id (dedupe) and keeps them sorted; drops local echoes of arrived events. */
 export function mergeEvents(prev: EventsData | undefined, incoming: ApiEvent[]): EventsData {
-  const base = prev ?? { items: [], local: [] }
+  const base = prev ?? { items: [], local: [], older: '' }
   const fresh = incoming.filter((e) => e.id > 0)
   if (fresh.length === 0) return base
   const byId = new Map<number, ApiEvent>()
@@ -23,7 +27,12 @@ export function mergeEvents(prev: EventsData | undefined, incoming: ApiEvent[]):
   for (const e of fresh) byId.set(e.id, e)
   const items = [...byId.values()].sort((a, b) => a.id - b.id)
   const local = base.local.filter((l) => !fresh.some((e) => isEchoOf(e, l)))
-  return { items, local }
+  return { items, local, older: base.older }
+}
+
+/** Adds an older page (any order) in front and moves the older-page cursor. */
+export function prependEvents(prev: EventsData | undefined, page: ApiEvent[], older: string): EventsData {
+  return { ...mergeEvents(prev, page), older }
 }
 
 function isEchoOf(real: ApiEvent, local: ApiEvent): boolean {
@@ -56,6 +65,7 @@ export function addLocalEvent<K extends LocalType>(qc: QueryClient, taskId: numb
   qc.setQueryData<EventsData>(keys.tasks.events(taskId), (prev) => ({
     items: prev?.items ?? [],
     local: [...(prev?.local ?? []), event],
+    older: prev?.older ?? '',
   }))
   return event
 }
@@ -95,6 +105,9 @@ export function upsertTask(qc: QueryClient, task: Task) {
   if (prev) {
     qc.setQueryData<TaskView>(detailKey, { ...prev, ...task })
     // open_question, latest_run and repository only come with the full view.
-    if (prev.status !== task.status) void qc.invalidateQueries({ queryKey: detailKey, exact: true })
+    if (prev.status !== task.status) {
+      void qc.invalidateQueries({ queryKey: detailKey, exact: true })
+      void qc.invalidateQueries({ queryKey: keys.tasks.runs(task.id), exact: true })
+    }
   }
 }

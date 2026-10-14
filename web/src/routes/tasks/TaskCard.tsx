@@ -5,11 +5,10 @@ import { relativeTime, usd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { t } from '@/i18n/en'
 
-/** One-line activity: the backend has no per-task "latest activity" field (see DECISIONS.md). */
+/** One-line activity: the backend's latest tool_use or status change; CI for open PRs. */
 function activityLine(task: Task): string | null {
-  if (task.status_reason) return task.status_reason
   if (task.status === 'pr_open' && task.ci_status) return `CI ${task.ci_status}`
-  return task.branch ?? null
+  return task.last_activity ?? task.status_reason ?? task.branch ?? null
 }
 
 export function TaskCard({ task, projectName, selected }: { task: Task; projectName?: string; selected?: boolean }) {
@@ -33,7 +32,7 @@ export function TaskCard({ task, projectName, selected }: { task: Task; projectN
       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
         <span className="truncate">{projectName ?? task.project_id}</span>
         <span aria-hidden="true">·</span>
-        <span className="shrink-0">{relativeTime(task.updated_at)}</span>
+        <span className="shrink-0">{relativeTime(task.last_activity_at ?? task.updated_at)}</span>
         <span className="ml-auto shrink-0 tabular-nums">{usd(task.cost_usd_total)}</span>
       </div>
       {waiting && <span className="sr-only">{t.tasks.needsAnswer}</span>}

@@ -25,7 +25,7 @@ export function githubUrl(task: TaskView): string | null {
   return task.branch ? `https://github.com/${repo}/tree/${encodeURIComponent(task.branch)}` : `https://github.com/${repo}`
 }
 
-export function TaskHeader({ task, turns }: { task: TaskView; turns: number | null }) {
+export function TaskHeader({ task }: { task: TaskView }) {
   const runtime = useRuntime()
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -111,7 +111,7 @@ export function TaskHeader({ task, turns }: { task: TaskView; turns: number | nu
           {task.repository && <span className="font-mono"> / {task.repository.full_name.split('/').pop()}</span>}
         </span>
         <span className="tabular-nums">{usd(task.cost_usd_total)}</span>
-        {turns !== null && <span className="tabular-nums">{t.task.turns(turns)}</span>}
+        {task.turns > 0 && <span className="tabular-nums">{t.task.turns(task.turns)}</span>}
         {task.pr_url && task.pr_number && (
           <a
             href={task.pr_url}

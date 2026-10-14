@@ -41,3 +41,19 @@ test('deep link opens the task after login', async ({ page }) => {
   await page.goto('/?task=1')
   await expect(page.getByRole('heading', { name: 'Add CSV export to Tables' })).toBeVisible()
 })
+
+test('long timelines open at the end and page backwards', async ({ page }) => {
+  await login(page)
+  await page.goto('/tasks/6')
+  await expect(page.getByRole('heading', { name: 'Migrate every component to the new design tokens' })).toBeVisible()
+  await expect(page.getByText('Moved 260 components to the design tokens.')).toBeVisible()
+  const first = page.getByRole('button', { name: 'Edit · src/components/C001.tsx' })
+  await expect(page.getByRole('button', { name: 'Edit · src/components/C260.tsx' })).toBeAttached()
+  await expect(first).toHaveCount(0)
+  await page.getByRole('button', { name: 'Load earlier activity' }).click()
+  await page.getByRole('button', { name: 'Load earlier activity' }).click()
+  await expect(page.getByText('Start of the task')).toBeVisible()
+  // Prepending keeps the rows on screen in place; scroll up to the first ones.
+  await page.locator('div[aria-live="polite"]').evaluate((el) => (el.scrollTop = 0))
+  await expect(first).toBeVisible()
+})

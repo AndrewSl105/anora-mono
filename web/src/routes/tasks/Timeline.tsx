@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ArrowDown, Loader2 } from 'lucide-react'
 import type { TaskView } from '@/api/types'
-import type { TimelineItem, TimelineSummary } from '@/lib/timeline'
+import { useLoadOlderEvents } from '@/api/hooks'
+import type { TimelineItem } from '@/lib/timeline'
 import { can } from '@/lib/status'
 import { Skeleton } from '@/components/ui/skeleton'
 import { t } from '@/i18n/en'
@@ -10,6 +11,7 @@ import { TimelineRow } from './TimelineRow'
 import { QuestionCard } from './QuestionCard'
 
 const NEAR_BOTTOM_PX = 80
+const NEAR_TOP_PX = 300
 const WORKING: TaskView['status'][] = ['preparing', 'running', 'pushing']
 
 /** Adds the task's open question when its event is not loaded yet. */
@@ -22,12 +24,21 @@ export function withOpenQuestion(items: TimelineItem[], task: TaskView): Timelin
   ]
 }
 
-export function Timeline({ task, summary, loading }: { task: TaskView; summary: TimelineSummary; loading: boolean }) {
-  const items = useMemo(() => withOpenQuestion(summary.items, task), [summary.items, task])
+type Props = {
+  task: TaskView
+  items: TimelineItem[]
+  /** before_id cursor of the next older page; "" when the start is loaded. */
+  older: string
+  loading: boolean
+}
+
+export function Timeline({ task, items: loaded, older, loading }: Props) {
+  const items = useMemo(() => withOpenQuestion(loaded, task), [loaded, task])
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottom = useRef(true)
   const [showPill, setShowPill] = useState(false)
-  const prevCount = useRef(0)
+  const prev = useRef<{ first?: string; last?: string; height: number }>({ height: 0 })
+  const loadOlder = useLoadOlderEvents(task.id)
 
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -43,16 +54,31 @@ export function Timeline({ task, summary, loading }: { task: TaskView; summary: 
     setShowPill(false)
   }
 
-  // Follow new events while at the bottom; otherwise show "New activity".
+  // New rows at the end: follow them while at the bottom, otherwise show
+  // "New activity". Older rows in front (scroll-up paging): keep the rows on
+  // screen in place by shifting the scroll position by the added height.
   useLayoutEffect(() => {
-    const grew = items.length > prevCount.current
-    const first = prevCount.current === 0
-    prevCount.current = items.length
-    if (!grew) return
-    if (first || atBottom.current) scrollToEnd()
+    const first = items[0]?.key
+    const last = items[items.length - 1]?.key
+    const before = prev.current
+    const height = virtualizer.getTotalSize()
+    prev.current = { first, last, height }
+    if (!last) return
+    if (before.first !== undefined && first !== before.first && last === before.last) {
+      const el = scrollRef.current
+      if (el) el.scrollTop += height - before.height
+      return
+    }
+    if (last === before.last) return
+    if (before.last === undefined || atBottom.current) scrollToEnd()
     else setShowPill(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items.length])
+  }, [items])
+
+  function maybeLoadOlder() {
+    const el = scrollRef.current
+    if (el && older && !loadOlder.isPending && el.scrollTop < NEAR_TOP_PX) loadOlder.mutate(older)
+  }
 
   useEffect(() => {
     // Re-pin after late measurement of the last rows.
@@ -70,6 +96,7 @@ export function Timeline({ task, summary, loading }: { task: TaskView; summary: 
     if (!el) return
     atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX
     if (atBottom.current) setShowPill(false)
+    maybeLoadOlder()
   }
 
   const working = WORKING.includes(task.status)
@@ -87,36 +114,51 @@ export function Timeline({ task, summary, loading }: { task: TaskView; summary: 
         ) : items.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted-foreground">{t.task.timeline.empty}</p>
         ) : (
-          <div className="relative w-full py-3" style={{ height: virtualizer.getTotalSize() + 24 }}>
-            {virtualizer.getVirtualItems().map((row) => {
-              const item = items[row.index]
-              return (
-                <div
-                  key={row.key}
-                  data-index={row.index}
-                  ref={virtualizer.measureElement}
-                  className="absolute top-0 left-0 w-full py-1"
-                  style={{ transform: `translateY(${row.start + 12}px)` }}
-                >
-                  {item.kind === 'question' ? (
-                    <QuestionCard
-                      taskId={task.id}
-                      item={item}
-                      open={answerable && !item.answer && task.open_question?.id === item.questionId}
-                    />
-                  ) : (
-                    <TimelineRow item={item} />
-                  )}
-                </div>
-              )
-            })}
-          </div>
+          <>
+            {older ? (
+              <button
+                type="button"
+                onClick={() => loadOlder.mutate(older)}
+                disabled={loadOlder.isPending}
+                className="mx-auto mt-3 flex h-9 items-center gap-1.5 rounded-full px-3 text-xs text-muted-foreground hover:bg-accent"
+              >
+                {loadOlder.isPending && <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />}
+                {loadOlder.isPending ? t.task.timeline.earlier : t.task.timeline.loadEarlier}
+              </button>
+            ) : (
+              <p className="pt-3 text-center text-xs text-muted-foreground">{t.task.timeline.start}</p>
+            )}
+            <div className="relative w-full py-3" style={{ height: virtualizer.getTotalSize() + 24 }}>
+              {virtualizer.getVirtualItems().map((row) => {
+                const item = items[row.index]
+                return (
+                  <div
+                    key={row.key}
+                    data-index={row.index}
+                    ref={virtualizer.measureElement}
+                    className="absolute top-0 left-0 w-full py-1"
+                    style={{ transform: `translateY(${row.start + 12}px)` }}
+                  >
+                    {item.kind === 'question' ? (
+                      <QuestionCard
+                        taskId={task.id}
+                        item={item}
+                        open={answerable && !item.answer && task.open_question?.id === item.questionId}
+                      />
+                    ) : (
+                      <TimelineRow item={item} />
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </>
         )}
         {working && (
           <div className="flex items-center gap-2 pb-3 text-xs text-muted-foreground" role="status">
             <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden="true" />
             <span className="shrink-0 font-medium">{t.task.working}</span>
-            {summary.latestTool && <span className="truncate font-mono">· {summary.latestTool}</span>}
+            {task.last_activity && <span className="truncate font-mono">· {task.last_activity}</span>}
           </div>
         )}
       </div>

@@ -192,6 +192,23 @@ export const handlers = [
     p.updated_at = new Date().toISOString()
     return HttpResponse.json(r, { status: 201 })
   }),
+  http.patch(`${API}/projects/:id/repositories/:repoId`, async ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const p = db.projects.find((x) => x.id === params.id)
+    const r = p?.repositories.find((x) => x.id === Number(params.repoId))
+    if (!p || !r) return err(404, 'not_found', 'No such repository')
+    const body = (await request.json()) as { base_branch?: string; is_default?: boolean }
+    if (body.is_default === false && r.is_default) return err(409, 'conflict', 'Make another repository the default instead')
+    const unfinished = ['completed', 'failed', 'cancelled']
+    if (body.base_branch !== undefined && body.base_branch !== r.base_branch && db.tasks.some((t) => t.repository_id === r.id && !unfinished.includes(t.status))) {
+      return err(409, 'in_use', 'Unfinished tasks use this repository')
+    }
+    if (body.base_branch !== undefined) r.base_branch = body.base_branch
+    if (body.is_default) p.repositories.forEach((x) => (x.is_default = x.id === r.id))
+    p.updated_at = new Date().toISOString()
+    return HttpResponse.json(r)
+  }),
   http.delete(`${API}/projects/:id/repositories/:repoId`, ({ request, params }) => {
     const denied = guard(request)
     if (denied) return denied
@@ -257,11 +274,23 @@ export const handlers = [
     if (!task) return err(404, 'not_found', 'No such task')
     await delay(150)
     const q = new URL(request.url).searchParams
-    const after = Number(q.get('after_id') ?? q.get('cursor') ?? 0)
     const limit = Math.min(200, Number(q.get('limit') ?? 50))
-    const all = (db.events.get(task.id) ?? []).filter((e) => e.id > after)
+    const before = q.get('before_id')
+    if (before !== null && (q.has('after_id') || q.has('cursor'))) return err(400, 'invalid', 'before_id cannot be combined with after_id')
+    // before_id pages backwards, newest first; 0 = from the newest event.
+    const all =
+      before !== null
+        ? (db.events.get(task.id) ?? []).filter((e) => Number(before) === 0 || e.id < Number(before)).reverse()
+        : (db.events.get(task.id) ?? []).filter((e) => e.id > Number(q.get('after_id') ?? q.get('cursor') ?? 0))
     const items = all.slice(0, limit)
     return HttpResponse.json({ items, next_cursor: all.length > limit ? String(items[items.length - 1].id) : '' })
+  }),
+  http.get(`${API}/tasks/:id/runs`, ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const task = findTask(params.id)
+    if (!task) return err(404, 'not_found', 'No such task')
+    return HttpResponse.json({ items: db.runs.get(task.id) ?? [], next_cursor: '' })
   }),
   http.get(`${API}/tasks/:id/diff`, async ({ request, params }) => {
     const denied = guard(request)

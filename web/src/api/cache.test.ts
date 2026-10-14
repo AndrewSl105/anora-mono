@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { QueryClient } from '@tanstack/react-query'
 import { keys } from './keys'
-import { mergeEvents, upsertTask, type TasksData } from './cache'
+import { mergeEvents, prependEvents, upsertTask, type TasksData } from './cache'
 import type { ApiEvent, Task } from './types'
 
 const event = (id: number, type = 'message', text = `t${id}`): ApiEvent =>
@@ -34,9 +34,20 @@ const task = (id: number, status: Task['status'], project = 'p'): Task => ({
 
 describe('mergeEvents', () => {
   it('drops an optimistic local event once its real echo arrives', () => {
-    const merged = mergeEvents({ items: [event(1)], local: [event(-1, 'message', 'hello')] }, [event(2, 'message', 'hello')])
+    const merged = mergeEvents({ items: [event(1)], local: [event(-1, 'message', 'hello')], older: '1' }, [event(2, 'message', 'hello')])
     expect(merged.items.map((e) => e.id)).toEqual([1, 2])
     expect(merged.local).toEqual([])
+    expect(merged.older).toBe('1')
+  })
+})
+
+describe('prependEvents', () => {
+  it('puts an older page (newest first from before_id) in front and moves the cursor', () => {
+    const first = prependEvents(undefined, [event(30), event(29), event(28)], '28')
+    expect(first.items.map((e) => e.id)).toEqual([28, 29, 30])
+    const more = prependEvents(first, [event(27), event(26)], '')
+    expect(more.items.map((e) => e.id)).toEqual([26, 27, 28, 29, 30])
+    expect(more.older).toBe('')
   })
 })
 

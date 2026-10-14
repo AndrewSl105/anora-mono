@@ -4,15 +4,15 @@ One line each. "Backend ask" marks something Anora Runner should add.
 
 ## Backend contract gaps
 
-- **Timeline paging is forward-only.** `/tasks/{id}/events` only takes `after_id`, so "latest 200 first, older on scroll-up" is impossible. The client loads all pages forward (200 per page) once, then fetches incrementally from the last id; the list is always virtualised. *Backend ask:* `before_id` (or `order=desc`).
-- **No turns on Task.** Turns come from the latest `usage` event in the timeline, so they show only once the timeline is loaded. *Backend ask:* `turns` on Task.
-- **No "latest activity" on Task, and `scope: "tasks"` sends no events.** Task cards show `status_reason`, CI status or the branch instead of "Editing src/…". *Backend ask:* a `last_activity` summary on Task.
+- ~~Timeline paging is forward-only~~ — resolved with `before_id`: a timeline opens at its end (`before_id=0`, 200 newest, reversed) and older pages load on scroll-up or with "Load earlier activity"; prepending shifts the scroll position by the added height so rows on screen stay put. Reconnect catch-up stays forward (`after_id` = newest cached id), so the cache never has gaps.
+- ~~No turns on Task~~ — resolved: the header shows `Task.turns`.
+- ~~No "latest activity" on Task~~ — resolved: cards and the "Claude is working" line show `Task.last_activity` (CI status instead for `pr_open`), and the card time is `last_activity_at`.
 - **No active-task count on Project.** Projects screen counts tasks from the Active list client-side (first 50 per page loaded).
-- **Only `latest_run` in the API.** The Info tab's runs list is rebuilt from `run_started` / `run_finished` / `usage` events; per-run cost = session total minus the previous run's total (PROTOCOL.md). *Backend ask:* `GET /tasks/{id}/runs`.
-- **Repositories can't be edited.** There is no PATCH for a repository, so base branch and default flag are set only when adding; change them by removing and re-adding. *Backend ask:* `PATCH /projects/{id}/repositories/{repoId}`.
+- ~~Only `latest_run` in the API~~ — resolved: the Info tab reads `GET /tasks/{id}/runs` (with the run's own `cost_usd` and `turns`), refetched on `run_started`/`run_finished` pushes and status changes.
+- ~~Repositories can't be edited~~ — resolved: base branch and default flag are edited in place (`PATCH …/repositories/{repoId}`). The default switch is disabled on the current default, because un-defaulting it is `409`; make another repo the default instead.
 - ~~Event payloads are untyped~~ — resolved: OpenAPI `Event` is now a discriminated `oneOf`; `src/api/events.ts` only derives `EventOf<K>`/`PayloadOf<K>` from the generated union, and `buildTimeline` narrows with `switch (event.type)`.
 - **One cast at the events response boundary.** openapi-fetch 0.17 (`openapi-typescript-helpers` 0.1.0, both latest) drops properties typed exactly `null` in its `Readable<T>` response transform (`NonNullable<null>` is `never`), so backend events lose `seq: null`; `asEvents()` in `hooks.ts` restores the generated `Event` type. The contract stays as is.
-- **No OpenAPI examples.** MSW mocks (`src/mocks/`) use hand-written fixtures typed from `schema.ts` instead of generated examples.
+- **No OpenAPI examples.** MSW mocks (`src/mocks/`) use hand-written fixtures typed from `schema.ts` instead of generated examples. The mock db maintains `turns`, `last_activity` and per-run cost like the backend, serves `before_id`, `/runs` and repository PATCH, and seeds a 500-event task to exercise paging.
 - **`Retry-After` on 429 is undocumented.** Used when present; otherwise the message uses the 15-minute window from API.md.
 - **`X-Requested-With` is a required header parameter in OpenAPI**, so generated types demand it per call. Calls pass the shared `CSRF` constant and a middleware also sets it on every non-GET.
 

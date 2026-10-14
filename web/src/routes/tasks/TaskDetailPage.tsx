@@ -33,7 +33,7 @@ function TaskDetail({ id }: { id: number }) {
   useTaskSubscription(id)
   useDisableVerticalSwipes()
 
-  const summary = useMemo(() => buildTimeline(events.data?.items ?? [], events.data?.local ?? []), [events.data])
+  const items = useMemo(() => buildTimeline(events.data?.items ?? [], events.data?.local ?? []), [events.data])
 
   if (task.isPending) return <PageSpinner />
   if (task.isError) {
@@ -44,7 +44,7 @@ function TaskDetail({ id }: { id: number }) {
 
   return (
     <div className="flex h-full flex-col">
-      <TaskHeader task={view} turns={summary.turns} />
+      <TaskHeader task={view} />
       <div role="tablist" aria-label="Task sections" className="flex shrink-0 gap-1 border-b px-2">
         {TABS.map((name) => (
           <button
@@ -67,7 +67,7 @@ function TaskDetail({ id }: { id: number }) {
       <div className="flex min-h-0 flex-1 flex-col">
         {tab === 'activity' && (
           <>
-            <Timeline task={view} summary={summary} loading={events.isPending} />
+            <Timeline task={view} items={items} older={events.data?.older ?? ''} loading={events.isPending} />
             <Composer task={view} />
           </>
         )}
@@ -76,7 +76,7 @@ function TaskDetail({ id }: { id: number }) {
             <DiffTab taskId={id} />
           </Suspense>
         )}
-        {tab === 'info' && <InfoTab task={view} runs={summary.runs} />}
+        {tab === 'info' && <InfoTab task={view} />}
       </div>
     </div>
   )

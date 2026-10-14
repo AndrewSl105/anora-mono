@@ -22,31 +22,15 @@ export type TimelineItem =
   | { kind: 'done'; key: string; summary: string; noChanges: boolean; at: string }
   | { kind: 'error'; key: string; title: string; message: string; at: string }
 
-export type RunInfo = {
-  runId: number
-  kind: string
-  startedAt: string
-  finishedAt?: string
-  exitCode?: number | null
-  cost?: number
-}
-
-export type TimelineSummary = {
-  items: TimelineItem[]
-  turns: number | null
-  latestTool: string | null
-  runs: RunInfo[]
-}
-
-/** Maps raw events (real, then optimistic local ones) to timeline items. Pure. */
-export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): TimelineSummary {
+/**
+ * Maps raw events (real, then optimistic local ones) to timeline items. Pure.
+ * Turns, the latest activity and the runs list come from the API (Task.turns,
+ * Task.last_activity, GET /tasks/{id}/runs), not from the loaded events.
+ */
+export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): TimelineItem[] {
   const items: TimelineItem[] = []
   const questions = new Map<string, Extract<TimelineItem, { kind: 'question' }>>()
   const openTools = new Map<string, Extract<TimelineItem, { kind: 'tool' }>>()
-  const runs = new Map<number, RunInfo>()
-  const runCostTotals = new Map<number, number>()
-  let turns: number | null = null
-  let latestTool: string | null = null
 
   const all = [...events, ...local]
   for (const e of all) {
@@ -64,7 +48,6 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         const item: Extract<TimelineItem, { kind: 'tool' }> = { kind: 'tool', key, tool, summary: summary || tool, ok: null, at }
         items.push(item)
         openTools.set(tool, item)
-        latestTool = item.summary
         break
       }
       case 'tool_result': {
@@ -108,12 +91,6 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
         items.push({ kind: 'user', key, text: m.text, at, delivery: m.delivery, pending })
         break
       }
-      case 'usage': {
-        const u = e.payload
-        if (typeof u.turns === 'number') turns = u.turns
-        if (e.run_id != null && typeof u.cost_usd_total === 'number') runCostTotals.set(e.run_id, u.cost_usd_total)
-        break
-      }
       case 'status': {
         const s = e.payload
         items.push({ kind: 'status', key, status: s.status as TaskStatus, reason: s.reason, at })
@@ -121,16 +98,11 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
       }
       case 'run_started': {
         const r = e.payload
-        runs.set(r.run_id, { runId: r.run_id, kind: r.kind, startedAt: at })
         items.push({ kind: 'divider', key, text: `run_started:${r.kind}`, at })
         break
       }
       case 'run_finished': {
         const r = e.payload
-        const run = runs.get(r.run_id) ?? { runId: r.run_id, kind: '—', startedAt: at }
-        run.finishedAt = at
-        run.exitCode = r.exit_code
-        runs.set(r.run_id, run)
         openTools.clear()
         items.push({ kind: 'divider', key, text: `run_finished:${r.exit_code ?? ''}`, at })
         break
@@ -181,16 +153,5 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
     }
   }
 
-  // Per-run cost: cumulative session total minus the previous run's last total.
-  let previous = 0
-  const runList = [...runs.values()].sort((a, b) => a.runId - b.runId)
-  for (const run of runList) {
-    const total = runCostTotals.get(run.runId)
-    if (total !== undefined) {
-      run.cost = Math.max(0, total - previous)
-      previous = total
-    }
-  }
-
-  return { items, turns, latestTool, runs: runList }
+  return items
 }

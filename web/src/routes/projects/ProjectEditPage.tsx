@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router'
 import { useFieldArray, useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { toast } from 'sonner'
-import { Archive, Plus, Star, Trash2, X } from 'lucide-react'
+import { Archive, Pencil, Plus, Star, Trash2, X } from 'lucide-react'
 import {
   errorMessage,
   useAddRepository,
@@ -13,9 +13,10 @@ import {
   useProject,
   useRemoveRepository,
   useUpdateProject,
+  useUpdateRepository,
 } from '@/api/hooks'
 import { isApiError } from '@/api/errors'
-import type { Project } from '@/api/types'
+import type { Project, Repository } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -199,34 +200,51 @@ function ProjectForm({ project }: { project?: Project }) {
 
 function Repositories({ project }: { project: Project }) {
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState<number | null>(null)
   const remove = useRemoveRepository(project.id)
   return (
     <Section title={f.repositories}>
       <ul className="divide-y rounded-xl border">
-        {project.repositories.map((r) => (
-          <li key={r.id} className="flex min-h-14 items-center gap-3 px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 truncate font-mono text-sm">
-                {r.full_name}
-                {r.is_default && <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label={f.isDefault} />}
+        {project.repositories.map((r) =>
+          editing === r.id ? (
+            <li key={r.id} className="px-3 py-2">
+              <EditRepository projectId={project.id} repo={r} onDone={() => setEditing(null)} />
+            </li>
+          ) : (
+            <li key={r.id} className="flex min-h-14 items-center gap-3 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 truncate font-mono text-sm">
+                  {r.full_name}
+                  {r.is_default && <Star className="size-3.5 shrink-0 fill-amber-400 text-amber-500" aria-label={f.isDefault} />}
+                </div>
+                <div className="text-xs text-muted-foreground">
+                  {f.baseBranch}: <span className="font-mono">{r.base_branch}</span>
+                </div>
               </div>
-              <div className="text-xs text-muted-foreground">
-                {f.baseBranch}: <span className="font-mono">{r.base_branch}</span>
-              </div>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="size-11"
-              aria-label={`${t.common.remove} ${r.full_name}`}
-              disabled={remove.isPending}
-              onClick={() => remove.mutate(r.id, { onSuccess: () => toast.success(t.projects.repoRemoved) })}
-            >
-              <Trash2 />
-            </Button>
-          </li>
-        ))}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11"
+                aria-label={`${t.projects.editRepo} ${r.full_name}`}
+                onClick={() => setEditing(r.id)}
+              >
+                <Pencil />
+              </Button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="size-11"
+                aria-label={`${t.common.remove} ${r.full_name}`}
+                disabled={remove.isPending}
+                onClick={() => remove.mutate(r.id, { onSuccess: () => toast.success(t.projects.repoRemoved) })}
+              >
+                <Trash2 />
+              </Button>
+            </li>
+          ),
+        )}
       </ul>
       {adding ? (
         <AddRepository project={project} onDone={() => setAdding(false)} />
@@ -236,6 +254,54 @@ function Repositories({ project }: { project: Project }) {
         </Button>
       )}
     </Section>
+  )
+}
+
+/** Base branch and default flag, changed in place (PATCH …/repositories/{repoId}). */
+function EditRepository({ projectId, repo, onDone }: { projectId: string; repo: Repository; onDone: () => void }) {
+  const update = useUpdateRepository(projectId)
+  const [base, setBase] = useState(repo.base_branch)
+  const [isDefault, setIsDefault] = useState(repo.is_default)
+  const body = {
+    ...(base.trim() && base.trim() !== repo.base_branch ? { base_branch: base.trim() } : {}),
+    ...(isDefault !== repo.is_default ? { is_default: isDefault } : {}),
+  }
+  const id = `base-${repo.id}`
+  return (
+    <div className="space-y-4 py-1">
+      <div className="truncate font-mono text-sm">{repo.full_name}</div>
+      <Field id={id} label={f.baseBranch}>
+        <Input id={id} value={base} onChange={(e) => setBase(e.target.value)} className="h-11 font-mono" />
+      </Field>
+      <label className="flex min-h-11 items-center justify-between gap-3">
+        <span className="text-sm">{f.isDefault}</span>
+        {/* The default can only move to another repo (un-defaulting it is 409). */}
+        <Switch checked={isDefault} onCheckedChange={setIsDefault} disabled={repo.is_default} />
+      </label>
+      <div className="flex gap-2">
+        <Button type="button" variant="ghost" className="h-11" onClick={onDone}>
+          {t.common.cancel}
+        </Button>
+        <Button
+          type="button"
+          className="h-11 flex-1"
+          disabled={Object.keys(body).length === 0 || update.isPending}
+          onClick={() =>
+            update.mutate(
+              { repoId: repo.id, ...body },
+              {
+                onSuccess: () => {
+                  toast.success(t.projects.repoSaved)
+                  onDone()
+                },
+              },
+            )
+          }
+        >
+          {t.common.save}
+        </Button>
+      </div>
+    </div>
   )
 }
 

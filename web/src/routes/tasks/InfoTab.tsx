@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import type { TaskView } from '@/api/types'
-import type { RunInfo } from '@/lib/timeline'
+import { useTaskRuns } from '@/api/hooks'
 import { dateTime, duration, usd } from '@/lib/format'
 import { t } from '@/i18n/en'
 
@@ -15,7 +15,8 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-export function InfoTab({ task, runs }: { task: TaskView; runs: RunInfo[] }) {
+export function InfoTab({ task }: { task: TaskView }) {
+  const runs = useTaskRuns(task.id).data ?? []
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-4 pb-[calc(var(--safe-bottom)+1rem)]">
       <section className="mb-6">
@@ -50,18 +51,22 @@ export function InfoTab({ task, runs }: { task: TaskView; runs: RunInfo[] }) {
                   <th className="px-3 py-2 font-medium">#</th>
                   <th className="px-3 py-2 font-medium">Kind</th>
                   <th className="px-3 py-2 font-medium">Duration</th>
+                  <th className="px-3 py-2 text-right font-medium">Turns</th>
                   <th className="px-3 py-2 text-right font-medium">Cost</th>
                   <th className="px-3 py-2 text-right font-medium">Exit</th>
                 </tr>
               </thead>
               <tbody className="tabular-nums">
                 {runs.map((run) => (
-                  <tr key={run.runId} className="border-b last:border-0">
-                    <td className="px-3 py-2">{run.runId}</td>
+                  <tr key={run.id} className="border-b last:border-0">
+                    <td className="px-3 py-2">{run.id}</td>
                     <td className="px-3 py-2">{run.kind}</td>
-                    <td className="px-3 py-2">{duration(run.startedAt, run.finishedAt)}</td>
-                    <td className="px-3 py-2 text-right">{run.cost !== undefined ? usd(run.cost) : '—'}</td>
-                    <td className="px-3 py-2 text-right">{run.finishedAt ? (run.exitCode ?? '—') : '…'}</td>
+                    <td className="px-3 py-2">
+                      {run.started_at ? duration(run.started_at, run.finished_at) : ti.queuedRun}
+                    </td>
+                    <td className="px-3 py-2 text-right">{run.turns}</td>
+                    <td className="px-3 py-2 text-right">{usd(run.cost_usd)}</td>
+                    <td className="px-3 py-2 text-right">{run.finished_at ? (run.exit_code ?? '—') : '…'}</td>
                   </tr>
                 ))}
               </tbody>

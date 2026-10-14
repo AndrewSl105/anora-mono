@@ -74,7 +74,26 @@ export function addEvent(taskId: number, type: string, payload: Record<string, u
   } as unknown as ApiEvent
   list.push(event)
   db.events.set(taskId, list)
+  track(taskId, run, type, payload, at)
   return event
+}
+
+/** Keeps the denormalised fields the backend maintains: turns, last_activity, run cost. */
+function track(taskId: number, run: Run | undefined, type: string, payload: Record<string, unknown>, at: string) {
+  const task = db.tasks.find((t) => t.id === taskId)
+  if (!task) return
+  if (type === 'tool_use') Object.assign(task, { last_activity: String(payload.summary), last_activity_at: at })
+  if (type === 'status') {
+    const line = payload.reason ? `${payload.status}: ${payload.reason}` : String(payload.status)
+    Object.assign(task, { last_activity: line, last_activity_at: at })
+  }
+  if (type === 'usage' && run) {
+    const runs = db.runs.get(taskId) ?? []
+    const earlier = runs.filter((r) => r.id < run.id).reduce((sum, r) => sum + r.cost_usd, 0)
+    run.turns = Number(payload.turns)
+    run.cost_usd = Math.max(0, Number(payload.cost_usd_total) - earlier)
+    task.turns = runs.reduce((sum, r) => sum + r.turns, 0)
+  }
 }
 
 export function startRun(taskId: number, kind: Run['kind'], input: string, at?: string): Run {
@@ -195,6 +214,20 @@ export function seed() {
   addEvent(t5.id, 'question', { question_id: 'q1', text: 'How many attempts should a delivery get before it is marked as failed?', options: ['3 attempts', '5 attempts', '10 attempts'] }, true, ago(21))
   db.questions.set(t5.id, [{ id: `${r5.id}-q1`, task_id: t5.id, run_id: r5.id, text: 'How many attempts should a delivery get before it is marked as failed?', options: ['3 attempts', '5 attempts', '10 attempts'], answer: null, answered_via: null, created_at: ago(21), answered_at: null }])
   Object.assign(t5, { status: 'waiting_input', cost_usd_total: 0.38, updated_at: ago(21) })
+
+  // A long finished task: its timeline needs several pages (scroll-up paging).
+  const t7 = makeTask({ project_id: 'bioma', title: 'Migrate every component to the new design tokens', status: 'queued', created_at: ago(60 * 30) })
+  startRun(t7.id, 'initial', t7.prompt, ago(60 * 30))
+  for (let i = 1; i <= 260; i++) {
+    const file = `src/components/C${String(i).padStart(3, '0')}.tsx`
+    addEvent(t7.id, 'tool_use', { tool: 'Edit', summary: `Edit ${file}` }, true, ago(60 * 30 - i / 10))
+    addEvent(t7.id, 'tool_result', { tool: 'Edit', ok: true }, true, ago(60 * 30 - i / 10))
+  }
+  addEvent(t7.id, 'usage', { cost_usd_total: 4.2, input_tokens: 900000, output_tokens: 61000, turns: 140 }, true, ago(60 * 3))
+  addEvent(t7.id, 'done', { session_id: 's-7', summary: 'Moved 260 components to the design tokens.', no_changes: false, cost_usd_total: 4.2 }, true, ago(60 * 3))
+  Object.assign(db.runs.get(t7.id)![0], { exit_code: 0, finished_at: ago(60 * 3) })
+  setStatus(t7, 'completed', 'committed locally')
+  Object.assign(t7, { cost_usd_total: 4.2, finished_at: ago(60 * 3), updated_at: ago(60 * 3) })
 
   // A running task the simulator keeps alive.
   const t6 = makeTask({ project_id: 'vatary', title: 'Paginate the audit log API', status: 'queued', created_at: ago(4) })

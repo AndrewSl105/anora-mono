@@ -118,6 +118,8 @@ export const en = {
       error: 'Error',
       empty: 'Waiting for the first events…',
       earlier: 'Loading earlier activity…',
+      loadEarlier: 'Load earlier activity',
+      start: 'Start of the task',
       sending: 'Sending…',
     },
     diff: {
@@ -136,6 +138,7 @@ export const en = {
       ci: 'CI',
       runs: 'Runs',
       noRuns: 'No runs yet',
+      queuedRun: 'queued',
       reason: 'Reason',
     },
     notFound: 'Task not found',
@@ -175,6 +178,9 @@ export const en = {
     archived: 'Project archived',
     repoAdded: 'Repository added',
     repoRemoved: 'Repository removed',
+    repoSaved: 'Repository updated',
+    editRepo: 'Edit',
+    makeDefault: 'Make default',
     addVar: 'Add variable',
   },
   settings: {
