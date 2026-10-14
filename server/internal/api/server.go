@@ -81,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks", a(s.createTask))
 	mux.HandleFunc("GET /api/v1/tasks/{id}", a(s.getTask))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/events", a(s.taskEvents))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/runs", a(s.taskRuns))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/diff", a(s.taskDiff))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/answer", a(s.answer))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/message", a(s.message))

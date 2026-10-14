@@ -166,6 +166,17 @@ func TestAPIFlow(t *testing.T) {
 		t.Fatalf("before_id with after_id: %d", code)
 	}
 
+	code, runs := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/runs", nil)
+	runItems, _ := runs["items"].([]any)
+	// Oldest first: the initial run, then the queued resume run (not started yet).
+	if code != 200 || len(runItems) != 2 || runItems[0].(map[string]any)["kind"] != "initial" ||
+		runItems[0].(map[string]any)["turns"] != float64(0) || runItems[1].(map[string]any)["started_at"] != nil {
+		t.Fatalf("runs: %d %v", code, runs)
+	}
+	if code, _ := c.do("GET", "/api/v1/tasks/999999999/runs", nil); code != 404 {
+		t.Fatalf("runs of unknown task: %d", code)
+	}
+
 	if code, _ := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil); code != 200 {
 		t.Fatal("cancel")
 	}

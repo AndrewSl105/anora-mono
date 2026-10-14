@@ -294,6 +294,38 @@ func (s *Server) taskEvents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) taskRuns(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "id")
+	if !ok {
+		return
+	}
+	if _, err := s.Store.GetTask(r.Context(), id); err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	var afterID int64
+	if c := r.URL.Query().Get("cursor"); c != "" {
+		n, err := strconv.ParseInt(c, 10, 64)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid", "bad cursor")
+			return
+		}
+		afterID = n
+	}
+	limit := limitParam(r)
+	items, err := s.Store.ListRuns(r.Context(), id, afterID, limit+1)
+	if err != nil {
+		writeErr(w, r, err)
+		return
+	}
+	out := page[*store.Run]{Items: items}
+	if len(items) > limit {
+		out.Items = items[:limit]
+		out.NextCursor = strconv.FormatInt(items[limit-1].ID, 10)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 const maxDiff = 1 << 20
 
 func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {

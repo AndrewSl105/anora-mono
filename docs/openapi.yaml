@@ -324,6 +324,29 @@ paths:
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
 
+  /api/v1/tasks/{id}/runs:
+    get:
+      operationId: listTaskRuns
+      tags: [tasks]
+      summary: Runs of a task, oldest first (including a queued run)
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/Limit'
+        - { name: cursor, in: query, schema: { type: string }, description: next_cursor from the previous page }
+      responses:
+        '200':
+          description: A page of runs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Run' } }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
   /api/v1/tasks/{id}/diff:
     get:
       operationId: getTaskDiff
@@ -672,7 +695,7 @@ components:
         container_id: { type: [string, 'null'] }
         exit_code: { type: [integer, 'null'] }
         last_seq: { type: integer, format: int64 }
-        cost_usd: { type: number }
+        cost_usd: { type: number, description: This run's own cost (not the session total) }
         turns: { type: integer, description: Last usage.turns the runner reported for this run }
         started_at: { type: [string, 'null'], format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }

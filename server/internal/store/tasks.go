@@ -380,6 +380,24 @@ func (s *Store) SetRunTurns(ctx context.Context, runID int64, turns int) (*Task,
 	return t, notFound(err)
 }
 
+// ListRuns returns a task's runs oldest first, including a pending one.
+func (s *Store) ListRuns(ctx context.Context, taskID, afterID int64, limit int) ([]*Run, error) {
+	rows, err := s.Pool.Query(ctx, `SELECT `+runCols+` FROM runs WHERE task_id = $1 AND id > $2 ORDER BY id LIMIT $3`, taskID, afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []*Run{}
+	for rows.Next() {
+		r, err := scanRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // UnfinishedRuns are runs that started but have no exit code (reconciliation).
 func (s *Store) UnfinishedRuns(ctx context.Context) ([]*Run, error) {
 	rows, err := s.Pool.Query(ctx, `SELECT `+runCols+` FROM runs WHERE started_at IS NOT NULL AND finished_at IS NULL ORDER BY id`)
