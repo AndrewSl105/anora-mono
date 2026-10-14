@@ -103,7 +103,10 @@ jobs:
   deploy:
     needs: [changes, images]
     # Also when no image was built (deploy files only); never after a failed build.
+    # Deploys start once the repository variable DEPLOY_ENABLED is "true" (README,
+    # server setup step 7), so pushes before the server exists stay green.
     if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
       !cancelled() && needs.images.result != 'failure' &&
       (needs.changes.outputs.server == 'true' || needs.changes.outputs.agent == 'true' ||
        needs.changes.outputs.web == 'true' || needs.changes.outputs.deploy == 'true')

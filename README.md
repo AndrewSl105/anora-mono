@@ -154,6 +154,8 @@ In **andrewsl105/anora**: *Settings → Environments → New environment* `produ
 | `DEPLOY_USER` | the deploy user from step 1 |
 | `DEPLOY_SSH_KEY` | a private key whose public key is in that user's `~/.ssh/authorized_keys` (e.g. `ssh-keygen -t ed25519 -f anora-deploy -N ''`) |
 
+Then *Settings → Secrets and variables → Actions → Variables*: add `DEPLOY_ENABLED` = `true`. Until it is set, the release workflow builds and pushes images but skips the deploy job.
+
 The images are pushed to GHCR with the repository's `GITHUB_TOKEN`. If the packages (`anora-server`, `anora-agent`, `anora-web`) are private, log the server in once with a token that has `read:packages`: `echo <token> | docker login ghcr.io -u andrewsl105 --password-stdin`.
 
 ### 8. First start
