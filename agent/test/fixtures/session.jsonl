@@ -1,0 +1,2 @@
+{"type":"run","task_id":1,"prompt":"Say hello","limits":{"max_turns":10,"max_budget_usd":1,"max_duration_sec":60,"question_timeout_sec":30},"commit":{"message":"agent: say hello","author_name":"anora[bot]","author_email":"anora@example.com"}}
+{"type":"answer","question_id":"q1","text":"hello"}
