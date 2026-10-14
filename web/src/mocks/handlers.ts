@@ -2,7 +2,7 @@ import { http, HttpResponse, ws, delay } from 'msw'
 import type { ApiEvent, Project, Task } from '@/api/types'
 import { GROUPS } from '@/lib/status'
 import { addEvent, db, makeTask, startRun, taskView } from './db'
-import { emitStatus, resumeAfterAnswer, setPush } from './simulator'
+import { emitStatus, interruptRun, resumeAfterAnswer, setPush } from './simulator'
 
 const SESSION_KEY = 'anora.mock.session'
 const PASSWORD = 'anora'
@@ -324,11 +324,15 @@ export const handlers = [
     const task = findTask(params.id)
     if (!task) return err(404, 'not_found', 'No such task')
     const body = (await request.json()) as { text: string }
-    const inject = task.status === 'running' || task.status === 'waiting_input'
+    const queue = ['queued', 'preparing', 'running', 'waiting_input', 'pushing'].includes(task.status)
     const followup = ['paused', 'pr_open', 'completed'].includes(task.status)
-    if (!inject && !followup) return err(409, 'conflict', 'Not allowed in this state')
+    if (!queue && !followup) return err(409, 'conflict', 'Not allowed in this state')
     await delay(250)
-    pushEvent(task.id, addEvent(task.id, 'message', { text: body.text, delivery: inject ? 'injected' : 'new_run' }))
+    pushEvent(task.id, addEvent(task.id, 'message', { text: body.text, delivery: queue ? 'queued' : 'new_run' }))
+    if (queue) {
+      task.queued_message = task.queued_message ? `${task.queued_message}\n\n${body.text}` : body.text
+      pushTask(task)
+    }
     if (followup) {
       const run = startRun(task.id, 'followup', body.text)
       pushEvent(task.id, (db.events.get(task.id) ?? []).find((e) => e.type === 'run_started' && (e.payload as unknown as { run_id: number }).run_id === run.id)!)
@@ -343,7 +347,8 @@ export const handlers = [
     if (!task) return err(404, 'not_found', 'No such task')
     if (!['running', 'waiting_input'].includes(task.status)) return err(409, 'not_running', 'Not running')
     pushEvent(task.id, addEvent(task.id, 'interrupt', {}))
-    emitStatus(task, 'pushing')
+    // Like the backend: the run ends as done ("Interrupted by the user.") and pushes what it has.
+    interruptRun(task)
     return HttpResponse.json(taskView(task))
   }),
   http.post(`${API}/tasks/:id/cancel`, ({ request, params }) => {

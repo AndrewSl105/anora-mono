@@ -3,7 +3,15 @@ import { fullQuestionId } from '@/api/events'
 
 export type TimelineItem =
   | { kind: 'claude'; key: string; text: string; at: string }
-  | { kind: 'user'; key: string; text: string; at: string; delivery?: string; pending?: boolean }
+  | {
+      kind: 'user'
+      key: string
+      text: string
+      at: string
+      /** queued: waiting for the run to end; dropped: the task ended first; injected: legacy timelines. */
+      note?: 'queued' | 'injected' | { dropped: string }
+      pending?: boolean
+    }
   | { kind: 'tool'; key: string; tool: string; summary: string; ok: boolean | null; error?: string; at: string }
   | {
       kind: 'question'
@@ -23,6 +31,20 @@ export type TimelineItem =
   | { kind: 'error'; key: string; title: string; message: string; at: string }
 
 /**
+ * Interrupt ends the run (the backend pushes what it committed): a task whose
+ * current run already got an interrupt is stopping until the run finishes.
+ */
+export function isStopping(events: ApiEvent[], status: TaskStatus): boolean {
+  if (status !== 'running' && status !== 'waiting_input') return false
+  for (let i = events.length - 1; i >= 0; i--) {
+    const type = events[i].type
+    if (type === 'interrupt') return true
+    if (type === 'run_started' || type === 'run_finished') return false
+  }
+  return false
+}
+
+/**
  * Maps raw events (real, then optimistic local ones) to timeline items. Pure.
  * Turns, the latest activity and the runs list come from the API (Task.turns,
  * Task.last_activity, GET /tasks/{id}/runs), not from the loaded events.
@@ -31,6 +53,9 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
   const items: TimelineItem[] = []
   const questions = new Map<string, Extract<TimelineItem, { kind: 'question' }>>()
   const openTools = new Map<string, Extract<TimelineItem, { kind: 'tool' }>>()
+  // Queued messages wait for the run to end: the move to `queued` starts them
+  // as the next run; `message_dropped` means the task ended first.
+  let waiting: Extract<TimelineItem, { kind: 'user' }>[] = []
 
   const all = [...events, ...local]
   for (const e of all) {
@@ -88,11 +113,24 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
       }
       case 'message': {
         const m = e.payload
-        items.push({ kind: 'user', key, text: m.text, at, delivery: m.delivery, pending })
+        const item: Extract<TimelineItem, { kind: 'user' }> = { kind: 'user', key, text: m.text, at, pending }
+        if (m.delivery === 'queued') {
+          item.note = 'queued'
+          waiting.push(item)
+        } else if (m.delivery === 'injected') item.note = 'injected'
+        items.push(item)
         break
       }
+      case 'message_dropped':
+        for (const w of waiting) w.note = { dropped: e.payload.reason }
+        waiting = []
+        break
       case 'status': {
         const s = e.payload
+        if (s.status === 'queued') {
+          for (const w of waiting) if (!w.pending) w.note = undefined
+          waiting = waiting.filter((w) => w.pending)
+        }
         items.push({ kind: 'status', key, status: s.status as TaskStatus, reason: s.reason, at })
         break
       }

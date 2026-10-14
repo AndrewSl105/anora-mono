@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ApiEvent } from '@/api/types'
-import { buildTimeline } from './timeline'
+import { buildTimeline, isStopping } from './timeline'
+import { composerMode } from './status'
 
 let id = 0
 function ev(type: string, payload: Record<string, unknown>, opts: { run?: number; runner?: boolean; id?: number } = {}): ApiEvent {
@@ -66,5 +67,43 @@ describe('buildTimeline', () => {
     ])
     expect(items.map((i) => i.kind)).toEqual(['status', 'commit', 'done', 'pr', 'ci', 'pr', 'error', 'error'])
     expect(items[5]).toMatchObject({ action: 'closed', merged: true })
+  })
+
+  it('labels queued messages until the next run starts, or as not sent', () => {
+    const delivered = buildTimeline([
+      ev('message', { text: 'one', delivery: 'queued' }, { runner: false }),
+      ev('status', { status: 'pr_open' }, { runner: false }),
+      ev('status', { status: 'queued' }, { runner: false }),
+      ev('message', { text: 'two', delivery: 'queued' }, { runner: false }),
+    ])
+    expect(delivered.filter((i) => i.kind === 'user').map((i) => i.kind === 'user' && i.note)).toEqual([undefined, 'queued'])
+
+    const dropped = buildTimeline([
+      ev('message', { text: 'late', delivery: 'queued' }, { runner: false }),
+      ev('status', { status: 'cancelled' }, { runner: false }),
+      ev('message_dropped', { text: 'late', reason: 'cancelled' }, { runner: false }),
+    ])
+    expect(dropped[0]).toMatchObject({ kind: 'user', note: { dropped: 'cancelled' } })
+
+    const legacy = buildTimeline([ev('message', { text: 'old', delivery: 'injected' }, { runner: false })])
+    expect(legacy[0]).toMatchObject({ note: 'injected' })
+  })
+
+  it('is stopping between an interrupt and the end of the run', () => {
+    const started = ev('run_started', { run_id: 3, kind: 'initial' }, { runner: false })
+    const interrupt = ev('interrupt', {}, { runner: false })
+    expect(isStopping([started], 'running')).toBe(false)
+    expect(isStopping([started, interrupt], 'running')).toBe(true)
+    expect(isStopping([started, interrupt], 'pushing')).toBe(false)
+    expect(isStopping([interrupt, ev('run_started', { run_id: 4, kind: 'followup' }, { runner: false })], 'running')).toBe(false)
+  })
+})
+
+describe('composerMode', () => {
+  it('queues while a run is pending or active and starts a run otherwise', () => {
+    expect(['queued', 'preparing', 'running', 'waiting_input', 'pushing'].map((s) => composerMode(s as never))).toEqual(Array(5).fill('queue'))
+    expect(['paused', 'pr_open', 'completed'].map((s) => composerMode(s as never))).toEqual(Array(3).fill('followup'))
+    expect(composerMode('failed')).toBeNull()
+    expect(composerMode('cancelled')).toBeNull()
   })
 })

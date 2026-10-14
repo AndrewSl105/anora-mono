@@ -3,7 +3,7 @@ import { useParams } from 'react-router'
 import { useTask, useTaskEvents } from '@/api/hooks'
 import { isApiError } from '@/api/errors'
 import { useTaskSubscription } from '@/realtime/RealtimeProvider'
-import { buildTimeline } from '@/lib/timeline'
+import { buildTimeline, isStopping } from '@/lib/timeline'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/telegram/haptics'
 import { useDisableVerticalSwipes } from '@/telegram/controls'
@@ -41,10 +41,11 @@ function TaskDetail({ id }: { id: number }) {
     return <NotFound title={t.common.somethingWrong} />
   }
   const view = task.data
+  const stopping = isStopping(events.data?.items ?? [], view.status)
 
   return (
     <div className="flex h-full flex-col">
-      <TaskHeader task={view} />
+      <TaskHeader task={view} stopping={stopping} />
       <div role="tablist" aria-label="Task sections" className="flex shrink-0 gap-1 border-b px-2">
         {TABS.map((name) => (
           <button
@@ -67,7 +68,7 @@ function TaskDetail({ id }: { id: number }) {
       <div className="flex min-h-0 flex-1 flex-col">
         {tab === 'activity' && (
           <>
-            <Timeline task={view} items={items} older={events.data?.older ?? ''} loading={events.isPending} />
+            <Timeline task={view} items={items} older={events.data?.older ?? ''} loading={events.isPending} stopping={stopping} />
             <Composer task={view} />
           </>
         )}

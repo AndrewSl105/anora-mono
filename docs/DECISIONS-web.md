@@ -28,3 +28,8 @@ One line each. "Backend ask" marks something Anora Runner should add.
 - **401 handling lives in the custom `fetch`** passed to openapi-fetch (one shared re-auth for concurrent 401s, one retry), and error-to-`ApiError` conversion in `call()` rather than a response middleware.
 - **Mock mode** (`VITE_MOCK=1`) uses MSW in the browser for REST and MSW's WebSocket interception for `/api/v1/ws`; `?tg=1` (and `&dark=1`) fakes the Telegram WebApp. Mock code is excluded from production builds.
 - **Phases 1–5 were built and verified together** (one commit) because the user asked to run all phases without stopping; Phase 6 is a separate commit.
+
+## Integration with the real backend
+
+- **Messages while a run is active are queued, not injected** (backend change, see its DECISIONS). `composerMode` is `queue` in `queued`/`preparing`/`running`/`waiting_input`/`pushing` and `followup` in `paused`/`pr_open`/`completed`; the composer says the text starts the next run when this one ends. The optimistic bubble uses `delivery: "queued"` and keeps a "Queued" note until a `status: queued` event (the drained follow-up) arrives; `message_dropped` turns it into "Not sent: the task failed/was cancelled first". `Task.queued_message` is shown above the composer. Legacy `delivery: "injected"` bubbles say the text may not have reached Claude.
+- **Interrupt ends the run.** The action is labelled "Stop and finish run"; after it is sent (an `interrupt` event since the last `run_started`) the working line says the run is ending and the action is hidden until the run finishes. A queued message then starts the next run, so "queue a message, then stop" redirects Claude.

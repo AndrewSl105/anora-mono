@@ -30,6 +30,12 @@ function dividerText(text: string): string {
   return text
 }
 
+function noteText(note: NonNullable<Extract<TimelineItem, { kind: 'user' }>['note']>): string {
+  if (note === 'queued') return tl.queued
+  if (note === 'injected') return tl.injected
+  return tl.dropped(note.dropped)
+}
+
 function Divider({ children, warn }: { children: React.ReactNode; warn?: boolean }) {
   return (
     <div className={cn('flex items-center gap-3 py-1 text-[11px] text-muted-foreground', warn && 'text-amber-700 dark:text-amber-300')}>
@@ -89,7 +95,11 @@ function TimelineRowImpl({ item }: { item: TimelineItem }) {
             )}
           >
             {item.text}
-            {item.pending && <div className="mt-1 text-[11px] opacity-80">{tl.sending}</div>}
+            {item.pending ? (
+              <div className="mt-1 text-[11px] opacity-80">{tl.sending}</div>
+            ) : (
+              item.note && <div className="mt-1 text-[11px] opacity-80">{noteText(item.note)}</div>
+            )}
           </div>
         </div>
       )

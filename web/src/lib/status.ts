@@ -55,12 +55,12 @@ export const ACTIVE_STATUSES = GROUPS.active
 export type TaskAction = 'cancel' | 'message' | 'interrupt' | 'answer' | 'retry'
 
 const ACTIONS: Record<TaskStatus, TaskAction[]> = {
-  queued: ['cancel'],
-  preparing: ['cancel'],
+  queued: ['message', 'cancel'],
+  preparing: ['message', 'cancel'],
   running: ['message', 'interrupt', 'cancel'],
   waiting_input: ['answer', 'message', 'interrupt', 'cancel'],
   paused: ['answer', 'message', 'cancel'],
-  pushing: ['cancel'],
+  pushing: ['message', 'cancel'],
   pr_open: ['message', 'cancel'],
   completed: ['message'],
   failed: ['retry'],
@@ -71,8 +71,13 @@ export function can(status: TaskStatus, action: TaskAction): boolean {
   return ACTIONS[status].includes(action)
 }
 
-/** How a composer message is delivered, or null when the composer is hidden (409 states). */
-export function composerMode(status: TaskStatus): 'inject' | 'followup' | null {
+/**
+ * How a composer message is delivered, or null when the composer is hidden
+ * (409 states). A run handles one prompt, so nothing reaches a live session:
+ * while a run is pending or active the message is queued and starts the next
+ * run when the current one ends; otherwise it starts a new run right away.
+ */
+export function composerMode(status: TaskStatus): 'queue' | 'followup' | null {
   if (!can(status, 'message')) return null
-  return status === 'running' || status === 'waiting_input' ? 'inject' : 'followup'
+  return status === 'paused' || status === 'pr_open' || status === 'completed' ? 'followup' : 'queue'
 }

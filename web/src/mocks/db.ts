@@ -156,13 +156,31 @@ export function taskView(task: Task): TaskView {
   }
 }
 
+/**
+ * Applies a status change like the backend's setStatusTx, including the queued
+ * message rule: when the run ends in paused/pr_open/completed the queued text
+ * starts the next run (status queued); failed/cancelled drop it.
+ */
 export function setStatus(task: Task, status: TaskStatus, reason?: string) {
   task.status = status
   task.status_reason = reason ?? null
   task.updated_at = new Date().toISOString()
-  if (['completed', 'failed', 'cancelled'].includes(status)) task.finished_at = task.updated_at
+  task.finished_at = ['completed', 'failed', 'cancelled'].includes(status) ? task.updated_at : null
   addEvent(task.id, 'status', reason ? { status, reason } : { status })
+  const text = task.queued_message
+  if (!text) return
+  if (status === 'paused' || status === 'pr_open' || status === 'completed') {
+    task.queued_message = null
+    pendingRuns.set(task.id, { kind: status === 'paused' ? 'resume' : 'followup', input: text })
+    setStatus(task, 'queued')
+  } else if (status === 'failed' || status === 'cancelled') {
+    task.queued_message = null
+    addEvent(task.id, 'message_dropped', { text, reason: status })
+  }
 }
+
+/** Runs queued by setStatus; the simulator starts them when it picks the task up. */
+export const pendingRuns = new Map<number, { kind: Run['kind']; input: string }>()
 
 export function seed() {
   db.projects = [

@@ -20,11 +20,19 @@ export function Composer({ task }: { task: TaskView }) {
     const v = text.trim()
     if (!v || send.isPending) return
     setText('')
-    send.mutate(v, { onError: () => setText(v) })
+    send.mutate({ text: v, queued: mode === 'queue' }, { onError: () => setText(v) })
   }
 
+  const label = mode === 'queue' ? t.task.composer.queue : t.task.composer.followup
   return (
     <div className="shrink-0 border-t bg-background/95 px-3 pt-2 pb-[calc(var(--safe-bottom)+0.5rem)] backdrop-blur">
+      {task.queued_message ? (
+        <p className="mb-2 line-clamp-2 rounded-lg bg-muted px-3 py-1.5 text-xs text-muted-foreground">
+          <span className="font-medium text-foreground/80">{t.task.composer.queued}:</span> {task.queued_message}
+        </p>
+      ) : (
+        mode === 'queue' && <p className="mb-1.5 px-1 text-xs text-muted-foreground">{t.task.composer.queueHint}</p>
+      )}
       <form
         className="flex items-end gap-2"
         onSubmit={(e) => {
@@ -42,8 +50,8 @@ export function Composer({ task }: { task: TaskView }) {
             }
           }}
           rows={1}
-          placeholder={mode === 'inject' ? t.task.composer.running : t.task.composer.followup}
-          aria-label={mode === 'inject' ? t.task.composer.running : t.task.composer.followup}
+          placeholder={label}
+          aria-label={label}
           className="max-h-40 min-h-11 resize-none rounded-2xl"
         />
         <Button

@@ -1,5 +1,5 @@
 import type { ApiEvent, Task } from '@/api/types'
-import { addEvent, db, setStatus } from './db'
+import { addEvent, db, pendingRuns, setStatus, startRun } from './db'
 
 // Drives running tasks in mock mode so the live timeline has something to show.
 
@@ -15,10 +15,21 @@ function emit(taskId: number, type: string, payload: Record<string, unknown>, ru
 }
 
 function emitStatus(task: Task, status: Task['status'], reason?: string) {
+  const events = db.events.get(task.id) ?? []
+  const before = events.length
   setStatus(task, status, reason)
-  const events = db.events.get(task.id)!
-  push.event(task.id, events[events.length - 1])
+  // setStatus may add more than one event (a drained queued message).
+  for (const e of (db.events.get(task.id) ?? []).slice(before)) push.event(task.id, e)
   push.task(task)
+}
+
+/** Ends the current run early: done, then push like a finished run. */
+function interruptRun(task: Task) {
+  setTimeout(() => {
+    emit(task.id, 'done', { session_id: 's', summary: 'Interrupted by the user.', no_changes: false, cost_usd_total: task.cost_usd_total })
+    progress.set(task.id, SCRIPT.length + 1)
+    emitStatus(task, 'pushing')
+  }, 800)
 }
 
 const SCRIPT: Array<(task: Task) => void> = [
@@ -68,6 +79,14 @@ export function startSimulator(intervalMs = 2500) {
       emitStatus(task, 'pr_open')
     }
     for (const task of db.tasks.filter((t) => t.status === 'queued' || t.status === 'preparing')) {
+      const next = pendingRuns.get(task.id)
+      if (task.status === 'preparing' && next) {
+        pendingRuns.delete(task.id)
+        startRun(task.id, next.kind, next.input)
+        const events = db.events.get(task.id)!
+        push.event(task.id, events[events.length - 1])
+        progress.set(task.id, 0)
+      }
       emitStatus(task, task.status === 'queued' ? 'preparing' : 'running')
     }
   }, intervalMs)
@@ -84,4 +103,4 @@ export function stopSimulator() {
   progress.clear()
 }
 
-export { emitStatus }
+export { emitStatus, interruptRun }

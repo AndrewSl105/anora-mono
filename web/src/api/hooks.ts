@@ -204,23 +204,26 @@ export function useAnswer(taskId: number) {
   })
 }
 
+/** `queued`: the task has a pending or active run, so the backend queues the text (composerMode). */
 export function useSendMessage(taskId: number) {
   const qc = useQueryClient()
   const apply = useTaskResult()
   return useMutation({
-    mutationFn: (text: string) =>
+    mutationFn: ({ text }: { text: string; queued: boolean }) =>
       call(api.POST('/api/v1/tasks/{id}/message', { params: { path: { id: taskId }, header: CSRF }, body: { text } })),
-    onMutate: (text) => {
-      const local = addLocalEvent(qc, taskId, 'message', { text, delivery: 'injected' })
+    onMutate: ({ text, queued }) => {
+      const local = addLocalEvent(qc, taskId, 'message', { text, delivery: queued ? 'queued' : 'new_run' })
       return { localId: local.id }
     },
     onSuccess: (task) => {
       haptic.success()
       apply(task)
     },
-    onError: (e, _text, ctx) => {
+    onError: (e, _vars, ctx) => {
       if (ctx) removeLocalEvent(qc, taskId, ctx.localId)
       toastError(e)
+      // A 409 means the task moved on (e.g. failed); show its current state.
+      void qc.invalidateQueries({ queryKey: keys.tasks.detail(taskId) })
     },
   })
 }

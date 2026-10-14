@@ -57,3 +57,19 @@ test('long timelines open at the end and page backwards', async ({ page }) => {
   await page.locator('div[aria-live="polite"]').evaluate((el) => (el.scrollTop = 0))
   await expect(first).toBeVisible()
 })
+
+test('a message sent while running is queued; stopping the run starts it next', async ({ page }) => {
+  await login(page)
+  await page.goto('/tasks/7')
+  await expect(page.getByRole('heading', { name: 'Paginate the audit log API' })).toBeVisible()
+  await page.getByLabel('Message for the next run…').fill('Also document the cursor format')
+  await page.getByRole('button', { name: 'Send' }).click()
+  await expect(page.getByText('Queued: starts the next run when this one ends')).toBeVisible()
+  await expect(page.getByText('Queued for the next run:')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Task actions' }).click()
+  await page.getByRole('menuitem', { name: 'Stop and finish run' }).click()
+  await expect(page.getByText('Stopping: the run ends with the work so far')).toBeVisible()
+  await expect(page.getByText('Run started (followup)')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByText('Queued: starts the next run when this one ends')).toHaveCount(0)
+})

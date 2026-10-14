@@ -25,7 +25,7 @@ export function githubUrl(task: TaskView): string | null {
   return task.branch ? `https://github.com/${repo}/tree/${encodeURIComponent(task.branch)}` : `https://github.com/${repo}`
 }
 
-export function TaskHeader({ task }: { task: TaskView }) {
+export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boolean }) {
   const runtime = useRuntime()
   const navigate = useNavigate()
   const confirm = useConfirm()
@@ -70,7 +70,7 @@ export function TaskHeader({ task }: { task: TaskView }) {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="min-w-48">
-            {can(task.status, 'interrupt') && (
+            {can(task.status, 'interrupt') && !stopping && (
               <DropdownMenuItem className="h-10" onSelect={() => action.mutate('interrupt')}>
                 <OctagonPause /> {t.task.actions.interrupt}
               </DropdownMenuItem>

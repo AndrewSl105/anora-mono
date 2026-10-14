@@ -30,9 +30,11 @@ type Props = {
   /** before_id cursor of the next older page; "" when the start is loaded. */
   older: string
   loading: boolean
+  /** An interrupt was sent; the run is ending. */
+  stopping: boolean
 }
 
-export function Timeline({ task, items: loaded, older, loading }: Props) {
+export function Timeline({ task, items: loaded, older, loading, stopping }: Props) {
   const items = useMemo(() => withOpenQuestion(loaded, task), [loaded, task])
   const scrollRef = useRef<HTMLDivElement>(null)
   const atBottom = useRef(true)
@@ -99,7 +101,7 @@ export function Timeline({ task, items: loaded, older, loading }: Props) {
     maybeLoadOlder()
   }
 
-  const working = WORKING.includes(task.status)
+  const working = WORKING.includes(task.status) || stopping
   const answerable = can(task.status, 'answer')
 
   return (
@@ -157,8 +159,8 @@ export function Timeline({ task, items: loaded, older, loading }: Props) {
         {working && (
           <div className="flex items-center gap-2 pb-3 text-xs text-muted-foreground" role="status">
             <Loader2 className="size-3.5 animate-spin text-primary" aria-hidden="true" />
-            <span className="shrink-0 font-medium">{t.task.working}</span>
-            {task.last_activity && <span className="truncate font-mono">· {task.last_activity}</span>}
+            <span className="shrink-0 font-medium">{stopping ? t.task.stopping : t.task.working}</span>
+            {!stopping && task.last_activity && <span className="truncate font-mono">· {task.last_activity}</span>}
           </div>
         )}
       </div>
