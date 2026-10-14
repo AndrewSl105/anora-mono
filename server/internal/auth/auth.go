@@ -17,7 +17,7 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 const (

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 // Telegram allows 4096 characters per message; leave room for markup.

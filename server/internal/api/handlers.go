@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andrewsl105/anora-runner/internal/auth"
-	"github.com/andrewsl105/anora-runner/internal/projects"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/auth"
+	"github.com/andrewsl105/anora/server/internal/projects"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
 )
 
 // ---- auth ----

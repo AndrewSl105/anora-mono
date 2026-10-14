@@ -10,8 +10,8 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
 )
 
 var commandList = []telego.BotCommand{

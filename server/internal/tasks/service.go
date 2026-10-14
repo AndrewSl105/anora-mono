@@ -7,8 +7,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/andrewsl105/anora-runner/internal/events"
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 var (

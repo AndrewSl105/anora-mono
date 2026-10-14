@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/testutil"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/testutil"
 )
 
 func newTask(t *testing.T, st *store.Store) *store.Task {

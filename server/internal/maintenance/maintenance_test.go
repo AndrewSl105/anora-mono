@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewsl105/anora-runner/internal/projects"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
-	"github.com/andrewsl105/anora-runner/internal/testutil"
+	"github.com/andrewsl105/anora/server/internal/projects"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/testutil"
 )
 
 type fakeDocker struct{ all, sidecars, volumes []int64 }

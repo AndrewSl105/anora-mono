@@ -12,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 type Metrics struct {

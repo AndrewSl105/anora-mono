@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 func DB(t *testing.T) *store.Store {

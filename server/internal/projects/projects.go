@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 var ErrInvalid = errors.New("invalid input")

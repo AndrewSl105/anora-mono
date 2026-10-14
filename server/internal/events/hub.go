@@ -5,7 +5,7 @@ package events
 import (
 	"sync"
 
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 // Message is what subscribers receive: either a timeline event or a task snapshot.

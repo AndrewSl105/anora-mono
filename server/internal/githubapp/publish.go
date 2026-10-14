@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andrewsl105/anora-runner/internal/scheduler"
-	"github.com/andrewsl105/anora-runner/internal/workspace"
+	"github.com/andrewsl105/anora/server/internal/scheduler"
+	"github.com/andrewsl105/anora/server/internal/workspace"
 )
 
 // Publisher implements scheduler.Publisher: validate, push, open or update the PR.

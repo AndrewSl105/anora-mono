@@ -19,14 +19,14 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
-	"github.com/andrewsl105/anora-runner/internal/api"
-	"github.com/andrewsl105/anora-runner/internal/auth"
-	"github.com/andrewsl105/anora-runner/internal/config"
-	"github.com/andrewsl105/anora-runner/internal/events"
-	"github.com/andrewsl105/anora-runner/internal/projects"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
-	"github.com/andrewsl105/anora-runner/internal/testutil"
+	"github.com/andrewsl105/anora/server/internal/api"
+	"github.com/andrewsl105/anora/server/internal/auth"
+	"github.com/andrewsl105/anora/server/internal/config"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/projects"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/testutil"
 )
 
 type client struct {

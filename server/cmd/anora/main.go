@@ -13,9 +13,9 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/andrewsl105/anora-runner/internal/auth"
-	"github.com/andrewsl105/anora-runner/internal/config"
-	"github.com/andrewsl105/anora-runner/internal/store"
+	"github.com/andrewsl105/anora/server/internal/auth"
+	"github.com/andrewsl105/anora/server/internal/config"
+	"github.com/andrewsl105/anora/server/internal/store"
 )
 
 const usage = `usage: anora <command>

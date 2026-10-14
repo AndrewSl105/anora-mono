@@ -10,11 +10,11 @@ import (
 
 	"github.com/mymmrac/telego"
 
-	"github.com/andrewsl105/anora-runner/internal/events"
-	"github.com/andrewsl105/anora-runner/internal/projects"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
-	"github.com/andrewsl105/anora-runner/internal/testutil"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/projects"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/testutil"
 )
 
 type sent struct {

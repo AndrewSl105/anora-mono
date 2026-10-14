@@ -8,9 +8,9 @@ import (
 
 	"github.com/google/go-github/v92/github"
 
-	"github.com/andrewsl105/anora-runner/internal/events"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
 )
 
 // CIFailure describes a failed check for the OnCIFailed hook.

@@ -13,12 +13,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrewsl105/anora-runner/internal/config"
-	"github.com/andrewsl105/anora-runner/internal/events"
-	"github.com/andrewsl105/anora-runner/internal/runnermgr"
-	"github.com/andrewsl105/anora-runner/internal/store"
-	"github.com/andrewsl105/anora-runner/internal/tasks"
-	"github.com/andrewsl105/anora-runner/internal/workspace"
+	"github.com/andrewsl105/anora/server/internal/config"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/runnermgr"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/workspace"
 )
 
 const (

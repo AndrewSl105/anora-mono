@@ -1,4 +1,4 @@
-module github.com/andrewsl105/anora-runner
+module github.com/andrewsl105/anora/server
 
 go 1.27.2
 
