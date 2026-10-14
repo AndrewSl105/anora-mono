@@ -130,8 +130,10 @@ A **project** groups repositories and holds run settings. All override fields ar
  "created_at": "…"}
 ```
 
-- **Runner events** have `seq` set and `payload` is the runner event exactly as described in [PROTOCOL.md](PROTOCOL.md): `started`, `assistant_text`, `tool_use`, `tool_result`, `question`, `usage`, `committed`, `done`, `paused`, `error`.
-- **Backend events** have `seq: null`:
+Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` discriminated by the envelope's `type` (`ToolUseEvent`, `StatusEvent`, …), each with its own `payload` schema (`ToolUsePayload`, `StatusPayload`, …). Generate client types from it; `switch (event.type)` narrows the payload.
+
+- **Runner events** have `seq` (and `run_id`) set and `payload` is the runner event exactly as described in [PROTOCOL.md](PROTOCOL.md), including its own `type`, `ts` and `seq`: `ready`, `started`, `assistant_text`, `tool_use`, `tool_result`, `question`, `usage`, `committed`, `done`, `paused`, `error`. In a `question` payload, `question_id` is the runner-local id (`q1`); the API question id (for `/answer`) is `<run_id>-<question_id>`, as in `open_question.id`.
+- **Backend events** have `seq: null`; their payload has no `type`, `ts` or `seq` (use the envelope's `type` and `created_at`):
 
   | type | payload |
   |---|---|

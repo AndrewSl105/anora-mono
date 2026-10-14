@@ -751,13 +751,504 @@ components:
         answered_at: { type: [string, 'null'], format: date-time }
 
     Event:
+      description: |
+        Timeline event, discriminated by `type`. Runner events (PROTOCOL.md)
+        have `seq` set and their `payload` is the runner event verbatim
+        (including `type`, `ts`, `seq`); backend events have `seq: null`.
+      oneOf:
+        - $ref: '#/components/schemas/ReadyEvent'
+        - $ref: '#/components/schemas/StartedEvent'
+        - $ref: '#/components/schemas/AssistantTextEvent'
+        - $ref: '#/components/schemas/ToolUseEvent'
+        - $ref: '#/components/schemas/ToolResultEvent'
+        - $ref: '#/components/schemas/QuestionEvent'
+        - $ref: '#/components/schemas/UsageEvent'
+        - $ref: '#/components/schemas/CommittedEvent'
+        - $ref: '#/components/schemas/DoneEvent'
+        - $ref: '#/components/schemas/PausedEvent'
+        - $ref: '#/components/schemas/ErrorEvent'
+        - $ref: '#/components/schemas/StatusEvent'
+        - $ref: '#/components/schemas/AnswerEvent'
+        - $ref: '#/components/schemas/MessageEvent'
+        - $ref: '#/components/schemas/InterruptEvent'
+        - $ref: '#/components/schemas/RunStartedEvent'
+        - $ref: '#/components/schemas/RunFinishedEvent'
+        - $ref: '#/components/schemas/PrOpenedEvent'
+        - $ref: '#/components/schemas/PrUpdatedEvent'
+        - $ref: '#/components/schemas/PrClosedEvent'
+        - $ref: '#/components/schemas/CiEvent'
+        - $ref: '#/components/schemas/DiffRejectedEvent'
+      discriminator:
+        propertyName: type
+        mapping:
+          ready: '#/components/schemas/ReadyEvent'
+          started: '#/components/schemas/StartedEvent'
+          assistant_text: '#/components/schemas/AssistantTextEvent'
+          tool_use: '#/components/schemas/ToolUseEvent'
+          tool_result: '#/components/schemas/ToolResultEvent'
+          question: '#/components/schemas/QuestionEvent'
+          usage: '#/components/schemas/UsageEvent'
+          committed: '#/components/schemas/CommittedEvent'
+          done: '#/components/schemas/DoneEvent'
+          paused: '#/components/schemas/PausedEvent'
+          error: '#/components/schemas/ErrorEvent'
+          status: '#/components/schemas/StatusEvent'
+          answer: '#/components/schemas/AnswerEvent'
+          message: '#/components/schemas/MessageEvent'
+          interrupt: '#/components/schemas/InterruptEvent'
+          run_started: '#/components/schemas/RunStartedEvent'
+          run_finished: '#/components/schemas/RunFinishedEvent'
+          pr_opened: '#/components/schemas/PrOpenedEvent'
+          pr_updated: '#/components/schemas/PrUpdatedEvent'
+          pr_closed: '#/components/schemas/PrClosedEvent'
+          ci: '#/components/schemas/CiEvent'
+          diff_rejected: '#/components/schemas/DiffRejectedEvent'
+
+    EventType:
+      type: string
+      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, status, answer, message, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
+
+    EventBase:
       type: object
-      required: [id, task_id, type, payload, created_at]
+      required: [id, task_id, run_id, created_at]
       properties:
         id: { type: integer, format: int64 }
         task_id: { type: integer, format: int64 }
         run_id: { type: [integer, 'null'], format: int64 }
-        seq: { type: [integer, 'null'], format: int64, description: Set for runner events; null for backend events }
-        type: { type: string }
-        payload: { type: object, description: Runner event (PROTOCOL.md) or backend event payload (API.md) }
         created_at: { type: string, format: date-time }
+
+    RunnerPayloadBase:
+      type: object
+      required: [ts, seq]
+      properties:
+        ts: { type: string, format: date-time }
+        seq: { type: integer, format: int64 }
+
+    # ---- runner events ----
+
+    ReadyEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [ready] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ReadyPayload' }
+
+    ReadyPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, runner_version]
+          properties:
+            type: { type: string, enum: [ready] }
+            runner_version: { type: string }
+
+    StartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [started] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/StartedPayload' }
+
+    StartedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, model]
+          properties:
+            type: { type: string, enum: [started] }
+            session_id: { type: string }
+            model: { type: string }
+
+    AssistantTextEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [assistant_text] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/AssistantTextPayload' }
+
+    AssistantTextPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, text]
+          properties:
+            type: { type: string, enum: [assistant_text] }
+            text: { type: string }
+
+    ToolUseEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [tool_use] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ToolUsePayload' }
+
+    ToolUsePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, tool, summary]
+          properties:
+            type: { type: string, enum: [tool_use] }
+            tool: { type: string }
+            summary: { type: string, description: 'Short, human-readable, e.g. "Edit src/tables/export.ts"' }
+
+    ToolResultEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [tool_result] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ToolResultPayload' }
+
+    ToolResultPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, tool, ok]
+          properties:
+            type: { type: string, enum: [tool_result] }
+            tool: { type: string }
+            ok: { type: boolean }
+            summary: { type: string, description: Only when ok is false; first line of the error }
+
+    QuestionEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [question] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/QuestionPayload' }
+
+    QuestionPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, question_id, text]
+          properties:
+            type: { type: string, enum: [question] }
+            question_id: { type: string, description: 'Runner-local id (q1, q2, …); the API question id is "<run_id>-<question_id>"' }
+            text: { type: string }
+            options: { type: array, items: { type: string } }
+
+    UsageEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [usage] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/UsagePayload' }
+
+    UsagePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, cost_usd_total, input_tokens, output_tokens, turns]
+          properties:
+            type: { type: string, enum: [usage] }
+            cost_usd_total: { type: number, description: Cumulative for the Claude session }
+            input_tokens: { type: integer }
+            output_tokens: { type: integer }
+            turns: { type: integer, description: Turns in this run }
+
+    CommittedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [committed] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/CommittedPayload' }
+
+    CommittedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, sha, files_changed, insertions, deletions]
+          properties:
+            type: { type: string, enum: [committed] }
+            sha: { type: string }
+            files_changed: { type: integer }
+            insertions: { type: integer }
+            deletions: { type: integer }
+
+    DoneEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [done] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/DonePayload' }
+
+    DonePayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, summary, no_changes, cost_usd_total]
+          properties:
+            type: { type: string, enum: [done] }
+            session_id: { type: string }
+            summary: { type: string }
+            no_changes: { type: boolean }
+            cost_usd_total: { type: number }
+
+    PausedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [paused] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/PausedPayload' }
+
+    PausedPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, session_id, reason, question_id]
+          properties:
+            type: { type: string, enum: [paused] }
+            session_id: { type: string }
+            reason: { type: string, enum: [question_timeout] }
+            question_id: { type: string }
+
+    ErrorEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, run_id, seq, payload]
+          properties:
+            type: { type: string, enum: [error] }
+            run_id: { type: integer, format: int64 }
+            seq: { type: integer, format: int64 }
+            payload: { $ref: '#/components/schemas/ErrorPayload' }
+
+    ErrorPayload:
+      allOf:
+        - $ref: '#/components/schemas/RunnerPayloadBase'
+        - type: object
+          required: [type, code, message]
+          properties:
+            type: { type: string, enum: [error] }
+            code: { type: string, description: 'no_auth, bad_command, commit_failed, limit_exceeded, sdk_error or internal' }
+            message: { type: string }
+            session_id: { type: string }
+
+    # ---- backend events ----
+
+    StatusEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [status] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/StatusPayload' }
+
+    StatusPayload:
+      type: object
+      required: [status]
+      properties:
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        reason: { type: string }
+
+    AnswerEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [answer] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/AnswerPayload' }
+
+    AnswerPayload:
+      type: object
+      required: [question_id, text, answered_via]
+      properties:
+        question_id: { type: string, description: API question id ("<run_id>-<runner id>") }
+        text: { type: string }
+        answered_via: { type: string, enum: [web, telegram] }
+
+    MessageEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [message] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/MessagePayload' }
+
+    MessagePayload:
+      type: object
+      required: [text, delivery]
+      properties:
+        text: { type: string }
+        delivery: { type: string, enum: [injected, new_run] }
+
+    InterruptEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [interrupt] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/InterruptPayload' }
+
+    InterruptPayload:
+      type: object
+      additionalProperties: false
+      properties: {}
+
+    RunStartedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [run_started] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/RunStartedPayload' }
+
+    RunStartedPayload:
+      type: object
+      required: [run_id, kind]
+      properties:
+        run_id: { type: integer, format: int64 }
+        kind: { type: string, enum: [initial, resume, followup, retry] }
+
+    RunFinishedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [run_finished] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/RunFinishedPayload' }
+
+    RunFinishedPayload:
+      type: object
+      required: [run_id, exit_code]
+      properties:
+        run_id: { type: integer, format: int64 }
+        exit_code: { type: integer, description: Runner exit code (PROTOCOL.md) }
+
+    PrOpenedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_opened] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrOpenedPayload' }
+
+    PrOpenedPayload:
+      type: object
+      required: [number, url]
+      properties:
+        number: { type: integer }
+        url: { type: string }
+
+    PrUpdatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_updated] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrUpdatedPayload' }
+
+    PrUpdatedPayload:
+      type: object
+      required: [number, url]
+      properties:
+        number: { type: integer }
+        url: { type: string }
+
+    PrClosedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [pr_closed] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/PrClosedPayload' }
+
+    PrClosedPayload:
+      type: object
+      required: [number, merged]
+      properties:
+        number: { type: integer }
+        merged: { type: boolean }
+
+    CiEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [ci] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/CiPayload' }
+
+    CiPayload:
+      type: object
+      required: [status, name, url]
+      properties:
+        status: { type: string, enum: [pending, success, failure] }
+        name: { type: string }
+        url: { type: string }
+
+    DiffRejectedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [diff_rejected] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/DiffRejectedPayload' }
+
+    DiffRejectedPayload:
+      type: object
+      required: [reason]
+      properties:
+        reason: { type: string }

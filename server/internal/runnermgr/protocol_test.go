@@ -1,6 +1,7 @@
 package runnermgr
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -53,5 +54,21 @@ func TestEncodeCommand(t *testing.T) {
 	b, _ = EncodeCommand(NewRun(RunCommand{TaskID: "1", Prompt: "p"}))
 	if !strings.HasPrefix(string(b), `{"type":"run","task_id":"1"`) {
 		t.Fatalf("%s", b)
+	}
+}
+
+// Every persisted runner event type has a typed schema in the API contract.
+func TestOpenAPIHasEveryRunnerEvent(t *testing.T) {
+	spec, err := os.ReadFile("../../docs/openapi.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for typ := range knownEvents {
+		if typ == EvHeartbeat {
+			continue // never persisted
+		}
+		if !strings.Contains(string(spec), "\n          "+typ+": '#/components/schemas/") {
+			t.Errorf("docs/openapi.yaml: Event discriminator has no mapping for %q", typ)
+		}
 	}
 }
