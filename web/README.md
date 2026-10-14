@@ -39,9 +39,10 @@ Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) 
 3. The backend must accept your Telegram user id (`TELEGRAM_ALLOWED_USER_ID`). The *Access denied* screen shows the id it saw.
 4. Deep links: `t.me/<bot>/<app>?startapp=task_123`, or `?task=123` on the app URL for `web_app` buttons.
 5. Debugging:
-   - **iOS**: enable *Settings → Safari → Advanced → Web Inspector*, then in Telegram tap *Settings* ten times → *Allow Web View Inspection*; inspect from Safari on a Mac (*Develop* menu).
-   - **Android**: enable USB debugging and *Enable WebView Debug* in Telegram's hidden debug settings (long-press the version in Settings); open `chrome://inspect` on the desktop.
-   - **Telegram Desktop**: enable *Settings → Advanced → Experimental → Enable webview inspecting*, then right-click → *Inspect*.
+   - **iOS**: in Telegram tap the *Settings* icon 10 times and turn on *Allow Web View Inspection*; connect the phone by USB and open Safari on a Mac → *Develop* → your device.
+   - **Android**: enable USB debugging; in Telegram *Settings* scroll to the bottom, press and hold the version number twice, choose *Enable WebView Debug*; open `chrome://inspect/#devices` in desktop Chrome.
+   - **Telegram Desktop (Windows/Linux, beta)**: *Settings → Advanced → Experimental settings → Enable webview inspection*, then right-click → *Inspect*.
+   - **Telegram macOS (beta)**: click the *Settings* icon 5 times, enable *Debug Mini Apps*, then right-click → *Inspect Element*.
    - Build with `VITE_DEBUG=1` for an in-app panel showing platform, version, theme and safe-area insets.
 
 ## Deployment

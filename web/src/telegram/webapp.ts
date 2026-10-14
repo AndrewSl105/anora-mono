@@ -6,7 +6,8 @@ export type WebApp = TelegramWebApp
 const MIN_VERSION = {
   backButton: '6.1',
   haptics: '6.1',
-  headerColor: '6.1',
+  // setHeaderColor exists since 6.1, but hex colours need 6.9.
+  headerColor: '6.9',
   closingConfirmation: '6.2',
   popups: '6.2',
   verticalSwipes: '7.7',
