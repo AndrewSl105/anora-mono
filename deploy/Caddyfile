@@ -1,0 +1,22 @@
+# /srv/anora/Caddyfile — mounted into the caddy service of docker-compose.deploy.yml.
+# ANORA_DOMAIN comes from .env; Caddy gets and renews the certificate itself
+# (ports 80 and 443 must be reachable and DNS must point at the server).
+{$ANORA_DOMAIN} {
+	# Prometheus metrics stay internal. Anora Runner also refuses /metrics for
+	# proxied requests; this keeps the path from reaching the SPA fallback too.
+	handle /metrics* {
+		respond 404
+	}
+
+	# REST API (including the WebSocket upgrade on /api/v1/ws, which
+	# reverse_proxy passes through), GitHub webhooks and the health check.
+	@backend path /api/* /webhooks/* /healthz
+	handle @backend {
+		reverse_proxy anora:8080
+	}
+
+	# Everything else is the web client / Telegram Mini App (nginx, SPA fallback).
+	handle {
+		reverse_proxy anora-client:80
+	}
+}

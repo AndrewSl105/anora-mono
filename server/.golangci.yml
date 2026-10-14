@@ -1,0 +1,15 @@
+version: "2"
+linters:
+  default: standard
+  settings:
+    errcheck:
+      exclude-functions:
+        - (*github.com/coder/websocket.Conn).Close
+        - (*github.com/coder/websocket.Conn).CloseNow
+        - (*os.File).Close
+        - (*database/sql.DB).Close
+        - (io.Closer).Close
+        - (io.ReadCloser).Close
+        - (*github.com/jackc/pgx/v5.Conn).Close
+formatters:
+  enable: [gofmt]
