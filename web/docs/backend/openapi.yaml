@@ -1,0 +1,690 @@
+openapi: 3.1.0
+info:
+  title: Anora Runner API
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+  version: 0.1.0
+  description: |
+    REST API of Anora Runner. See docs/API.md for behaviour, the task state
+    machine, timeline event types and the WebSocket protocol.
+    Every non-GET request must send `X-Requested-With: anora`.
+servers:
+  - url: /
+security:
+  - session: []
+tags:
+  - name: auth
+  - name: projects
+  - name: tasks
+  - name: system
+
+paths:
+  /api/v1/auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in with password and TOTP
+      security: []
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password, totp]
+              additionalProperties: false
+              properties:
+                password: { type: string }
+                totp: { type: string, description: Current 6-digit code }
+      responses:
+        '200':
+          description: Logged in; sets the anora_session cookie
+          headers:
+            Set-Cookie: { schema: { type: string } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /api/v1/auth/telegram:
+    post:
+      operationId: loginTelegram
+      tags: [auth]
+      summary: Log in from the Telegram Mini App
+      security: []
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [init_data]
+              additionalProperties: false
+              properties:
+                init_data: { type: string, description: Telegram.WebApp.initData verbatim }
+      responses:
+        '200':
+          description: Logged in; sets the anora_session cookie
+          content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      security: []
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+
+  /api/v1/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Session check
+      responses:
+        '200':
+          description: Session is valid
+          content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /api/v1/projects:
+    get:
+      operationId: listProjects
+      tags: [projects]
+      summary: List projects
+      parameters:
+        - { name: archived, in: query, schema: { type: boolean, default: false } }
+        - $ref: '#/components/parameters/Limit'
+        - { name: cursor, in: query, schema: { type: string }, description: next_cursor from the previous page }
+      responses:
+        '200':
+          description: A page of projects
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Project' } }
+                  next_cursor: { type: string }
+    post:
+      operationId: createProject
+      tags: [projects]
+      summary: Create a project
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - type: object
+                  required: [id]
+                  properties:
+                    id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,39}$' }
+                - $ref: '#/components/schemas/ProjectFields'
+      responses:
+        '201':
+          description: Created
+          content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/projects/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    get:
+      operationId: getProject
+      tags: [projects]
+      summary: Get a project
+      responses:
+        '200':
+          description: The project
+          content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      operationId: updateProject
+      tags: [projects]
+      summary: Update a project
+      description: Omitted fields are unchanged; "" or 0 resets an override to the server default.
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: '#/components/schemas/ProjectFields' } } }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: archiveProject
+      tags: [projects]
+      summary: Archive a project
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200':
+          description: Archived
+          content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/projects/{id}/repositories:
+    post:
+      operationId: addRepository
+      tags: [projects]
+      summary: Add a repository to a project
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [full_name, installation_id]
+              additionalProperties: false
+              properties:
+                full_name: { type: string, example: andrewsl105/vatary-server }
+                installation_id: { type: integer, format: int64 }
+                base_branch: { type: string, default: dev }
+                is_default: { type: boolean, default: false }
+      responses:
+        '201':
+          description: Added
+          content: { application/json: { schema: { $ref: '#/components/schemas/Repository' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/projects/{id}/repositories/{repoId}:
+    delete:
+      operationId: deleteRepository
+      tags: [projects]
+      summary: Remove a repository
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: repoId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/github/repositories:
+    get:
+      operationId: listGitHubRepositories
+      tags: [projects]
+      summary: Repositories the GitHub App can see
+      responses:
+        '200':
+          description: Repositories
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/GitHubRepo' } }
+        '503': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List tasks, newest first
+      parameters:
+        - { name: project, in: query, schema: { type: string } }
+        - { name: status, in: query, schema: { type: string }, description: Comma-separated statuses }
+        - $ref: '#/components/parameters/Limit'
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: A page of tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Task' } }
+                  next_cursor: { type: string }
+        '400': { $ref: '#/components/responses/Error' }
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a task
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [project_id, prompt]
+              additionalProperties: false
+              properties:
+                project_id: { type: string }
+                repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
+                title: { type: string, description: Defaults to the first line of the prompt }
+                prompt: { type: string }
+      responses:
+        '201':
+          description: Queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}:
+    get:
+      operationId: getTask
+      tags: [tasks]
+      summary: Task with latest run, open question and PR info
+      parameters: [{ $ref: '#/components/parameters/TaskID' }]
+      responses:
+        '200':
+          description: The task
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/events:
+    get:
+      operationId: listTaskEvents
+      tags: [tasks]
+      summary: Task timeline, oldest first
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - { name: after_id, in: query, schema: { type: integer, format: int64 }, description: Last event id the client has }
+        - { name: cursor, in: query, schema: { type: string }, description: Alias of after_id }
+        - $ref: '#/components/parameters/Limit'
+      responses:
+        '200':
+          description: A page of events
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Event' } }
+                  next_cursor: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/diff:
+    get:
+      operationId: getTaskDiff
+      tags: [tasks]
+      summary: git diff base...branch from the workspace (max 1 MB)
+      parameters: [{ $ref: '#/components/parameters/TaskID' }]
+      responses:
+        '200':
+          description: The diff
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [diff, truncated, base, branch]
+                properties:
+                  diff: { type: string }
+                  truncated: { type: boolean }
+                  base: { type: string }
+                  branch: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/answer:
+    post:
+      operationId: answerQuestion
+      tags: [tasks]
+      summary: Answer the open question (first answer wins)
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question_id, text]
+              additionalProperties: false
+              properties:
+                question_id: { type: string }
+                text: { type: string }
+      responses:
+        '200':
+          description: Answer accepted
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/message:
+    post:
+      operationId: sendMessage
+      tags: [tasks]
+      summary: Mid-session message or follow-up run
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [text]
+              additionalProperties: false
+              properties:
+                text: { type: string }
+      responses:
+        '200':
+          description: Delivered or queued
+          content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/interrupt:
+    post:
+      operationId: interruptTask
+      tags: [tasks]
+      summary: Stop the current turn, keep the session
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200': { description: Interrupted, content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/cancel:
+    post:
+      operationId: cancelTask
+      tags: [tasks]
+      summary: Cancel the task
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200': { description: Cancelled, content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/tasks/{id}/retry:
+    post:
+      operationId: retryTask
+      tags: [tasks]
+      summary: Queue a failed or cancelled task again
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200': { description: Queued, content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/stats:
+    get:
+      operationId: getStats
+      tags: [system]
+      summary: Running/queued counts and cost
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [running, queued, waiting_input, cost_usd_today, cost_usd_month]
+                properties:
+                  running: { type: integer }
+                  queued: { type: integer }
+                  waiting_input: { type: integer }
+                  cost_usd_today: { type: number }
+                  cost_usd_month: { type: number }
+
+  /api/v1/ws:
+    get:
+      operationId: openWebSocket
+      tags: [system]
+      summary: WebSocket (see docs/API.md for messages)
+      responses:
+        '101': { description: Switching protocols }
+        '401': { $ref: '#/components/responses/Error' }
+
+  /webhooks/github:
+    post:
+      operationId: githubWebhook
+      tags: [system]
+      summary: GitHub webhook (X-Hub-Signature-256)
+      security: []
+      responses:
+        '200': { description: Accepted }
+        '401': { description: Bad signature }
+
+  /healthz:
+    get:
+      operationId: healthz
+      tags: [system]
+      summary: Database and Docker reachability
+      security: []
+      responses:
+        '200': { $ref: '#/components/responses/Health' }
+        '503': { $ref: '#/components/responses/Health' }
+
+  /metrics:
+    get:
+      operationId: metrics
+      tags: [system]
+      summary: Prometheus metrics (internal network only)
+      security: []
+      responses:
+        '200': { description: Metrics, content: { text/plain: { schema: { type: string } } } }
+        '403': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: anora_session
+
+  parameters:
+    XRequestedWith:
+      name: X-Requested-With
+      in: header
+      required: true
+      schema: { type: string, enum: [anora] }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    TaskID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+
+  responses:
+    Error:
+      description: Error
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    OK:
+      description: OK
+      content:
+        application/json:
+          schema: { type: object, required: [ok], properties: { ok: { type: boolean } } }
+    Health:
+      description: Health checks
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok, checks]
+            properties:
+              ok: { type: boolean }
+              checks: { type: object, additionalProperties: { type: string } }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+
+    SessionInfo:
+      type: object
+      required: [ok, kind]
+      properties:
+        ok: { type: boolean }
+        kind: { type: string, enum: [web, telegram] }
+
+    ProjectFields:
+      type: object
+      additionalProperties: false
+      properties:
+        name: { type: string }
+        instructions: { type: string }
+        services: { type: array, items: { type: string, enum: [postgres, redis] } }
+        env: { type: object, additionalProperties: { type: string } }
+        runner_image: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        max_turns: { type: [integer, 'null'] }
+        max_budget_usd: { type: [number, 'null'] }
+        max_duration_sec: { type: [integer, 'null'] }
+        runner_memory: { type: [string, 'null'], example: 3g }
+        runner_cpus: { type: [number, 'null'] }
+        telegram_thread_id: { type: [integer, 'null'], format: int64 }
+        archived: { type: boolean }
+
+    Project:
+      type: object
+      required: [id, name, instructions, services, env, archived, created_at, updated_at, repositories]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        instructions: { type: string }
+        services: { type: array, items: { type: string } }
+        env: { type: object, additionalProperties: { type: string } }
+        runner_image: { type: [string, 'null'] }
+        model: { type: [string, 'null'] }
+        max_turns: { type: [integer, 'null'] }
+        max_budget_usd: { type: [number, 'null'] }
+        max_duration_sec: { type: [integer, 'null'] }
+        runner_memory: { type: [string, 'null'] }
+        runner_cpus: { type: [number, 'null'] }
+        telegram_thread_id: { type: [integer, 'null'], format: int64 }
+        archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        repositories: { type: array, items: { $ref: '#/components/schemas/Repository' } }
+
+    Repository:
+      type: object
+      required: [id, project_id, full_name, base_branch, installation_id, is_default]
+      properties:
+        id: { type: integer, format: int64 }
+        project_id: { type: string }
+        full_name: { type: string }
+        base_branch: { type: string }
+        installation_id: { type: integer, format: int64 }
+        is_default: { type: boolean }
+
+    GitHubRepo:
+      type: object
+      required: [full_name, default_branch, private, installation_id]
+      properties:
+        full_name: { type: string }
+        default_branch: { type: string }
+        private: { type: boolean }
+        installation_id: { type: integer, format: int64 }
+
+    TaskStatus:
+      type: string
+      enum: [queued, preparing, running, waiting_input, paused, pushing, pr_open, completed, failed, cancelled]
+
+    Task:
+      type: object
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, source, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        project_id: { type: string }
+        repository_id: { type: integer, format: int64 }
+        title: { type: string }
+        prompt: { type: string }
+        status: { $ref: '#/components/schemas/TaskStatus' }
+        status_reason: { type: [string, 'null'] }
+        branch: { type: [string, 'null'] }
+        session_id: { type: [string, 'null'] }
+        pr_number: { type: [integer, 'null'] }
+        pr_url: { type: [string, 'null'] }
+        ci_status: { type: [string, 'null'], enum: [pending, success, failure, null] }
+        cost_usd_total: { type: number }
+        source: { type: string, enum: [web, telegram, api] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        paused_at: { type: [string, 'null'], format: date-time }
+
+    TaskView:
+      allOf:
+        - $ref: '#/components/schemas/Task'
+        - type: object
+          properties:
+            repository: { oneOf: [{ $ref: '#/components/schemas/Repository' }, { type: 'null' }] }
+            latest_run: { oneOf: [{ $ref: '#/components/schemas/Run' }, { type: 'null' }] }
+            open_question: { oneOf: [{ $ref: '#/components/schemas/Question' }, { type: 'null' }] }
+
+    Run:
+      type: object
+      required: [id, task_id, kind, input, last_seq, cost_usd]
+      properties:
+        id: { type: integer, format: int64 }
+        task_id: { type: integer, format: int64 }
+        kind: { type: string, enum: [initial, resume, followup, retry] }
+        input: { type: string }
+        container_id: { type: [string, 'null'] }
+        exit_code: { type: [integer, 'null'] }
+        last_seq: { type: integer, format: int64 }
+        cost_usd: { type: number }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+
+    Question:
+      type: object
+      required: [id, task_id, run_id, text, created_at]
+      properties:
+        id: { type: string, description: '"<run_id>-<runner question id>"; pass it to /answer' }
+        task_id: { type: integer, format: int64 }
+        run_id: { type: integer, format: int64 }
+        text: { type: string }
+        options: { type: [array, 'null'], items: { type: string } }
+        answer: { type: [string, 'null'] }
+        answered_via: { type: [string, 'null'], enum: [web, telegram, null] }
+        created_at: { type: string, format: date-time }
+        answered_at: { type: [string, 'null'], format: date-time }
+
+    Event:
+      type: object
+      required: [id, task_id, type, payload, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        task_id: { type: integer, format: int64 }
+        run_id: { type: [integer, 'null'], format: int64 }
+        seq: { type: [integer, 'null'], format: int64, description: Set for runner events; null for backend events }
+        type: { type: string }
+        payload: { type: object, description: Runner event (PROTOCOL.md) or backend event payload (API.md) }
+        created_at: { type: string, format: date-time }

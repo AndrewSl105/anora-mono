@@ -1,0 +1,38 @@
+/* react-diff-view overrides: no wrapping, compact gutters, theme-aware colours. */
+.diff-scroll .diff {
+  width: max-content;
+  min-width: 100%;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  table-layout: auto;
+}
+.diff-scroll .diff-code {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  padding: 0 12px 0 8px;
+}
+.diff-scroll .diff-gutter {
+  width: 1%;
+  min-width: 2.5rem;
+  padding: 0 6px;
+  color: var(--muted-foreground);
+  text-align: right;
+}
+.diff-scroll .diff-gutter-insert,
+.diff-scroll .diff-code-insert {
+  background: color-mix(in oklab, #10b981 14%, transparent);
+}
+.diff-scroll .diff-gutter-delete,
+.diff-scroll .diff-code-delete {
+  background: color-mix(in oklab, #ef4444 14%, transparent);
+}
+.diff-scroll .diff-code-edit {
+  color: inherit;
+}
+.diff-scroll .diff-hunk-header,
+.diff-scroll .diff-decoration-content {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
