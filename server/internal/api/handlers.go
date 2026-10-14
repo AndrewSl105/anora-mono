@@ -161,6 +161,27 @@ func (s *Server) addRepository(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, repo)
 }
 
+func (s *Server) updateRepository(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r, "repoId")
+	if !ok {
+		return
+	}
+	var in projects.RepoUpdateInput
+	if !decode(w, r, &in) {
+		return
+	}
+	repo, err := s.Projects.UpdateRepository(r.Context(), r.PathValue("id"), id, in)
+	if err != nil {
+		if errors.Is(err, store.ErrRepoInUse) {
+			writeError(w, http.StatusConflict, "in_use", err.Error())
+			return
+		}
+		writeErr(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, repo)
+}
+
 func (s *Server) deleteRepository(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r, "repoId")
 	if !ok {

@@ -254,6 +254,54 @@ func (s *Store) AddRepository(ctx context.Context, r Repository) (*Repository, e
 	return &r, nil
 }
 
+// RepoUpdate holds the writable repository fields; nil means unchanged.
+type RepoUpdate struct {
+	BaseBranch *string
+	IsDefault  *bool
+}
+
+// UpdateRepository changes a repository's base branch and default flag.
+// Making a repo the default clears the flag on the others; un-defaulting the
+// default repo is ErrConflict (a project always has one). Changing the base
+// branch is ErrRepoInUse while unfinished tasks use the repo.
+func (s *Store) UpdateRepository(ctx context.Context, projectID string, id int64, u RepoUpdate) (*Repository, error) {
+	var r Repository
+	err := s.Tx(ctx, func(tx pgxTx) error {
+		err := tx.QueryRow(ctx, `SELECT id, project_id, full_name, base_branch, installation_id, is_default
+			FROM repositories WHERE id = $1 AND project_id = $2 FOR UPDATE`, id, projectID).
+			Scan(&r.ID, &r.ProjectID, &r.FullName, &r.BaseBranch, &r.InstallationID, &r.IsDefault)
+		if err != nil {
+			return notFound(err)
+		}
+		if u.BaseBranch != nil && *u.BaseBranch != r.BaseBranch {
+			var busy bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE repository_id = $1
+				AND status NOT IN ('completed', 'failed', 'cancelled'))`, id).Scan(&busy); err != nil {
+				return err
+			}
+			if busy {
+				return ErrRepoInUse
+			}
+			r.BaseBranch = *u.BaseBranch
+		}
+		if u.IsDefault != nil && *u.IsDefault != r.IsDefault {
+			if !*u.IsDefault {
+				return fmt.Errorf("%w: a project needs a default repository; make another one the default instead", ErrConflict)
+			}
+			if _, err := tx.Exec(ctx, `UPDATE repositories SET is_default = false WHERE project_id = $1`, projectID); err != nil {
+				return err
+			}
+			r.IsDefault = true
+		}
+		_, err = tx.Exec(ctx, `UPDATE repositories SET base_branch = $2, is_default = $3 WHERE id = $1`, id, r.BaseBranch, r.IsDefault)
+		return err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // DeleteRepository fails with ErrConflict while tasks reference the repo.
 func (s *Store) DeleteRepository(ctx context.Context, projectID string, id int64) error {
 	tag, err := s.Pool.Exec(ctx, `DELETE FROM repositories WHERE id = $1 AND project_id = $2`, id, projectID)

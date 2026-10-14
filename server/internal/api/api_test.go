@@ -268,3 +268,50 @@ func cookieHeader(cs []*http.Cookie) string {
 	}
 	return strings.Join(parts, "; ")
 }
+
+func TestUpdateRepository(t *testing.T) {
+	c, _, secret := setup(t)
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+	c.do("POST", "/api/v1/projects", map[string]any{"id": "demo", "name": "Demo"})
+	_, r1 := c.do("POST", "/api/v1/projects/demo/repositories", map[string]any{"full_name": "o/a", "installation_id": 1})
+	_, r2 := c.do("POST", "/api/v1/projects/demo/repositories", map[string]any{"full_name": "o/b", "installation_id": 1})
+	p1 := fmt.Sprintf("/api/v1/projects/demo/repositories/%v", r1["id"])
+	p2 := fmt.Sprintf("/api/v1/projects/demo/repositories/%v", r2["id"])
+
+	if code, body := c.do("PATCH", p2, map[string]any{"base_branch": "main", "is_default": true}); code != 200 ||
+		body["base_branch"] != "main" || body["is_default"] != true {
+		t.Fatalf("patch: %d %v", code, body)
+	}
+	_, proj := c.do("GET", "/api/v1/projects/demo", nil)
+	for _, r := range proj["repositories"].([]any) {
+		repo := r.(map[string]any)
+		if repo["is_default"] != (repo["id"] == r2["id"]) {
+			t.Fatalf("exactly o/b must be default: %v", proj["repositories"])
+		}
+	}
+	if code, _ := c.do("PATCH", p2, map[string]any{"is_default": false}); code != 409 {
+		t.Fatalf("un-defaulting the default repo: %d", code)
+	}
+	if code, _ := c.do("PATCH", p1, map[string]any{"base_branch": "--upload-pack=x"}); code != 400 {
+		t.Fatalf("option-like branch accepted: %d", code)
+	}
+	if code, _ := c.do("PATCH", p1, map[string]any{"bogus": 1}); code != 400 {
+		t.Fatalf("unknown field accepted: %d", code)
+	}
+	if code, _ := c.do("PATCH", "/api/v1/projects/other/repositories/"+fmt.Sprint(r1["id"]), map[string]any{"is_default": true}); code != 404 {
+		t.Fatalf("repo of another project: %d", code)
+	}
+
+	// An unfinished task pins the base branch; the default flag stays editable.
+	c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "demo", "prompt": "x"})
+	if code, body := c.do("PATCH", p2, map[string]any{"base_branch": "dev"}); code != 409 || body["error"].(map[string]any)["code"] != "in_use" {
+		t.Fatalf("base_branch change with a queued task: %d %v", code, body)
+	}
+	if code, _ := c.do("PATCH", p2, map[string]any{"base_branch": "main"}); code != 200 {
+		t.Fatalf("unchanged base_branch should pass: %d", code)
+	}
+	if code, _ := c.do("PATCH", p1, map[string]any{"is_default": true}); code != 200 {
+		t.Fatalf("default switch with a queued task: %d", code)
+	}
+}

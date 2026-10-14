@@ -59,8 +59,11 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `PATCH /projects/{id}` | update any writable field |
 | `DELETE /projects/{id}` | archive (sets `archived: true`; nothing is deleted) |
 | `POST /projects/{id}/repositories` `{full_name, installation_id, base_branch?, is_default?}` | add a repo. `base_branch` defaults to `dev`. The first repo, or one with `is_default`, becomes the default |
+| `PATCH /projects/{id}/repositories/{repoId}` `{base_branch?, is_default?}` | omitted fields are unchanged; returns the repository. `is_default: true` makes it the project's only default; `is_default: false` on the current default is `409 conflict` (make another repo the default instead). Changing `base_branch` is `409 in_use` while tasks that are not `completed`/`failed`/`cancelled` use the repo |
 | `DELETE /projects/{id}/repositories/{repoId}` | remove; `409 in_use` while tasks reference it |
 | `GET /github/repositories` | repos the GitHub App can see, for the "add repo" picker: `{"items":[{full_name, default_branch, private, installation_id}]}` |
+
+`base_branch` must be a plain git branch name (letters, digits, `._/-`, not starting with `-` or `.`, no `..`); otherwise `400 invalid`.
 
 `services` accepts `postgres` and `redis`. `env` keys must match `[A-Z_][A-Z0-9_]*`; auth and service variables (`DATABASE_URL`, `REDIS_URL`, Claude tokens, …) are reserved.
 

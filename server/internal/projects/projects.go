@@ -18,6 +18,7 @@ var (
 	repoRe      = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 	envKeyRe    = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 	memoryRe    = regexp.MustCompile(`^[0-9]+[kmg]?$`)
+	branchRe    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
 	Services    = map[string]bool{"postgres": true, "redis": true}
 	reservedEnv = map[string]bool{
 		"CLAUDE_CODE_OAUTH_TOKEN": true, "ANTHROPIC_API_KEY": true, "DATABASE_URL": true, "REDIS_URL": true,
@@ -102,8 +103,35 @@ func (s *Service) AddRepository(ctx context.Context, projectID string, in RepoIn
 	if in.BaseBranch == "" {
 		in.BaseBranch = "dev"
 	}
+	if err := validBranch(in.BaseBranch); err != nil {
+		return nil, err
+	}
 	return s.Store.AddRepository(ctx, store.Repository{
 		ProjectID: projectID, FullName: in.FullName, BaseBranch: in.BaseBranch,
 		InstallationID: in.InstallationID, IsDefault: in.IsDefault,
 	})
+}
+
+type RepoUpdateInput struct {
+	BaseBranch *string `json:"base_branch"`
+	IsDefault  *bool   `json:"is_default"`
+}
+
+func (s *Service) UpdateRepository(ctx context.Context, projectID string, id int64, in RepoUpdateInput) (*store.Repository, error) {
+	if in.BaseBranch != nil {
+		if err := validBranch(*in.BaseBranch); err != nil {
+			return nil, err
+		}
+	}
+	return s.Store.UpdateRepository(ctx, projectID, id, store.RepoUpdate{BaseBranch: in.BaseBranch, IsDefault: in.IsDefault})
+}
+
+// validBranch accepts plain git branch names. The name reaches git argv
+// (clone --branch), so it must never start with "-".
+func validBranch(b string) error {
+	if !branchRe.MatchString(b) || strings.Contains(b, "..") || strings.Contains(b, "//") ||
+		strings.HasSuffix(b, "/") || strings.HasSuffix(b, ".") || strings.HasSuffix(b, ".lock") {
+		return fmt.Errorf("%w: base_branch is not a valid branch name", ErrInvalid)
+	}
+	return nil
 }

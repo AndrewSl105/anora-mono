@@ -74,6 +74,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/projects/{id}", a(s.updateProject))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}", a(s.archiveProject))
 	mux.HandleFunc("POST /api/v1/projects/{id}/repositories", a(s.addRepository))
+	mux.HandleFunc("PATCH /api/v1/projects/{id}/repositories/{repoId}", a(s.updateRepository))
 	mux.HandleFunc("DELETE /api/v1/projects/{id}/repositories/{repoId}", a(s.deleteRepository))
 	mux.HandleFunc("GET /api/v1/github/repositories", a(s.githubRepositories))
 

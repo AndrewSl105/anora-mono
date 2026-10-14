@@ -194,7 +194,7 @@ paths:
               properties:
                 full_name: { type: string, example: andrewsl105/vatary-server }
                 installation_id: { type: integer, format: int64 }
-                base_branch: { type: string, default: dev }
+                base_branch: { allOf: [{ $ref: '#/components/schemas/BranchName' }], default: dev }
                 is_default: { type: boolean, default: false }
       responses:
         '201':
@@ -205,6 +205,36 @@ paths:
         '409': { $ref: '#/components/responses/Error' }
 
   /api/v1/projects/{id}/repositories/{repoId}:
+    patch:
+      operationId: updateRepository
+      tags: [projects]
+      summary: Update a repository's base branch or default flag
+      description: |
+        Omitted fields are unchanged. `is_default: true` clears the flag on the
+        project's other repositories; `is_default: false` on the current default
+        is 409 `conflict`. Changing `base_branch` is 409 `in_use` while tasks
+        that are not completed/failed/cancelled use the repository.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+        - { name: repoId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - $ref: '#/components/parameters/XRequestedWith'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                base_branch: { $ref: '#/components/schemas/BranchName' }
+                is_default: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Repository' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
     delete:
       operationId: deleteRepository
       tags: [projects]
@@ -632,6 +662,12 @@ components:
         base_branch: { type: string }
         installation_id: { type: integer, format: int64 }
         is_default: { type: boolean }
+
+    BranchName:
+      type: string
+      maxLength: 200
+      pattern: '^[A-Za-z0-9_][A-Za-z0-9._/-]*$'
+      description: Plain git branch name; no "..", "//", trailing "/", "." or ".lock"
 
     GitHubRepo:
       type: object

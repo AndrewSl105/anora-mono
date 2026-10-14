@@ -20,6 +20,8 @@ var migrations embed.FS
 var (
 	ErrNotFound = errors.New("not found")
 	ErrConflict = errors.New("conflict")
+	// ErrRepoInUse: the change would affect unfinished tasks of the repository.
+	ErrRepoInUse = fmt.Errorf("%w: repository is used by unfinished tasks", ErrConflict)
 )
 
 type Store struct {
