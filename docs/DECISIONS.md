@@ -6,6 +6,13 @@ Deviations from the specs (`docs/SPEC-server.md` for server and agent, `docs/SPE
 
 - 2026-10-15 — anora-runner and anora-client merged into this repository with their history: `git filter-repo` rewrote paths in each repository (Go service → `server/`, `runner/` → `agent/`, client → `web/`, shared docs and `deploy/` at the root), then both histories were merged, so `git log -- <path>` and `git blame` reach back to the first commits. Both were imported from their `integration` branches (the anora-runner one includes the unmerged `client-api-gaps`).
 
+- Go module `github.com/andrewsl105/anora/server`; images `anora-server` (was `anora-runner`), `anora-agent`, `anora-web` (was `anora-client`). `RUNNER_IMAGE` keeps its default `ghcr.io/andrewsl105/anora-agent:latest` (the agent image name did not change); the variable name stays for compatibility with existing `.env` files. The agent identifies itself to the SDK as `anora-agent/<version>`.
+- One copy of the contract: `docs/openapi.yaml`, `docs/API.md`, `docs/PROTOCOL.md`; `web` generates `src/api/schema.ts` from `../docs/openapi.yaml`, and the server's OpenAPI test reads the same file. The specs stay as written (`SPEC-server.md` still says "anora-runner"); this file records where the code differs.
+- Compose services are named `caddy`, `web`, `server`, `postgres`, `docker-proxy` with no fixed container names (`docker compose exec <service>`), project `name: anora`. One network for the stack (`stack`: caddy, web, server) plus `internal` (postgres, docker-proxy, server) without egress.
+- One release workflow replaces the two per-repository ones: it builds only images whose directory changed (`dorny/paths-filter@v4`; `workflow_dispatch` builds all), copies `deploy/docker-compose.deploy.yml` and `deploy/Caddyfile` with `appleboy/scp-action@v1.0.0`, pulls the changed images plus always `anora-agent`, runs `docker compose up -d` and `caddy reload` (the Caddyfile is a bind mount, so `up -d` would not pick up a change). The shared deploy lock of the two-repository setup is no longer needed: one workflow with a `concurrency` group.
+- CI: path-filtered jobs; `agent/**` also runs the server job (its integration tests start the fake agent image), `docs/openapi.yaml` runs server (OpenAPI test) and web (schema check). The web job also runs the mock-mode Playwright tests.
+- Root `Makefile` (GNU Make 3.81, the macOS default): `dev`, `dev-setup`, `test`, `lint`, `build`, `gen-api`, `e2e`, `e2e-real`.
+
 ## Server
 
 - 2026-10-14 — All eight phases built in one pass without stopping between phases: the owner explicitly waived the per-phase stop ("go for all phases").

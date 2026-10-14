@@ -1,8 +1,8 @@
 # Anora Client
 
-Web frontend for [Anora Runner](../anora-runner): a Telegram Mini App on the phone and a normal website on desktop. Static SPA (React, TypeScript, Vite, Tailwind, shadcn/ui); all data goes through the Anora Runner REST API and WebSocket on the same domain.
+Web frontend of [Anora](../README.md): a Telegram Mini App on the phone and a normal website on desktop. Static SPA (React, TypeScript, Vite, Tailwind, shadcn/ui); all data goes through the Anora Runner REST API and WebSocket on the same domain.
 
-- Spec: [`docs/SPEC.md`](docs/SPEC.md) · backend contract: [`docs/backend/`](docs/backend/) · deviations and backend gaps: [`docs/DECISIONS.md`](docs/DECISIONS.md)
+- Spec: [`docs/SPEC-web.md`](../docs/SPEC-web.md) · API contract: [`docs/openapi.yaml`](../docs/openapi.yaml), [`docs/API.md`](../docs/API.md) · decisions: [`docs/DECISIONS.md`](../docs/DECISIONS.md) (section Web)
 
 ## Local development
 
@@ -24,7 +24,7 @@ MSW serves the whole API from memory and a fake WebSocket streams events for the
 
 | Script | What it does |
 | --- | --- |
-| `npm run gen:api` | regenerate `src/api/schema.ts` from `docs/backend/openapi.yaml` (commit the result) |
+| `npm run gen:api` | regenerate `src/api/schema.ts` from `../docs/openapi.yaml` (commit the result; `make gen-api` at the root) |
 | `npm run check:api` | fail if `schema.ts` is stale |
 | `npm run typecheck` / `lint` / `test` | tsc, ESLint, Vitest |
 | `npm run e2e` | Playwright smoke tests against mock mode |
@@ -35,7 +35,7 @@ Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) 
 
 ### Against the real backend
 
-Start Anora Runner's local stack (`deploy/docker-compose.dev.yml` in anora-runner: fake runner, no GitHub App, no Telegram); `npm run dev` then proxies `/api` and `/api/v1/ws` to `http://localhost:8080` (`ANORA_BACKEND_URL` in `.env.local` changes it). Log in with the password and a code for the TOTP secret you put in its `deploy/.env.dev`.
+Start the dev stack (`make dev` at the repository root: server with the fake agent, no GitHub App, no Telegram); `npm run dev` proxies `/api` and `/api/v1/ws` to `http://localhost:8080` (`ANORA_BACKEND_URL` in `.env.local` changes it). Log in with the password and a code for the TOTP secret you put in its `deploy/.env.dev`.
 
 ```sh
 E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
@@ -58,8 +58,4 @@ E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
 
 ## Deployment
 
-The client runs on the same server and domain as Anora Runner, from Anora Runner's `deploy/docker-compose.deploy.yml` (service `anora-client`), behind Caddy, which sends `/api`, `/webhooks` and `/healthz` to the backend and everything else here. Server setup, `.env`, secrets and the first start are described once, in the [anora-runner README](../anora-runner/README.md#server-setup).
-
-`release.yml` on push to `main`: builds `ghcr.io/andrewsl105/anora-client:<sha>` and `:latest`, then SSHes to the server and, under the shared `/srv/anora/.deploy.lock`, runs `docker compose -f docker-compose.deploy.yml pull anora-client` and `up -d --no-deps anora-client` in `/srv/anora`, so only this service restarts. It uses the same secrets as Anora Runner in its own `production` environment: `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`.
-
-The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
+The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [server setup](../README.md#server-setup). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
