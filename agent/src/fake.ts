@@ -19,9 +19,13 @@ export const fakeSession: Session = async ({ cmd, workspace, emitter, control })
 
   const questionId = "q1";
   emitter.emit({ type: "question", question_id: questionId, text: "Which greeting should I write?", options: ["hello", "hi"] });
+  // Like a real session, an interrupt ends the run as done ("Interrupted by the user.").
+  const interrupted = new Promise<null>((resolve) => (control.onInterrupt = () => resolve(null)));
   let answer: string;
   try {
-    answer = await control.waitAnswer(questionId, cmd.limits.question_timeout_sec * 1000);
+    const got = await Promise.race([control.waitAnswer(questionId, cmd.limits.question_timeout_sec * 1000), interrupted]);
+    if (got === null) return { kind: "done", session_id: sessionId, summary: "Interrupted by the user.", cost_usd_total: 0 };
+    answer = got;
   } catch (err) {
     if (err instanceof QuestionTimeout) return { kind: "paused", session_id: sessionId, question_id: questionId };
     if (err instanceof Cancelled) return { kind: "cancelled", session_id: sessionId };

@@ -35,7 +35,7 @@ export const claudeSession: Session = async ({ cmd, workspace, emitter, control 
     }
   }
 
-  const canUseTool: CanUseTool = async (toolName, toolInput) => {
+  const canUseTool: CanUseTool = async (toolName, toolInput, { signal }) => {
     if (toolName !== ASK_TOOL) {
       // Reached only for tools outside ALLOWED_TOOLS or edits the mode does not
       // auto-accept. Nobody can approve interactively, so the policy decides.
@@ -50,8 +50,15 @@ export const claudeSession: Session = async ({ cmd, workspace, emitter, control 
       const id = `q${++questionSeq}`;
       const options = (q.options ?? []).map((o) => o.label ?? "").filter(Boolean);
       emitter.emit({ type: "question", question_id: id, text, ...(options.length ? { options } : {}) });
+      // An interrupt aborts the pending permission request; stop waiting for the answer.
+      const aborted = new Promise<null>((resolve) => {
+        if (signal.aborted) resolve(null);
+        signal.addEventListener("abort", () => resolve(null), { once: true });
+      });
       try {
-        answers[text] = await control.waitAnswer(id, cmd.limits.question_timeout_sec * 1000);
+        const got = await Promise.race([control.waitAnswer(id, cmd.limits.question_timeout_sec * 1000), aborted]);
+        if (got === null) return { behavior: "deny", message: "Interrupted by the user.", interrupt: true };
+        answers[text] = got;
       } catch (err) {
         if (err instanceof QuestionTimeout) {
           pausedQuestion = id;

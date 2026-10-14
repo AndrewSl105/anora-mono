@@ -319,6 +319,39 @@ func TestMessageWhileRunningIsQueued(t *testing.T) {
 	}
 }
 
+// Interrupt ends the run; a message queued before it starts the next run, so
+// "queue a message, then interrupt" redirects Claude.
+func TestInterruptEndsRunAndStartsQueuedMessage(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Redirect me", Source: "api"})
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	if _, err := e.svc.Message(ctx, v.ID, "Do this instead"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.Interrupt(ctx, v.ID); err != nil {
+		t.Fatal(err)
+	}
+	var view *tasks.View
+	for deadline := time.Now().Add(2 * time.Minute); ; time.Sleep(200 * time.Millisecond) {
+		view, _ = e.svc.Get(ctx, v.ID)
+		if view.Status == tasks.WaitingInput && view.LatestRun.Kind == tasks.RunFollowup {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no follow-up run: status %s, run %+v", view.Status, view.LatestRun)
+		}
+	}
+	if view.LatestRun.Input != "Do this instead" {
+		t.Fatalf("follow-up run %+v", view.LatestRun)
+	}
+	types := strings.Join(e.eventTypes(v.ID), ",")
+	if !strings.Contains(types, "interrupt") || strings.Count(types, "run_started") != 2 {
+		t.Fatalf("events %s", types)
+	}
+	_, _ = e.svc.Cancel(ctx, v.ID)
+}
+
 func newBareRepo(t *testing.T, base string) string {
 	t.Helper()
 	dir := t.TempDir()

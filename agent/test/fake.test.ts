@@ -109,6 +109,18 @@ test("cancel exits 2 and SIGTERM behaves like cancel", async () => {
   assert.equal(await r2.exited, 2);
 });
 
+test("interrupt while waiting for an answer ends the run as done", async () => {
+  const r = start(repo());
+  r.send(run());
+  await r.waitFor("question");
+  r.send({ type: "interrupt" });
+  assert.equal(await r.exited, 0);
+  const done = r.events.at(-1);
+  assert.equal(done.type, "done");
+  assert.equal(done.summary, "Interrupted by the user.");
+  assert.equal(done.no_changes, true);
+});
+
 test("invalid command emits error but keeps running", async () => {
   const r = start(repo());
   r.child.stdin!.write("not json\n");
