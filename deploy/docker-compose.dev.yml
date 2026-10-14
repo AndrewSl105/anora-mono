@@ -33,6 +33,12 @@ services:
       PUBLIC_BASE_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
       WEB_APP_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
       SESSION_SECRET: dev-only-not-a-secret
+      # Docker Desktop's file sharing (macOS) can report another owner for the
+      # bind-mounted workspaces now and then, and git then refuses them
+      # ("dubious ownership"). Development only; Linux keeps real uids.
+      GIT_CONFIG_COUNT: "1"
+      GIT_CONFIG_KEY_0: safe.directory
+      GIT_CONFIG_VALUE_0: "*"
       QUESTION_TIMEOUT: 20m
     ports:
       - "127.0.0.1:${ANORA_DEV_PORT:-8080}:8080"
