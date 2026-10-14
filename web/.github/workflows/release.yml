@@ -1,0 +1,64 @@
+name: release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/andrewsl105/anora-client
+
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VITE_APP_VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha,scope=client
+          cache-to: type=gha,mode=max,scope=client
+
+  deploy:
+    needs: image
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: appleboy/ssh-action@v1.2.5
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          # ssh-action v1.2.5 removed script_stop; `set -e` stops on the first failure.
+          script: |
+            set -e
+            cd /srv/anora
+            # anora-runner's release workflow deploys to the same directory: one deploy at a time.
+            exec 9>/srv/anora/.deploy.lock
+            flock 9
+            docker compose -f docker-compose.deploy.yml pull anora-client
+            # Only this repository's service; everything else keeps running.
+            docker compose -f docker-compose.deploy.yml up -d --no-deps anora-client
+            docker image prune -f
