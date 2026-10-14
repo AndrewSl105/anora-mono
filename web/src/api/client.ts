@@ -5,6 +5,22 @@ import { toApiError } from './errors'
 /** The backend rejects state-changing calls without this header (403 csrf). */
 export const CSRF = { 'X-Requested-With': 'anora' } as const
 
+/**
+ * Telegram sessions: the session token from POST /auth/telegram, kept in
+ * memory only (never in storage). Telegram Web embeds the Mini App in a
+ * cross-site iframe where the SameSite=Lax session cookie is not sent, so
+ * Telegram mode authenticates with `Authorization: Bearer` instead.
+ */
+let bearer: string | null = null
+
+export function setBearerToken(token: string | null) {
+  bearer = token
+}
+
+export function hasBearerToken(): boolean {
+  return bearer !== null
+}
+
 type UnauthorizedHandler = () => Promise<boolean>
 let onUnauthorized: UnauthorizedHandler | null = null
 let reauth: Promise<boolean> | null = null
@@ -23,11 +39,14 @@ async function authFetch(request: Request): Promise<Response> {
   if (response.status !== 401 || !onUnauthorized || NO_REAUTH.some((p) => path.startsWith(p))) {
     return response
   }
-  // One re-auth for all concurrent 401s, then one retry per request.
+  // One re-auth for all concurrent 401s, then one retry per request (with the
+  // new bearer token, if re-auth issued one).
   reauth ??= onUnauthorized().finally(() => {
     reauth = null
   })
-  return (await reauth) ? fetch(retry) : response
+  if (!(await reauth)) return response
+  if (bearer) retry.headers.set('Authorization', `Bearer ${bearer}`)
+  return fetch(retry)
 }
 
 export const api = createClient<paths>({
@@ -39,6 +58,7 @@ export const api = createClient<paths>({
 api.use({
   onRequest({ request }) {
     if (request.method !== 'GET' && request.method !== 'HEAD') request.headers.set('X-Requested-With', 'anora')
+    if (bearer) request.headers.set('Authorization', `Bearer ${bearer}`)
     return request
   },
 })

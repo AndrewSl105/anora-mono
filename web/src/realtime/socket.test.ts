@@ -120,6 +120,45 @@ describe('RealtimeClient', () => {
   })
 })
 
+describe('RealtimeClient with an async url (ticket per connect)', () => {
+  it('waits for the url, and a url that arrives after stop() opens nothing', async () => {
+    let n = 0
+    const client = new RealtimeClient({
+      url: async () => `ws://test/api/v1/ws?ticket=t${++n}`,
+      onOpen: vi.fn(),
+      onMessage: vi.fn(),
+      createSocket: (url) => new FakeSocket(url),
+      random: () => 1,
+    })
+    client.start()
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1))
+    expect(FakeSocket.all[0].url).toBe('ws://test/api/v1/ws?ticket=t1')
+
+    FakeSocket.all[0].drop()
+    vi.advanceTimersByTime(1000)
+    client.stop()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(FakeSocket.all).toHaveLength(1)
+  })
+
+  it('retries with backoff when the ticket request fails', async () => {
+    let calls = 0
+    const client = new RealtimeClient({
+      url: () => (++calls === 1 ? Promise.reject(new Error('401')) : Promise.resolve('ws://test/ws?ticket=ok')),
+      onOpen: vi.fn(),
+      onMessage: vi.fn(),
+      createSocket: (url) => new FakeSocket(url),
+      random: () => 1,
+    })
+    client.start()
+    await vi.waitFor(() => expect(client.getStatus()).toBe('closed'))
+    vi.advanceTimersByTime(1000)
+    await vi.waitFor(() => expect(FakeSocket.all).toHaveLength(1))
+    client.stop()
+  })
+})
+
 describe('backoffDelay', () => {
   it('doubles from 1 s and caps at 30 s, with jitter', () => {
     expect([0, 1, 2, 3, 4, 5, 9].map((a) => backoffDelay(a, () => 1))).toEqual([1000, 2000, 4000, 8000, 16000, 30000, 30000])

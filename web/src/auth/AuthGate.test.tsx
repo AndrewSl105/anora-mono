@@ -6,14 +6,17 @@ import { setupServer } from 'msw/node'
 import { http, HttpResponse } from 'msw'
 import { RuntimeProvider, type Runtime } from '@/telegram/runtime'
 import type { WebApp } from '@/telegram/webapp'
-import { api, call } from '@/api/client'
+import { api, call, setBearerToken } from '@/api/client'
 import { AuthGate, initDataExpired, useSession } from './AuthGate'
 import { loginErrorMessage } from './LoginScreen'
 import { ApiError } from '@/api/errors'
 
 const server = setupServer()
 beforeAll(() => server.listen({ onUnhandledFrame: 'error' }))
-afterEach(() => server.resetHandlers())
+afterEach(() => {
+  server.resetHandlers()
+  setBearerToken(null)
+})
 afterAll(() => server.close())
 
 const json = (body: unknown, status = 200) => HttpResponse.json(body as Record<string, unknown>, { status })
@@ -114,7 +117,7 @@ describe('AuthGate in Telegram', () => {
     server.use(
       http.post('*/api/v1/auth/telegram', async ({ request }) => {
         sent = await request.json()
-        return json({ ok: true, kind: 'telegram' })
+        return json({ ok: true, kind: 'telegram', token: 't1' })
       }),
     )
     renderGate(telegram('query_id=1&user=%7B%7D&hash=abc'))
@@ -141,7 +144,7 @@ describe('AuthGate in Telegram', () => {
     server.use(
       http.post('*/api/v1/auth/telegram', () => {
         logins++
-        return json({ ok: true, kind: 'telegram' })
+        return json({ ok: true, kind: 'telegram', token: `t${logins}` })
       }),
       http.get('*/api/v1/stats', () => (++stats === 1 ? unauthorized() : json({ running: 1 }))),
     )
@@ -150,6 +153,26 @@ describe('AuthGate in Telegram', () => {
     await expect(call(api.GET('/api/v1/stats'))).resolves.toMatchObject({ running: 1 })
     await waitFor(() => expect(logins).toBe(2))
     expect(stats).toBe(2)
+  })
+
+  // Telegram Web loads the Mini App in a cross-site iframe without the cookie.
+  it('sends the session token as a bearer token and retries with the new one after re-auth', async () => {
+    let logins = 0
+    const seen: (string | null)[] = []
+    server.use(
+      http.post('*/api/v1/auth/telegram', () => {
+        logins++
+        return json({ ok: true, kind: 'telegram', token: `tok${logins}` })
+      }),
+      http.get('*/api/v1/stats', ({ request }) => {
+        seen.push(request.headers.get('Authorization'))
+        return seen.length === 1 ? unauthorized() : json({ running: 0 })
+      }),
+    )
+    renderGate(telegram())
+    await screen.findByText('app ready (telegram)')
+    await call(api.GET('/api/v1/stats'))
+    expect(seen).toEqual(['Bearer tok1', 'Bearer tok2'])
   })
 })
 

@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useSyncExternalStore, t
 import { useQueryClient, type QueryClient } from '@tanstack/react-query'
 import { RealtimeClient, wsUrl, type ServerMessage, type SocketStatus } from './socket'
 import { appendEvents, upsertTask } from '@/api/cache'
+import { api, call, CSRF, hasBearerToken } from '@/api/client'
 import { keys } from '@/api/keys'
 
 const RealtimeContext = createContext<RealtimeClient | null>(null)
@@ -13,6 +14,16 @@ export function handleMessage(qc: QueryClient, msg: ServerMessage) {
       void qc.invalidateQueries({ queryKey: keys.tasks.runs(msg.task_id), exact: true })
     }
   } else if (msg.op === 'task') upsertTask(qc, msg.task)
+}
+
+/**
+ * Cookie sessions connect directly. Bearer (Telegram) sessions cannot send a
+ * header on the WebSocket handshake, so each connect uses a fresh single-use ticket.
+ */
+export async function socketUrl(): Promise<string> {
+  if (!hasBearerToken()) return wsUrl()
+  const { ticket } = await call(api.POST('/api/v1/ws/ticket', { params: { header: CSRF } }))
+  return `${wsUrl()}?ticket=${encodeURIComponent(ticket)}`
 }
 
 /** After every (re)connect: fetch events missed while offline, refresh lists. */
@@ -29,7 +40,7 @@ export function RealtimeProvider({ children }: { children: ReactNode }) {
   const [client] = useState(
     () =>
       new RealtimeClient({
-        url: () => wsUrl(),
+        url: socketUrl,
         onMessage: (msg) => handleMessage(qc, msg),
         onOpen: (taskIds) => catchUp(qc, taskIds),
       }),

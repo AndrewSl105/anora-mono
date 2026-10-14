@@ -108,7 +108,12 @@ export const handlers = [
   http.post(`${API}/auth/telegram`, async () => {
     await delay(400)
     setSession('telegram')
-    return HttpResponse.json({ ok: true, kind: 'telegram' })
+    return HttpResponse.json({ ok: true, kind: 'telegram', token: 'mock-telegram-token' })
+  }),
+  http.post(`${API}/ws/ticket`, ({ request }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    return HttpResponse.json({ ticket: crypto.randomUUID(), expires_in: 30 })
   }),
   http.post(`${API}/auth/logout`, () => {
     setSession(null)

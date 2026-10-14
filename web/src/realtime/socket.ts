@@ -19,7 +19,8 @@ type SocketLike = {
 }
 
 export type RealtimeOptions = {
-  url: () => string
+  /** The socket URL; async when each connect needs a fresh ticket. */
+  url: () => string | Promise<string>
   onMessage: (msg: ServerMessage) => void
   /** Called on every successful (re)connect, after subscriptions were re-sent. */
   onOpen: (taskIds: number[]) => void
@@ -53,6 +54,8 @@ export class RealtimeClient {
   private hiddenTimer?: ReturnType<typeof setTimeout>
   private running = false
   private suspended = false
+  /** Invalidates a pending async url() when the client stops or suspends. */
+  private generation = 0
   private readonly opts: RealtimeOptions
 
   constructor(opts: RealtimeOptions) {
@@ -125,9 +128,29 @@ export class RealtimeClient {
   private connect() {
     if (!this.running || this.suspended) return
     this.setStatus('connecting')
+    const gen = ++this.generation
+    let url: string | Promise<string>
+    try {
+      url = this.opts.url()
+    } catch {
+      this.scheduleReconnect()
+      return
+    }
+    if (typeof url === 'string') return this.open(url)
+    url.then(
+      (u) => {
+        if (gen === this.generation && this.running && !this.suspended) this.open(u)
+      },
+      () => {
+        if (gen === this.generation && this.running && !this.suspended) this.scheduleReconnect()
+      },
+    )
+  }
+
+  private open(url: string) {
     let socket: SocketLike
     try {
-      socket = (this.opts.createSocket ?? ((url) => new WebSocket(url)))(this.opts.url())
+      socket = (this.opts.createSocket ?? ((u) => new WebSocket(u)))(url)
     } catch {
       this.scheduleReconnect()
       return
@@ -166,6 +189,7 @@ export class RealtimeClient {
   }
 
   private closeSocket() {
+    this.generation++
     const socket = this.socket
     this.socket = undefined
     if (socket) {

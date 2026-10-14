@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { api, call, CSRF, setUnauthorizedHandler } from '@/api/client'
+import { api, call, CSRF, setBearerToken, setUnauthorizedHandler } from '@/api/client'
 import { isApiError } from '@/api/errors'
 import { useRuntime, type Runtime } from '@/telegram/runtime'
 import { t } from '@/i18n/en'
@@ -24,8 +24,12 @@ export function initDataExpired(runtime: Runtime, now = Date.now()): boolean {
   return !!authDate && now / 1000 - authDate > INIT_DATA_MAX_AGE_S
 }
 
+/** Logs in with initData and keeps the returned session token in memory for bearer auth. */
 async function telegramLogin(initData: string) {
-  return call(api.POST('/api/v1/auth/telegram', { params: { header: CSRF }, body: { init_data: initData } }))
+  setBearerToken(null)
+  const s = await call(api.POST('/api/v1/auth/telegram', { params: { header: CSRF }, body: { init_data: initData } }))
+  setBearerToken(s.token)
+  return s
 }
 
 /** Telegram: automatic login with initData. Browser: session check, then password + TOTP. */
@@ -100,6 +104,7 @@ export function AuthGate({ children }: { children: ReactNode }) {
     try {
       await call(api.POST('/api/v1/auth/logout', { params: { header: CSRF } }))
     } finally {
+      setBearerToken(null)
       qc.clear()
       setState({ kind: 'login' })
     }
