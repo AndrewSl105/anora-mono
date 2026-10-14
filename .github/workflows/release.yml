@@ -1,0 +1,145 @@
+name: release
+
+# Push to main: build and push only the images whose paths changed, copy the
+# deploy files to the server, pull the changed images (and always the agent
+# image: the server never pulls it) and `docker compose up -d`.
+# Run it by hand (workflow_dispatch) to build and deploy everything, e.g. the
+# first time.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  SERVER_IMAGE: ghcr.io/andrewsl105/anora-server
+  AGENT_IMAGE: ghcr.io/andrewsl105/anora-agent
+  WEB_IMAGE: ghcr.io/andrewsl105/anora-web
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      server: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.server == 'true' }}
+      agent: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.agent == 'true' }}
+      web: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.web == 'true' }}
+      deploy: ${{ github.event_name == 'workflow_dispatch' || steps.filter.outputs.deploy == 'true' }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'server/**'
+            agent:
+              - 'agent/**'
+            web:
+              - 'web/**'
+            deploy:
+              - 'deploy/**'
+              - '.github/workflows/release.yml'
+
+  images:
+    needs: changes
+    if: needs.changes.outputs.server == 'true' || needs.changes.outputs.agent == 'true' || needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Server image
+        if: needs.changes.outputs.server == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: server
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.SERVER_IMAGE }}:${{ github.sha }}
+            ${{ env.SERVER_IMAGE }}:latest
+          cache-from: type=gha,scope=server
+          cache-to: type=gha,mode=max,scope=server
+      - name: Agent image
+        if: needs.changes.outputs.agent == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.AGENT_IMAGE }}:${{ github.sha }}
+            ${{ env.AGENT_IMAGE }}:latest
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+      - name: Web image
+        if: needs.changes.outputs.web == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: web
+          platforms: linux/amd64
+          push: true
+          build-args: |
+            VITE_APP_VERSION=${{ github.sha }}
+          tags: |
+            ${{ env.WEB_IMAGE }}:${{ github.sha }}
+            ${{ env.WEB_IMAGE }}:latest
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+
+  deploy:
+    needs: [changes, images]
+    # Also when no image was built (deploy files only); never after a failed build.
+    if: >-
+      !cancelled() && needs.images.result != 'failure' &&
+      (needs.changes.outputs.server == 'true' || needs.changes.outputs.agent == 'true' ||
+       needs.changes.outputs.web == 'true' || needs.changes.outputs.deploy == 'true')
+    runs-on: ubuntu-24.04
+    environment: production
+    steps:
+      - uses: actions/checkout@v7
+      - name: Copy deploy files
+        uses: appleboy/scp-action@v1.0.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: deploy/docker-compose.deploy.yml,deploy/Caddyfile
+          target: /srv/anora
+          strip_components: 1
+      - name: Pull and start
+        uses: appleboy/ssh-action@v1.2.5
+        env:
+          PULL_SERVER: ${{ needs.changes.outputs.server }}
+          PULL_WEB: ${{ needs.changes.outputs.web }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: PULL_SERVER,PULL_WEB
+          # ssh-action v1.2.5 removed script_stop; `set -e` stops on the first failure.
+          script: |
+            set -e
+            cd /srv/anora
+            compose="docker compose -f docker-compose.deploy.yml"
+            # The server starts agents from the local image and never pulls it.
+            docker pull ghcr.io/andrewsl105/anora-agent:latest
+            if [ "$PULL_SERVER" = true ]; then $compose pull server; fi
+            if [ "$PULL_WEB" = true ]; then $compose pull web; fi
+            $compose up -d
+            # The Caddyfile is a bind mount: up -d does not restart Caddy for it.
+            $compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile
+            docker image prune -f

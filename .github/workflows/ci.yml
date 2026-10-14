@@ -1,0 +1,157 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    outputs:
+      server: ${{ steps.filter.outputs.server }}
+      agent: ${{ steps.filter.outputs.agent }}
+      web: ${{ steps.filter.outputs.web }}
+      deploy: ${{ steps.filter.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dorny/paths-filter@v4
+        id: filter
+        with:
+          filters: |
+            server:
+              - 'server/**'
+              - 'agent/**'          # the integration tests run the fake agent image
+              - 'docs/openapi.yaml'
+              - '.github/workflows/ci.yml'
+            agent:
+              - 'agent/**'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
+              - 'docs/openapi.yaml' # web/src/api/schema.ts is generated from it
+              - '.github/workflows/ci.yml'
+            deploy:
+              - 'deploy/**'
+              - '.github/workflows/ci.yml'
+
+  server:
+    needs: changes
+    if: needs.changes.outputs.server == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: server
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: anora
+          POSTGRES_PASSWORD: anora
+          POSTGRES_DB: anora
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U anora"
+          --health-interval 2s
+          --health-retries 30
+    env:
+      ANORA_TEST_DATABASE_URL: postgres://anora:anora@localhost:5432/anora?sslmode=disable
+      ANORA_TEST_RUNNER_IMAGE: anora-agent:ci
+      GITLEAKS_VERSION: 8.30.1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - name: Install gitleaks
+        run: |
+          curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | sudo tar -xz -C /usr/local/bin gitleaks
+      - uses: docker/setup-buildx-action@v4
+      - name: Build the agent image for integration tests
+        uses: docker/build-push-action@v7
+        with:
+          context: agent
+          load: true
+          tags: anora-agent:ci
+          cache-from: type=gha,scope=agent
+          cache-to: type=gha,mode=max,scope=agent
+      - run: go vet ./...
+      # -p 1: Docker integration tests must not run concurrently (see server/README.md).
+      - run: go test -p 1 -count=1 ./...
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.14.0
+          working-directory: server
+
+  agent:
+    needs: changes
+    if: needs.changes.outputs.agent == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: agent
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: agent/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  web:
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - name: Generated API types match docs/openapi.yaml
+        run: npm run check:api
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Bundle budgets (SPEC-web section 7)
+        run: npm run check:size
+      - name: Playwright smoke tests (mock mode)
+        run: |
+          npx playwright install --with-deps chromium
+          npm run e2e
+
+  deploy-files:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Compose files are valid
+        run: |
+          cp deploy/.env.example deploy/.env
+          docker compose -f deploy/docker-compose.deploy.yml config -q
+          docker compose -f deploy/docker-compose.dev.yml config -q
+      - name: Caddyfile is valid
+        run: >-
+          docker run --rm -e ANORA_DOMAIN=anora.example.com
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          caddy:2.11.7-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
