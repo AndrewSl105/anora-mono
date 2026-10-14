@@ -17,8 +17,8 @@ Source of truth: `runner/src/protocol.ts`. Go mirror: `internal/runnermgr/protoc
 |---|---|---|
 | `run` | `task_id` (string or number), `prompt`, `append_system_prompt?`, `resume_session_id?`, `model?`, `limits{max_turns, max_budget_usd, max_duration_sec, question_timeout_sec}`, `commit{message, author_name, author_email}` | first line, starts the session |
 | `answer` | `question_id`, `text` | reply to a pending question. An answer that arrives before its question is kept and used when the question is asked. |
-| `message` | `text` | extra user message injected into the running session |
-| `interrupt` | — | stop the current turn, keep the session |
+| `message` | `text` | extra user message injected into the running session. A run handles one prompt: input closes after the first turn's result, so a message that arrives after that is dropped and must be sent as a follow-up run. |
+| `interrupt` | — | stop the current turn, keep the session. The run then ends as `done` (summary "Interrupted by the user.") with whatever was committed; send a follow-up as a new run with `resume_session_id`. |
 | `cancel` | — | end the session, exit code `2` |
 
 An invalid line produces an `error` event with `code: "bad_command"`; the runner keeps running. A second `run` is also `bad_command`.
@@ -44,7 +44,15 @@ Every event has `type`, `ts` (RFC 3339, UTC, milliseconds) and `seq` (monotonic 
 | `error` | `code`, `message`, `session_id?` |
 | `heartbeat` | — (every 15 s) |
 
-Error codes: `no_auth`, `bad_command`, `commit_failed`, `limit_exceeded`, `sdk_error`, `internal`, `not_implemented`.
+Error codes: `no_auth`, `bad_command`, `commit_failed`, `limit_exceeded`, `sdk_error`, `internal`.
+
+Notes for the backend:
+
+- `question_id` is unique within one run (`q1`, `q2`, …) and restarts in the next run; the backend prefixes it with the run id. One `AskUserQuestion` call with several questions produces several `question` events, answered one after another.
+- After a `paused` run, the pending question has been withdrawn from the Claude session. The resume run must carry the answer in its `prompt` (with `resume_session_id`), e.g. `The answer to your question "…" is: …`.
+- `cost_usd_total` (in `usage` and `done`) is cumulative for the Claude **session**: a resumed session starts from the total its transcript saved, so the first `usage` of a resume run already includes earlier runs. Per-run cost = this run's last total minus the previous run's last total for the same session.
+- `limits.max_budget_usd` is passed to the SDK (`maxBudgetUsd`), which counts only spend since the run started.
+- `tool_result.summary` is set only when `ok` is false (first non-empty line of the error, ≤120 chars); successful results never carry content.
 
 ## Exit codes
 
