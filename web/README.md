@@ -28,9 +28,20 @@ MSW serves the whole API from memory and a fake WebSocket streams events for the
 | `npm run check:api` | fail if `schema.ts` is stale |
 | `npm run typecheck` / `lint` / `test` | tsc, ESLint, Vitest |
 | `npm run e2e` | Playwright smoke tests against mock mode |
+| `npm run e2e:real` | Playwright against a running Anora Runner (see below) |
 | `npm run build` then `npm run check:size` | production build, then bundle budgets (initial JS ≤ 180 KB, CSS ≤ 30 KB gzipped) |
 
 Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) and `VITE_DEBUG=1` (Telegram debug panel). There is no API URL: everything is same-origin.
+
+### Against the real backend
+
+Start Anora Runner's local stack (`deploy/docker-compose.dev.yml` in anora-runner: fake runner, no GitHub App, no Telegram); `npm run dev` then proxies `/api` and `/api/v1/ws` to `http://localhost:8080` (`ANORA_BACKEND_URL` in `.env.local` changes it). Log in with the password and a code for the TOTP secret you put in its `deploy/.env.dev`.
+
+```sh
+E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
+```
+
+`e2e/real/` logs in through the UI, creates a project (and adds `octocat/Hello-World` through the API, since there is no GitHub App), creates tasks, answers the fake runner's question, queues a message during a run and checks the follow-up run; it fails on any unexpected HTTP error, console error or WebSocket error. With `E2E_TG_BOT_TOKEN`/`E2E_TG_USER_ID` (the backend's `TELEGRAM_BOT_TOKEN`/`TELEGRAM_ALLOWED_USER_ID`) it also embeds the app in a cross-site iframe with signed initData, as Telegram Web does, and checks it works through the bearer token and a WebSocket ticket without the cookie. `E2E_BACKEND` (default `http://localhost:8080`) and `E2E_PORT` (Vite, default 5173) change the URLs; the backend's `CORS_ORIGINS` must contain the Vite origin. Fake runs that wait for an answer hold one of the backend's concurrency slots, so the tests cancel what they leave open.
 
 ## Testing inside Telegram
 

@@ -63,7 +63,7 @@ test('a message sent while running is queued; stopping the run starts it next', 
   await page.goto('/tasks/7')
   await expect(page.getByRole('heading', { name: 'Paginate the audit log API' })).toBeVisible()
   await page.getByLabel('Message for the next run…').fill('Also document the cursor format')
-  await page.getByRole('button', { name: 'Send' }).click()
+  await page.getByRole('button', { name: 'Send', exact: true }).click()
   await expect(page.getByText('Queued: starts the next run when this one ends')).toBeVisible()
   await expect(page.getByText('Queued for the next run:')).toBeVisible()
 
