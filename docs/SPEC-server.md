@@ -42,7 +42,7 @@ One repo, `anora-runner`, holds the Go backend and the TypeScript runner, becaus
 
 **Repo layout**
 
-`
+```
 anora-runner/
 ├── cmd/anora/            # main.go: wires everything, starts HTTP + bot + scheduler
 ├── internal/
@@ -63,13 +63,13 @@ anora-runner/
 ├── deploy/                 # docker-compose.deploy.yml, .env.example
 ├── docs/                   # SPEC.md, API.md, openapi.yaml, PROTOCOL.md
 └── .github/workflows/      # build images, deploy
-`
+```
 
 ## 3. Architecture and task lifecycle
 
 The backend owns every credential and every side effect; the runner only sees a folder and a prompt. This split is the core security property: a compromised or confused Claude session cannot push code, read other repos, or touch Docker.
 
-`
+```
 Only Anora Runner touches GitHub and Docker; the runner sees a folder
 
  ┌──────────────┐      ┌─────────────────────────────┐  tokens   ┌──────────────────────────┐
@@ -89,7 +89,7 @@ Only Anora Runner touches GitHub and Docker; the runner sees a folder
                                                          │ │ Postgres / Redis │ │
                                                          │ └──────────────────┘ │
                                                          └──────────────────────┘
-`
+```
 
 Clients reach only Anora Runner; Anora Runner alone holds credentials and starts containers through the filtered Docker proxy; each runner lives in its own task network with its sidecars.
 
@@ -262,7 +262,7 @@ Project-level settings override defaults (section 6).
 
 Seven tables carry the whole state; everything else is derived. Use UUIDv7 or `bigserial` ids, `timestamptz` everywhere, and `jsonb` only where the shape is genuinely open. The schema below is the starting point; adjust names if needed but keep the relations.
 
-`sql
+```sql
 CREATE TABLE projects (
   id              text PRIMARY KEY,            -- slug, e.g. 'vatary'
   name            text NOT NULL,
@@ -358,7 +358,7 @@ CREATE TABLE auth_sessions (
   created_at      timestamptz NOT NULL DEFAULT now(),
   last_seen_at    timestamptz NOT NULL DEFAULT now()
 );
-`
+```
 
 Backend-generated events (status changes, PR opened, CI result) go into `events` with `seq` NULL, so the web client reads one timeline per task. A first answer wins: answering an already answered question returns `409`.
 
@@ -441,7 +441,7 @@ Deployment follows the pattern I already use: GitHub Actions builds images, push
 
 **`deploy/docker-compose.deploy.yml`** (adapt names, keep the structure)
 
-`yaml
+```yaml
 services:
   anora:
     image: ghcr.io/andrewsl105/anora-runner:${ANORA_TAG:-latest}
@@ -485,7 +485,7 @@ networks:
 
 volumes:
   pgdata:
-`
+```
 
 No service publishes ports. The reverse proxy (Caddy or Nginx Proxy Manager on the same host, in the `proxy` network) terminates TLS. WebSocket upgrade must be enabled for `/api/v1/ws`.
 
