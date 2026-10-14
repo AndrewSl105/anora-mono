@@ -1,0 +1,13 @@
+# Local dev state (workspaces of the dev stack)
+.dev/
+
+# Env and secrets
+deploy/.env
+deploy/.env.*
+!deploy/.env.example
+*.pem
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

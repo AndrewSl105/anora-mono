@@ -93,7 +93,7 @@ export const claudeSession: Session = async ({ cmd, workspace, emitter, control 
       canUseTool,
       hooks: { PreToolUse: [{ hooks: [preToolUse] }] },
       abortController: queryAbort,
-      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `anora-runner/${RUNNER_VERSION}` },
+      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: `anora-agent/${RUNNER_VERSION}` },
     },
   });
 

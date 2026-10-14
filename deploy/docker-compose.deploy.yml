@@ -1,35 +1,59 @@
-# /srv/anora/docker-compose.deploy.yml — with Caddyfile and .env the only files on the server.
-# Caddy is the only service with published ports (80/443). It terminates TLS for
-# ANORA_DOMAIN and routes /api, /webhooks and /healthz to anora:8080 and
-# everything else to anora-client:80 over the `proxy` network (see Caddyfile).
-# Each release workflow pulls and restarts only its own service:
-#   anora-runner → anora (and pulls the anora-agent image), anora-client → anora-client.
+# /srv/anora/docker-compose.deploy.yml — copied to the server by the release
+# workflow together with the Caddyfile; .env is created by hand (README).
+#
+# caddy is the only service with published ports (80/443). It terminates TLS for
+# ANORA_DOMAIN and routes /api, /webhooks and /healthz to server:8080 and
+# everything else to web:80 over the `stack` network (see Caddyfile).
+# postgres and docker-proxy sit on `internal`, which has no egress. Agent
+# containers are started by the server through docker-proxy, each in its own
+# task network; they never join `stack` or `internal`.
+name: anora
+
 services:
-  anora:
-    image: ghcr.io/andrewsl105/anora-runner:${ANORA_TAG:-latest}
-    container_name: anora
+  caddy:
+    image: caddy:2.11.7-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"   # HTTP/3
+    environment:
+      ANORA_DOMAIN: ${ANORA_DOMAIN:?set ANORA_DOMAIN in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data       # certificates and ACME account: keep it
+      - caddy_config:/config
+    networks: [stack]
+
+  web:
+    image: ghcr.io/andrewsl105/anora-web:${WEB_TAG:-latest}
+    restart: unless-stopped
+    networks: [stack]
+
+  server:
+    image: ghcr.io/andrewsl105/anora-server:${SERVER_TAG:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
       WORKSPACES_DIR: /srv/anora/workspaces
       GITHUB_APP_PRIVATE_KEY_PATH: /secrets/github-app.pem
-      DATABASE_URL: postgres://anora:${PG_PASSWORD}@anora-postgres:5432/anora?sslmode=disable
+      DATABASE_URL: postgres://anora:${PG_PASSWORD}@postgres:5432/anora?sslmode=disable
     volumes:
-      # Same path on the host and in the container, so bind mounts of runner
+      # Same path on the host and in the container, so bind mounts of agent
       # workspaces resolve on the host. Must be owned by uid 1000.
       - /srv/anora/workspaces:/srv/anora/workspaces
       - /srv/anora/secrets/github-app.pem:/secrets/github-app.pem:ro
-    networks: [proxy, internal]
+    # stack: Caddy reaches it, and it reaches GitHub, Telegram and registries.
+    networks: [stack, internal]
     depends_on:
-      anora-postgres:
+      postgres:
         condition: service_healthy
       docker-proxy:
         condition: service_started
 
-  anora-postgres:
+  postgres:
     image: postgres:17-alpine
-    container_name: anora-postgres
     restart: unless-stopped
     environment:
       POSTGRES_USER: anora
@@ -43,11 +67,10 @@ services:
       interval: 5s
       retries: 20
 
-  # Filtered, read-only-socket Docker API for Anora Runner only. No exec,
+  # Filtered, read-only-socket Docker API for the server only. No exec,
   # no build, no swarm, no secrets.
   docker-proxy:
     image: tecnativa/docker-socket-proxy:v0.5.0
-    container_name: anora-docker-proxy
     restart: unless-stopped
     environment:
       CONTAINERS: 1
@@ -64,36 +87,14 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [internal]
 
-  anora-client:
-    image: ghcr.io/andrewsl105/anora-client:${CLIENT_TAG:-latest}
-    container_name: anora-client
-    restart: unless-stopped
-    networks: [proxy]
-
-  caddy:
-    image: caddy:2.11.7-alpine
-    container_name: anora-caddy
-    restart: unless-stopped
-    ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"   # HTTP/3
-    environment:
-      ANORA_DOMAIN: ${ANORA_DOMAIN:?set ANORA_DOMAIN in .env}
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data       # certificates and ACME account: keep it
-      - caddy_config:/config
-    networks: [proxy]
-
 volumes:
   pgdata:
   caddy_data:
   caddy_config:
 
 networks:
-  # Caddy, anora and anora-client. Owned by this file (Compose names it
-  # anora_proxy); nothing outside this stack needs it.
-  proxy: {}
+  # caddy, web and server.
+  stack: {}
+  # postgres and docker-proxy (and server): no egress.
   internal:
     internal: true
