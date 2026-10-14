@@ -52,6 +52,9 @@ type Config struct {
 	EventRetention      time.Duration
 	WorkspaceRetention  time.Duration
 
+	// SecretsScan is "gitleaks" (default) or "off" (local development only).
+	SecretsScan string
+
 	// RunnerFake starts runners with ANORA_RUNNER_FAKE=1 (tests and local dev).
 	RunnerFake bool
 }
@@ -101,7 +104,8 @@ func Load() (*Config, error) {
 		EventRetention:      e.dur("EVENT_RETENTION", 720*time.Hour),
 		WorkspaceRetention:  e.dur("WORKSPACE_RETENTION", 7*24*time.Hour),
 
-		RunnerFake: e.bool("ANORA_RUNNER_FAKE", false),
+		SecretsScan: e.str("SECRETS_SCAN", "gitleaks"),
+		RunnerFake:  e.bool("ANORA_RUNNER_FAKE", false),
 	}
 	if c.MaxConcurrentTasks < 1 {
 		errs = append(errs, errors.New("MAX_CONCURRENT_TASKS must be >= 1"))
@@ -124,6 +128,12 @@ func (c *Config) Validate() error {
 	req("SESSION_SECRET", c.SessionSecret)
 	if !strings.HasPrefix(c.AdminPasswordHash, "$2") && c.AdminPasswordHash != "" {
 		errs = append(errs, errors.New("ADMIN_PASSWORD_HASH must be a bcrypt hash (use `anora hash-password`)"))
+	}
+	if c.GitHubEnabled() && c.GitHubWebhookSecret == "" {
+		errs = append(errs, errors.New("GITHUB_WEBHOOK_SECRET is required with GITHUB_APP_ID"))
+	}
+	if c.SecretsScan != "gitleaks" && c.SecretsScan != "off" {
+		errs = append(errs, errors.New(`SECRETS_SCAN must be "gitleaks" or "off"`))
 	}
 	if c.TelegramBotToken != "" && c.TelegramAllowedUserID == 0 {
 		errs = append(errs, errors.New("TELEGRAM_ALLOWED_USER_ID is required with TELEGRAM_BOT_TOKEN"))

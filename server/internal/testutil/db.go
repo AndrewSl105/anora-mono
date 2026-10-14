@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"net/url"
 	"os"
 	"testing"
@@ -39,6 +40,12 @@ func DB(t *testing.T) *store.Store {
 		t.Fatal(err)
 	}
 	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Task ids name Docker resources (anora-task-<id>); a random start keeps
+	// test packages that run in parallel from colliding.
+	start := 1_000_000 + int64(b[0])<<16 | int64(b[1])<<8 | int64(b[2])
+	if _, err := st.Pool.Exec(ctx, fmt.Sprintf("ALTER SEQUENCE tasks_id_seq RESTART WITH %d", start)); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {

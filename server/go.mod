@@ -3,6 +3,8 @@ module github.com/andrewsl105/anora-runner
 go 1.27.2
 
 require (
+	github.com/bradleyfalzon/ghinstallation/v2 v2.19.0
+	github.com/google/go-github/v92 v92.0.0
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
@@ -10,6 +12,7 @@ require (
 	github.com/pressly/goose/v3 v3.29.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/term v0.47.0
+	golang.org/x/text v0.43.0
 )
 
 require (
@@ -24,6 +27,9 @@ require (
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.2 // indirect
+	github.com/google/go-github/v88 v88.0.0 // indirect
+	github.com/google/go-querystring v1.2.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.3 // indirect
@@ -41,5 +47,4 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
-	golang.org/x/text v0.43.0 // indirect
 )

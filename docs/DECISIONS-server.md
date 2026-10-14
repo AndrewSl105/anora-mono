@@ -36,3 +36,10 @@ Deviations from docs/SPEC.md, one line of reasoning each.
 - Without a GitHub App (`Publisher` nil) a run with commits ends `completed` with reason "committed locally"; this is how phase 3 and local development work.
 - Cleanup (container/network removal) happens before the terminal status is written, so observers never see a finished task with live containers.
 - A run's own cost is the runner's cumulative session cost minus what earlier runs of the same session (since the last `initial`/`retry`) already recorded.
+- Installation tokens are minted with `repositories: [<name>]`, so each token reaches exactly one repo; git gets it as a one-command `-c http.extraHeader=Authorization: Basic …` and git stderr is redacted before logging.
+- Diff validation fails closed: if the secrets scanner is missing or errors, the push is rejected. `SECRETS_SCAN=off` exists for local development only.
+- gitleaks runs as `gitleaks git --log-opts origin/<base>..HEAD --redact`; only `file:line rule` of each finding reaches logs, events and the task reason.
+- Before creating a PR the publisher looks for an open PR on the branch, so a crash between push and PR creation does not open a duplicate.
+- CI status: `requested`/`in_progress` → `pending`; a `failure` sticks until the next push starts new checks, so a later green suite cannot hide a red one.
+- A merged or closed PR completes the task and removes its containers; `OnCIFailed` is a logged no-op hook for future auto-fixing.
+- Docker integration tests must run with `go test -p 1`: startup reconciliation correctly removes containers of tasks unknown to its database, which includes another test package's tasks.

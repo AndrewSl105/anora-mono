@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -12,6 +13,7 @@ import (
 	"github.com/andrewsl105/anora-runner/internal/auth"
 	"github.com/andrewsl105/anora-runner/internal/config"
 	"github.com/andrewsl105/anora-runner/internal/events"
+	"github.com/andrewsl105/anora-runner/internal/githubapp"
 	"github.com/andrewsl105/anora-runner/internal/projects"
 	"github.com/andrewsl105/anora-runner/internal/runnermgr"
 	"github.com/andrewsl105/anora-runner/internal/scheduler"
@@ -54,7 +56,33 @@ func runServe() error {
 	})
 	taskSvc.Executor = sched
 
+	var gh *githubapp.App
+	var webhook http.Handler
+	if cfg.GitHubEnabled() {
+		gh, err = githubapp.New(cfg.GitHubAppID, cfg.GitHubPrivateKeyPath, cfg.GitHubAPIURL)
+		if err != nil {
+			return err
+		}
+		ws.Auth = gh.Token
+		var scanner workspace.SecretsScanner
+		if cfg.SecretsScan == "gitleaks" {
+			scanner = workspace.Gitleaks("gitleaks")
+		}
+		sched.Publisher = &githubapp.Publisher{App: gh, Workspace: ws, Scanner: scanner, TaskURL: taskURL(cfg)}
+		webhook = &githubapp.Webhook{
+			Secret: []byte(cfg.GitHubWebhookSecret), Store: st, Hub: hub, Tasks: taskSvc,
+			Cleanup: func(ctx context.Context, id int64) { _ = docker.RemoveAll(ctx, id) },
+			OnCIFailed: func(ctx context.Context, f githubapp.CIFailure) {
+				// Hook point for automatic CI fixing (not in v1).
+				slog.Info("CI failed", "task_id", f.Task.ID, "check", f.Name)
+			},
+		}
+	} else {
+		slog.Warn("GitHub App not configured: commits stay in local workspaces")
+	}
+
 	srv := &api.Server{
+		Webhook: webhook,
 		Cfg:      cfg,
 		Store:    st,
 		Tasks:    taskSvc,
@@ -70,6 +98,10 @@ func runServe() error {
 		Health: func(ctx context.Context) map[string]error {
 			return map[string]error{"database": st.Ping(ctx), "docker": docker.Ping(ctx)}
 		},
+	}
+
+	if gh != nil {
+		srv.GitHub = gh
 	}
 
 	var wg sync.WaitGroup
@@ -102,4 +134,18 @@ func serveHTTP(ctx context.Context, addr string, h http.Handler) error {
 		return err
 	}
 	return nil
+}
+
+// taskURL links PRs and Telegram messages to the task in the web app.
+func taskURL(cfg *config.Config) func(int64) string {
+	return func(id int64) string {
+		base := cfg.WebAppURL
+		if base == "" {
+			base = cfg.PublicBaseURL
+		}
+		if base == "" {
+			return ""
+		}
+		return fmt.Sprintf("%s/tasks/%d", base, id)
+	}
 }

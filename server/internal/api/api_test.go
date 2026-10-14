@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -106,15 +107,15 @@ func TestAPIFlow(t *testing.T) {
 	if _, err := st.CreateQuestion(ctx, store.Question{ID: qid, TaskID: id, RunID: run.ID, Text: "Which?", Options: []string{"a", "b"}}); err != nil {
 		t.Fatal(err)
 	}
-	code, view := c.do("GET", "/api/v1/tasks/1", nil)
+	code, view := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id), nil)
 	if code != 200 || view["open_question"] == nil {
 		t.Fatalf("open question missing: %v", view)
 	}
 	// No executor: the answer is stored and the task stays waiting until the runner exits.
-	if code, body := c.do("POST", "/api/v1/tasks/1/answer", map[string]any{"question_id": qid, "text": "a"}); code != 200 {
+	if code, body := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/answer", map[string]any{"question_id": qid, "text": "a"}); code != 200 {
 		t.Fatalf("answer: %d %v", code, body)
 	}
-	if code, body := c.do("POST", "/api/v1/tasks/1/answer", map[string]any{"question_id": qid, "text": "b"}); code != 409 || body["error"].(map[string]any)["code"] != "already_answered" {
+	if code, body := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/answer", map[string]any{"question_id": qid, "text": "b"}); code != 409 || body["error"].(map[string]any)["code"] != "already_answered" {
 		t.Fatalf("second answer: %d %v", code, body)
 	}
 
@@ -122,37 +123,37 @@ func TestAPIFlow(t *testing.T) {
 	if _, err := st.SetStatus(ctx, id, nil, tasks.Paused, "", false); err != nil {
 		t.Fatal(err)
 	}
-	if code, _ := c.do("POST", "/api/v1/tasks/1/interrupt", nil); code != 409 {
+	if code, _ := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/interrupt", nil); code != 409 {
 		t.Fatalf("interrupt paused: %d", code)
 	}
-	if code, body := c.do("POST", "/api/v1/tasks/1/message", map[string]any{"text": "continue"}); code != 200 || body["status"] != "queued" {
+	if code, body := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/message", map[string]any{"text": "continue"}); code != 200 || body["status"] != "queued" {
 		t.Fatalf("message paused: %d %v", code, body)
 	}
 	if r, err := st.PendingRun(ctx, id); err != nil || r.Kind != tasks.RunResume || r.Input != "continue" {
 		t.Fatalf("pending run: %+v %v", r, err)
 	}
 
-	code, evs := c.do("GET", "/api/v1/tasks/1/events?limit=2", nil)
+	code, evs := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events?limit=2", nil)
 	if code != 200 || evs["next_cursor"] == "" {
 		t.Fatalf("events page: %v", evs)
 	}
-	code, evs2 := c.do("GET", "/api/v1/tasks/1/events?after_id="+evs["next_cursor"].(string), nil)
+	code, evs2 := c.do("GET", "/api/v1/tasks/"+fmt.Sprint(id)+"/events?after_id="+evs["next_cursor"].(string), nil)
 	if code != 200 || len(evs2["items"].([]any)) == 0 {
 		t.Fatalf("events page 2: %v", evs2)
 	}
 
-	if code, _ := c.do("POST", "/api/v1/tasks/1/cancel", nil); code != 200 {
+	if code, _ := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil); code != 200 {
 		t.Fatal("cancel")
 	}
-	if code, _ := c.do("POST", "/api/v1/tasks/1/cancel", nil); code != 409 {
+	if code, _ := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil); code != 409 {
 		t.Fatal("double cancel should be 409")
 	}
-	if code, body := c.do("POST", "/api/v1/tasks/1/retry", nil); code != 200 || body["status"] != "queued" {
+	if code, body := c.do("POST", "/api/v1/tasks/"+fmt.Sprint(id)+"/retry", nil); code != 200 || body["status"] != "queued" {
 		t.Fatalf("retry: %v", body)
 	}
 
 	// CSRF header is required.
-	req, _ := http.NewRequest("POST", c.base+"/api/v1/tasks/1/cancel", nil)
+	req, _ := http.NewRequest("POST", c.base+"/api/v1/tasks/"+fmt.Sprint(id)+"/cancel", nil)
 	resp, _ := c.http.Do(req)
 	if resp.StatusCode != 403 {
 		t.Fatalf("csrf: %d", resp.StatusCode)

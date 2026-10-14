@@ -2,6 +2,7 @@ package scheduler_test
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -84,9 +85,10 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 	t.Cleanup(func() {
 		cancel()
 		<-e.done
-		for id := int64(1); id <= 5; id++ {
-			_ = docker.RemoveAll(context.Background(), id)
-			_ = docker.RemoveVolume(context.Background(), id)
+		all, _ := st.ListTasks(context.Background(), store.TaskFilter{Limit: 100})
+		for _, tk := range all {
+			_ = docker.RemoveAll(context.Background(), tk.ID)
+			_ = docker.RemoveVolume(context.Background(), tk.ID)
 		}
 	})
 	return e
@@ -159,7 +161,7 @@ func TestFakeRunQueuedToCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(out), "anora[bot]|Say hello|") || !strings.Contains(string(out), "agent/1-say-hello") {
+	if !strings.HasPrefix(string(out), "anora[bot]|Say hello|") || !strings.Contains(string(out), fmt.Sprintf("agent/%d-say-hello", v.ID)) {
 		t.Fatalf("commit: %s", out)
 	}
 	if b, _ := os.ReadFile(filepath.Join(wsDir, "ANORA_FAKE.md")); !strings.HasPrefix(string(b), "# hello") {
