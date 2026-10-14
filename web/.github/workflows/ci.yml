@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - name: Generated API types match docs/backend/openapi.yaml
+        run: npm run check:api
+      - run: npm run build
+      - name: Bundle budgets (spec section 7)
+        run: npm run check:size
