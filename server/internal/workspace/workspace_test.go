@@ -70,7 +70,9 @@ func TestPrepareDiffPush(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(ws, "new.txt"), []byte("x\n"), 0o644)
 	cmd := exec.Command("git", "-c", "user.name=a", "-c", "user.email=a@a", "commit", "-qam", "x")
 	cmd.Dir = ws
-	exec.Command("git", "-C", ws, "add", "-A").Run()
+	if err := exec.Command("git", "-C", ws, "add", "-A").Run(); err != nil {
+		t.Fatal(err)
+	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v %s", err, out)
 	}

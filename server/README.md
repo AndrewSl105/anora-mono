@@ -120,6 +120,13 @@ Back up Postgres daily with `pg_dump`. Example root crontab line (keeps 14 days)
 
 Restore with `docker exec -i anora-postgres pg_restore -U anora -d anora --clean < backup.dump`. Workspaces are disposable (the branch lives on GitHub); the database is the state.
 
+## CI/CD
+
+- **`ci.yml`** (pull requests): `go vet`, `go test -p 1 ./...` against a Postgres service, with the fake runner image built for the Docker integration tests; `golangci-lint`; and the runner's `npm ci && npm run typecheck && npm test`.
+- **`release.yml`** (push to `main`): builds and pushes `ghcr.io/andrewsl105/anora-runner` and `ghcr.io/andrewsl105/anora-agent` (tags `<sha>` and `latest`, linux/amd64). Then it connects over SSH, pulls **both** images (Anora Runner never pulls the runner image itself) and runs `docker compose -f docker-compose.deploy.yml up -d`.
+
+Repository secrets for the deploy job (environment `production`): `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`. If the GHCR packages are private, log the server in once with a token that has `read:packages`: `echo <token> | docker login ghcr.io -u andrewsl105 --password-stdin`.
+
 ## Operations
 
 - **Health**: `GET /healthz` checks Postgres and Docker.

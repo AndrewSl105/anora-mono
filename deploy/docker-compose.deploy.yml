@@ -1,0 +1,71 @@
+# /srv/anora/docker-compose.deploy.yml — the only file (with .env) on the server.
+# No service publishes ports; the reverse proxy on the external `proxy`
+# network reaches anora:8080.
+services:
+  anora:
+    image: ghcr.io/andrewsl105/anora-runner:${ANORA_TAG:-latest}
+    container_name: anora
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DOCKER_HOST: tcp://docker-proxy:2375
+      WORKSPACES_DIR: /srv/anora/workspaces
+      GITHUB_APP_PRIVATE_KEY_PATH: /secrets/github-app.pem
+      DATABASE_URL: postgres://anora:${PG_PASSWORD}@anora-postgres:5432/anora?sslmode=disable
+    volumes:
+      # Same path on the host and in the container, so bind mounts of runner
+      # workspaces resolve on the host. Must be owned by uid 1000.
+      - /srv/anora/workspaces:/srv/anora/workspaces
+      - /srv/anora/secrets/github-app.pem:/secrets/github-app.pem:ro
+    networks: [proxy, internal]
+    depends_on:
+      anora-postgres:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+
+  anora-postgres:
+    image: postgres:17-alpine
+    container_name: anora-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: anora
+      POSTGRES_PASSWORD: ${PG_PASSWORD}
+      POSTGRES_DB: anora
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [internal]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U anora -d anora"]
+      interval: 5s
+      retries: 20
+
+  # Filtered, read-only-socket Docker API for Anora Runner only. No exec,
+  # no build, no swarm, no secrets.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    container_name: anora-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      ALLOW_START: 1
+      ALLOW_STOP: 1
+      ALLOW_RESTARTS: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      IMAGES: 1
+      POST: 1
+      EXEC: 0
+      BUILD: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [internal]
+
+volumes:
+  pgdata:
+
+networks:
+  proxy:
+    external: true
+  internal:
+    internal: true

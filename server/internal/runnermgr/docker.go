@@ -47,7 +47,7 @@ type Manager struct {
 }
 
 func NewDockerClient(host string) (*client.Client, error) {
-	opts := []client.Opt{client.WithAPIVersionNegotiation()}
+	var opts []client.Opt
 	if host != "" {
 		opts = append(opts, client.WithHost(host))
 	} else {

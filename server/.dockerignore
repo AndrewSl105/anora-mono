@@ -1,0 +1,7 @@
+.git
+.claude
+bin
+runner/node_modules
+runner/dist
+deploy/.env
+*.pem

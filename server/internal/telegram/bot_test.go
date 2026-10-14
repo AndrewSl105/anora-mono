@@ -158,9 +158,8 @@ func TestBotFlow(t *testing.T) {
 		q, _ := st.GetQuestion(ctx, qid)
 		return q.TelegramMessageID != nil
 	})
-	q, _ := st.GetQuestion(ctx, qid)
 	b.HandleUpdate(ctx, telego.Update{CallbackQuery: &telego.CallbackQuery{ID: "cb", From: telego.User{ID: owner}, Data: "ans|" + qid + "|1"}})
-	q, _ = st.GetQuestion(ctx, qid)
+	q, _ := st.GetQuestion(ctx, qid)
 	if q.Answer == nil || *q.Answer != "XLSX" || *q.AnsweredVia != "telegram" {
 		t.Fatalf("answer %+v", q)
 	}

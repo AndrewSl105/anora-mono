@@ -113,7 +113,7 @@ func internalOnly(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		host, _, _ := net.SplitHostPort(r.RemoteAddr)
 		ip := net.ParseIP(host)
-		if ip == nil || !(ip.IsPrivate() || ip.IsLoopback()) || r.Header.Get("X-Forwarded-For") != "" {
+		if ip == nil || !ip.IsPrivate() && !ip.IsLoopback() || r.Header.Get("X-Forwarded-For") != "" {
 			writeError(w, http.StatusForbidden, "forbidden", "internal network only")
 			return
 		}

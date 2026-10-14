@@ -112,7 +112,8 @@ func Gitleaks(binary string) SecretsScanner {
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		err = cmd.Run()
 		var exitErr *exec.ExitError
-		if err != nil && !(errors.As(err, &exitErr) && exitErr.ExitCode() == 3) {
+		leaksFound := errors.As(err, &exitErr) && exitErr.ExitCode() == 3
+		if err != nil && !leaksFound {
 			return nil, fmt.Errorf("gitleaks: %v: %s", err, strings.TrimSpace(stderr.String()))
 		}
 		var report []struct {
