@@ -1,0 +1,159 @@
+package telegram
+
+import (
+	"context"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/mymmrac/telego"
+
+	"github.com/andrewsl105/anora/server/internal/store"
+)
+
+// Telegram delivers an album (media group) as one message per photo, with
+// the caption on one of them. The bot collects a group for AlbumWait after
+// its latest part and then handles it as a single message: one task, one
+// draft update or one message to a task.
+
+const defaultAlbumWait = 1500 * time.Millisecond
+
+type imageState struct {
+	mu      sync.Mutex
+	albums  map[string]*album
+	pending map[promptKey]pendingImages
+}
+
+type album struct {
+	parts []*telego.Message
+	timer *time.Timer
+}
+
+type promptKey struct{ chatID, messageID int64 }
+
+// pendingImages are images sent to a task without text, waiting for the
+// owner's reply to the bot's "what should Claude do" prompt.
+type pendingImages struct {
+	taskID  int64
+	media   []store.TelegramDraftMedia
+	expires time.Time
+}
+
+type albumMediaKey struct{}
+
+// withAlbumMedia carries the media of an album's other parts to
+// incomingDraftContent, so the existing routes see the whole album.
+func withAlbumMedia(ctx context.Context, media []store.TelegramDraftMedia) context.Context {
+	return context.WithValue(ctx, albumMediaKey{}, media)
+}
+
+func albumMedia(ctx context.Context) []store.TelegramDraftMedia {
+	m, _ := ctx.Value(albumMediaKey{}).([]store.TelegramDraftMedia)
+	return m
+}
+
+// messageMedia is the image of one message (photo or image document).
+func messageMedia(m *telego.Message) []store.TelegramDraftMedia {
+	var media []store.TelegramDraftMedia
+	if len(m.Photo) > 0 {
+		p := m.Photo[len(m.Photo)-1]
+		media = append(media, store.TelegramDraftMedia{FileID: p.FileID, Name: "photo.jpg", Kind: "image"})
+	}
+	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
+		media = append(media, store.TelegramDraftMedia{FileID: m.Document.FileID, Name: m.Document.FileName, Kind: "image"})
+	}
+	return media
+}
+
+// collectAlbum adds a part of a media group; the group is handled once no
+// new part arrived for AlbumWait.
+func (b *Bot) collectAlbum(ctx context.Context, m *telego.Message) {
+	wait := b.AlbumWait
+	if wait == 0 {
+		wait = defaultAlbumWait
+	}
+	b.images.mu.Lock()
+	defer b.images.mu.Unlock()
+	if b.images.albums == nil {
+		b.images.albums = map[string]*album{}
+	}
+	key := fmt.Sprintf("%d/%s", m.Chat.ID, m.MediaGroupID)
+	a := b.images.albums[key]
+	if a == nil {
+		a = &album{}
+		b.images.albums[key] = a
+	} else {
+		a.timer.Stop()
+	}
+	a.parts = append(a.parts, m)
+	a.timer = time.AfterFunc(wait, func() {
+		b.images.mu.Lock()
+		parts := a.parts
+		delete(b.images.albums, key)
+		b.images.mu.Unlock()
+		b.handleAlbum(ctx, parts)
+	})
+}
+
+// handleAlbum handles an album as its leading part (the one with the
+// caption, else the first) carrying the other parts' images and reply.
+func (b *Bot) handleAlbum(ctx context.Context, parts []*telego.Message) {
+	lead := parts[0]
+	for _, p := range parts {
+		if strings.TrimSpace(p.Caption) != "" {
+			lead = p
+			break
+		}
+	}
+	var others []store.TelegramDraftMedia
+	for _, p := range parts {
+		if p == lead {
+			continue
+		}
+		others = append(others, messageMedia(p)...)
+		if lead.ReplyToMessage == nil && p.ReplyToMessage != nil {
+			lead.ReplyToMessage = p.ReplyToMessage
+		}
+	}
+	b.handleMessage(withAlbumMedia(ctx, others), lead)
+}
+
+// askImageText asks for the text that goes with images sent to a task
+// without a caption; the reply to the prompt sends both.
+func (b *Bot) askImageText(ctx context.Context, m *telego.Message, taskID int64, media []store.TelegramDraftMedia) error {
+	id, err := b.send(ctx, target{m.Chat.ID, int64(m.MessageThreadID)}, "✏️ What should Claude do with the image(s)? Reply with the text.",
+		&telego.ForceReply{ForceReply: true, InputFieldPlaceholder: "What should Claude do?"}, m.MessageID)
+	if err != nil {
+		return err
+	}
+	if err := b.Store.AddTelegramReplyPrompt(ctx, m.Chat.ID, int64(id), store.TelegramReplyPrompt{Kind: "task_images", TaskID: taskID}); err != nil {
+		return err
+	}
+	b.images.mu.Lock()
+	defer b.images.mu.Unlock()
+	if b.images.pending == nil {
+		b.images.pending = map[promptKey]pendingImages{}
+	}
+	now := time.Now()
+	for k, p := range b.images.pending {
+		if now.After(p.expires) {
+			delete(b.images.pending, k)
+		}
+	}
+	b.images.pending[promptKey{m.Chat.ID, int64(id)}] = pendingImages{taskID: taskID, media: media, expires: now.Add(24 * time.Hour)}
+	return nil
+}
+
+// takePendingImages returns (and forgets) the images waiting for the text
+// that replies to prompt messageID.
+func (b *Bot) takePendingImages(chatID, messageID int64) ([]store.TelegramDraftMedia, bool) {
+	b.images.mu.Lock()
+	defer b.images.mu.Unlock()
+	p, ok := b.images.pending[promptKey{chatID, messageID}]
+	delete(b.images.pending, promptKey{chatID, messageID})
+	if !ok || time.Now().After(p.expires) {
+		return nil, false
+	}
+	return p.media, true
+}

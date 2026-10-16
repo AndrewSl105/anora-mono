@@ -42,6 +42,7 @@ type Bot struct {
 	WebAppURL, MiniAppLink string
 	EditInterval           time.Duration
 	MergeWindow            time.Duration
+	AlbumWait              time.Duration // how long an album is collected after its latest photo
 	STT                    Transcriber
 	STTEnabled             bool
 	OnError                func(string)
@@ -50,6 +51,7 @@ type Bot struct {
 	statusMu sync.Mutex
 	mu       sync.Mutex
 	edits    map[int64]*editState
+	images   imageState
 }
 
 type editState struct {

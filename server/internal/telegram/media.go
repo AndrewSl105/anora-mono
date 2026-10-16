@@ -108,14 +108,7 @@ func (b *Bot) incomingDraftContent(ctx context.Context, m *telego.Message) (stri
 	if text == "" {
 		text = strings.TrimSpace(m.Caption)
 	}
-	var media []store.TelegramDraftMedia
-	if len(m.Photo) > 0 {
-		p := m.Photo[len(m.Photo)-1]
-		media = append(media, store.TelegramDraftMedia{FileID: p.FileID, Name: "photo.jpg", Kind: "image"})
-	}
-	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
-		media = append(media, store.TelegramDraftMedia{FileID: m.Document.FileID, Name: m.Document.FileName, Kind: "image"})
-	}
+	media := append(messageMedia(m), albumMedia(ctx)...)
 	if m.Voice != nil || m.Audio != nil {
 		if !b.STTEnabled || b.STT == nil {
 			return "", nil, fmt.Errorf("Voice messages are not enabled — dictate with the keyboard microphone instead.")

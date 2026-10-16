@@ -1,0 +1,162 @@
+package telegram
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"image"
+	"image/png"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/mymmrac/telego"
+
+	"github.com/andrewsl105/anora/server/internal/attachments"
+	"github.com/andrewsl105/anora/server/internal/events"
+	"github.com/andrewsl105/anora/server/internal/projects"
+	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/anora/server/internal/testutil"
+)
+
+// imageEnv is a bot whose Telegram files are served by a test server: the
+// fake API's GetFile returns the file id as the download URL.
+type imageEnv struct {
+	st    *store.Store
+	bot   *Bot
+	api   *fakeAPI
+	files string // base URL; a file id is files + "/<name>"
+	task  int64
+	card  int // a bot message of the task, for replies
+}
+
+func newImageEnv(t *testing.T) *imageEnv {
+	t.Helper()
+	st := testutil.DB(t)
+	ctx := context.Background()
+	var img bytes.Buffer
+	_ = png.Encode(&img, image.NewRGBA(image.Rect(0, 0, 20, 10)))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write(img.Bytes()) }))
+	t.Cleanup(srv.Close)
+
+	hub := events.NewHub()
+	svc := &tasks.Service{Store: st, Hub: hub, Files: &attachments.Files{Dir: t.TempDir()}}
+	name := "Demo"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "demo", ProjectFields: store.ProjectFields{Name: &name}})
+	_, _ = (&projects.Service{Store: st}).AddRepository(ctx, "demo", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+	v, err := svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := st.AddTelegramTaskMessage(ctx, store.TelegramMessage{ChatID: owner, MessageID: 500, TaskID: v.ID, Kind: "card"}); err != nil {
+		t.Fatal(err)
+	}
+	api := &fakeAPI{}
+	b := &Bot{API: api, Store: st, Tasks: svc, Hub: hub, OwnerID: owner, AlbumWait: 50 * time.Millisecond}
+	b.init()
+	return &imageEnv{st: st, bot: b, api: api, files: srv.URL, task: v.ID, card: 500}
+}
+
+func (e *imageEnv) photo(id int, caption, group string, replyTo int) *telego.Message {
+	m := &telego.Message{
+		MessageID: id, From: &telego.User{ID: owner}, Chat: telego.Chat{ID: owner, Type: "private"},
+		Caption: caption, MediaGroupID: group,
+		Photo: []telego.PhotoSize{{FileID: e.files + "/small"}, {FileID: e.files + "/large"}},
+	}
+	if replyTo != 0 {
+		m.ReplyToMessage = &telego.Message{MessageID: replyTo}
+	}
+	return m
+}
+
+// messageEvents returns the task's message payloads.
+func (e *imageEnv) messageEvents(t *testing.T) []map[string]any {
+	t.Helper()
+	evs, err := e.st.ListEvents(context.Background(), e.task, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []map[string]any
+	for _, ev := range evs {
+		if ev.Type == "message" {
+			var p map[string]any
+			_ = json.Unmarshal(ev.Payload, &p)
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+func TestAlbumReplyBecomesOneMessage(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	// Telegram sends an album as separate messages; the caption is on one.
+	e.bot.onMessage(ctx, e.photo(1, "", "album-1", e.card))
+	e.bot.onMessage(ctx, e.photo(2, "Make it look like these", "album-1", e.card))
+	e.bot.onMessage(ctx, e.photo(3, "", "album-1", e.card))
+
+	eventually(t, "the album message", func() bool { return len(e.messageEvents(t)) > 0 })
+	time.Sleep(150 * time.Millisecond) // nothing else may follow
+	msgs := e.messageEvents(t)
+	if len(msgs) != 1 {
+		t.Fatalf("want one message for the album, got %v", msgs)
+	}
+	if msgs[0]["text"] != "Make it look like these" || len(msgs[0]["attachments"].([]any)) != 3 {
+		t.Fatalf("album message: %v", msgs[0])
+	}
+}
+
+func TestImageWithoutCaptionAsksForText(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	e.bot.onMessage(ctx, e.photo(1, "", "", e.card))
+
+	sends, _, _ := e.api.snapshot()
+	var prompt *sent
+	for i := range sends {
+		if strings.Contains(sends[i].text, "What should Claude do with the image(s)?") {
+			prompt = &sends[i]
+		}
+	}
+	if prompt == nil {
+		t.Fatalf("no text prompt; sent %+v", sends)
+	}
+	if _, ok := prompt.markup.(*telego.ForceReply); !ok {
+		t.Fatalf("prompt markup %T, want ForceReply", prompt.markup)
+	}
+	if len(e.messageEvents(t)) != 0 {
+		t.Fatal("images without text must not reach the task yet")
+	}
+
+	reply := &telego.Message{MessageID: 2, From: &telego.User{ID: owner}, Chat: telego.Chat{ID: owner, Type: "private"},
+		Text: "Fix the overlap shown here", ReplyToMessage: &telego.Message{MessageID: prompt.msgID}}
+	e.bot.onMessage(ctx, reply)
+	msgs := e.messageEvents(t)
+	if len(msgs) != 1 || msgs[0]["text"] != "Fix the overlap shown here" || len(msgs[0]["attachments"].([]any)) != 1 {
+		t.Fatalf("message after the text reply: %v", msgs)
+	}
+}
+
+func TestNewCommandCaptionAttachesPhoto(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	e.bot.onMessage(ctx, e.photo(1, "/new demo Build this screen", "", 0))
+
+	all, _ := e.st.ListTasks(ctx, store.TaskFilter{Limit: 10})
+	var created *store.Task
+	for _, tk := range all {
+		if tk.Prompt == "Build this screen" {
+			created = tk
+		}
+	}
+	if created == nil {
+		t.Fatal("/new with a photo created no task")
+	}
+	live, _ := e.st.LiveAttachments(ctx, created.ID)
+	if len(live) != 1 || live[0].Width != 20 {
+		t.Fatalf("attachments of the new task: %+v", live)
+	}
+}

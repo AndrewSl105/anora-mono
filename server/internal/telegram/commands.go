@@ -69,6 +69,14 @@ func (b *Bot) topicProject(ctx context.Context, m *telego.Message) *store.Projec
 }
 
 func (b *Bot) onMessage(ctx context.Context, m *telego.Message) {
+	if m.MediaGroupID != "" {
+		b.collectAlbum(ctx, m)
+		return
+	}
+	b.handleMessage(ctx, m)
+}
+
+func (b *Bot) handleMessage(ctx context.Context, m *telego.Message) {
 	text := strings.TrimSpace(m.Text)
 	if text == "" {
 		text = strings.TrimSpace(m.Caption)
@@ -201,6 +209,20 @@ func (b *Bot) handleCommand(ctx context.Context, m *telego.Message, cmd, args st
 }
 
 func (b *Bot) handlePromptReply(ctx context.Context, m *telego.Message, p store.TelegramReplyPrompt) error {
+	if p.Kind == "task_images" {
+		text, media, err := b.incomingDraftContent(ctx, m)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(text) == "" {
+			return fmt.Errorf("reply with the text that goes with the image(s)")
+		}
+		waiting, ok := b.takePendingImages(m.Chat.ID, int64(m.ReplyToMessage.MessageID))
+		if !ok {
+			return fmt.Errorf("the images are no longer here (the bot restarted or a day passed); send them again with a caption")
+		}
+		return b.sendToTask(ctx, m, p.TaskID, text, append(waiting, media...))
+	}
 	text, _, err := b.incomingContent(ctx, m)
 	if err != nil {
 		return err
@@ -226,7 +248,20 @@ func (b *Bot) handlePromptReply(ctx context.Context, m *telego.Message, p store.
 }
 
 func (b *Bot) routeTaskReply(ctx context.Context, m *telego.Message, taskID int64) error {
-	text, images, err := b.incomingContent(ctx, m)
+	text, media, err := b.incomingDraftContent(ctx, m)
+	if err != nil {
+		return err
+	}
+	if text == "" && len(media) > 0 {
+		return b.askImageText(ctx, m, taskID, media)
+	}
+	return b.sendToTask(ctx, m, taskID, text, media)
+}
+
+// sendToTask answers the task's open question with text, or sends it as a
+// message; images go with the message (after an answer, as a follow-up).
+func (b *Bot) sendToTask(ctx context.Context, m *telego.Message, taskID int64, text string, media []store.TelegramDraftMedia) error {
+	images, err := b.downloadDraftImages(ctx, media)
 	if err != nil {
 		return err
 	}
@@ -241,9 +276,6 @@ func (b *Bot) routeTaskReply(ctx context.Context, m *telego.Message, taskID int6
 		return err
 	}
 	if v.OpenQuestion != nil {
-		if text == "" && len(images) > 0 {
-			text = "See the attached image(s)."
-		}
 		_, err = b.Tasks.Answer(ctx, taskID, v.OpenQuestion.ID, text, "telegram")
 		if err != nil || len(images) == 0 {
 			return err
@@ -251,16 +283,18 @@ func (b *Bot) routeTaskReply(ctx context.Context, m *telego.Message, taskID int6
 		_, err = b.Tasks.Message(ctx, taskID, "Images attached to my answer.", images)
 		return err
 	}
-	if text == "" && len(images) > 0 {
-		text = "Review the attached image(s)."
-	}
 	_, err = b.Tasks.Message(ctx, taskID, text, images)
 	return err
 }
 
 func (b *Bot) newTask(ctx context.Context, m *telego.Message, projectID string, repositoryID int64, prompt string) error {
+	// /new as the caption of a photo (or album) attaches the images.
+	images, err := b.downloadDraftImages(ctx, append(messageMedia(m), albumMedia(ctx)...))
+	if err != nil {
+		return err
+	}
 	b.createMu.Lock()
-	v, err := b.Tasks.Create(ctx, tasks.CreateInput{ProjectID: projectID, RepositoryID: repositoryID, Prompt: prompt, Source: "telegram"})
+	v, err := b.Tasks.Create(ctx, tasks.CreateInput{ProjectID: projectID, RepositoryID: repositoryID, Prompt: prompt, Source: "telegram", Images: images})
 	if err == nil {
 		err = b.Store.SetTaskTelegram(ctx, v.ID, store.TelegramTarget{ChatID: m.Chat.ID, ThreadID: int64(m.MessageThreadID)})
 	}
@@ -402,7 +436,7 @@ func (b *Bot) renderDraft(ctx context.Context, d *store.TelegramDraft) string {
 	}
 	preview := cut(d.Text, 200)
 	if preview == "" {
-		preview = "Review the attached image(s)."
+		preview = "No text yet: Create asks what Claude should do."
 	}
 	var bld strings.Builder
 	bld.WriteString("📝 <b>Create a task?</b>\n")
