@@ -138,9 +138,14 @@ func runServe() error {
 	go func() {
 		defer wg.Done()
 		(&maintenance.Maintainer{
-			Store: st, Docker: docker, Workspaces: ws,
+			Store: st, Docker: docker, Workspaces: ws, Attachments: files,
 			EventRetention: cfg.EventRetention, WorkspaceRetention: cfg.WorkspaceRetention, SidecarIdleTTL: cfg.SidecarIdleTTL,
 		}).Run(ctx)
+	}()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		files.Watch(ctx, st, hub)
 	}()
 	wg.Add(1)
 	go func() {

@@ -103,3 +103,66 @@ func TestAttachmentsReachTheRunThatCarriesTheirText(t *testing.T) {
 		t.Fatalf("retry: %v / %v", cur, earlier)
 	}
 }
+
+func TestAttachmentLifecycle(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	if _, err := st.CreateProject(ctx, "demo", store.ProjectFields{}); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := st.AddRepository(ctx, store.Repository{ProjectID: "demo", FullName: "o/r", BaseBranch: "dev", InstallationID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newTask := func() int64 {
+		task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, upload("create.png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return task.ID
+	}
+	live := func(id int64) []string {
+		as, err := st.LiveAttachments(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return names(as)
+	}
+	active := []string{"queued", "preparing", "running"}
+
+	// Completed: the task's attachments go, but a queued message's images
+	// survive into the follow-up run the queue starts.
+	done := newTask()
+	startRun(t, st, done, false)
+	if _, _, err := st.QueueMessage(ctx, done, active, "more", true, upload("queued.png")); err != nil {
+		t.Fatal(err)
+	}
+	if nt, err := st.SetStatus(ctx, done, nil, "completed", "", true); err != nil || nt.Status != "queued" {
+		t.Fatalf("completed with a queued message: %+v %v", nt, err)
+	}
+	if got := live(done); !eq(got, []string{"queued.png"}) {
+		t.Fatalf("after completed: %v", got)
+	}
+	startRun(t, st, done, false)
+	if _, err := st.SetStatus(ctx, done, nil, "completed", "", true); err != nil {
+		t.Fatal(err)
+	}
+	if got := live(done); len(got) != 0 {
+		t.Fatalf("after the follow-up completed: %v", got)
+	}
+
+	// Failed and cancelled keep the task's images (retry) but drop the images
+	// of a queued message that is dropped.
+	for _, status := range []string{"failed", "cancelled"} {
+		id := newTask()
+		if _, _, err := st.QueueMessage(ctx, id, active, "more", true, upload("dropped.png")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := st.SetStatus(ctx, id, nil, status, "x", true); err != nil {
+			t.Fatal(err)
+		}
+		if got := live(id); !eq(got, []string{"create.png"}) {
+			t.Fatalf("%s: live %v", status, got)
+		}
+	}
+}

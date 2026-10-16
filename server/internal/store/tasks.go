@@ -193,6 +193,14 @@ func setStatusTx(ctx context.Context, tx pgx.Tx, id int64, from []string, to, re
 		return nil, err
 	}
 	t.StatusEvents = []*Event{ev}
+	if to == "completed" {
+		// Attachments are kept for failed and cancelled tasks (retry) until
+		// workspace retention; a completed task is done with them. Queued
+		// messages' attachments stay for the run the queue starts below.
+		if err := deleteAttachmentsTx(ctx, tx, id, `run_id IS NOT NULL`); err != nil {
+			return nil, err
+		}
+	}
 	if t.QueuedMessage == nil {
 		return t, nil
 	}
@@ -233,6 +241,10 @@ func drainQueuedTx(ctx context.Context, tx pgx.Tx, t *Task) (*Task, error) {
 	case "failed", "cancelled":
 		ev, err := insertBackendEvent(ctx, tx, t.ID, nil, "message_dropped", map[string]any{"text": text, "reason": t.Status})
 		if err != nil {
+			return nil, err
+		}
+		// The dropped messages' images go with them.
+		if err := deleteAttachmentsTx(ctx, tx, t.ID, `run_id IS NULL AND event_id IN (SELECT id FROM events WHERE task_id = $1 AND type = 'message')`); err != nil {
 			return nil, err
 		}
 		if _, err := tx.Exec(ctx, `UPDATE tasks SET queued_message = NULL WHERE id = $1`, t.ID); err != nil {

@@ -82,3 +82,47 @@ func TestOnce(t *testing.T) {
 		t.Fatal("workspace cleaned twice")
 	}
 }
+
+type fakeAttachments struct {
+	swept    []int64
+	sweptAll int
+}
+
+func (f *fakeAttachments) Sweep(_ context.Context, _ *store.Store, id int64) error {
+	f.swept = append(f.swept, id)
+	return nil
+}
+func (f *fakeAttachments) SweepAll(_ context.Context, _ *store.Store) error { f.sweptAll++; return nil }
+
+func TestRetentionRemovesAttachments(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	name := "P"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "p", ProjectFields: store.ProjectFields{Name: &name}})
+	repo, _ := (&projects.Service{Store: st}).AddRepository(ctx, "p", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+	up := &store.Upload{Items: []store.NewAttachment{{Name: "a.png", Mime: "image/png", Size: 1, Width: 1, Height: 1}}}
+	old, err := st.CreateTask(ctx, store.Task{ProjectID: "p", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recent, _ := st.CreateTask(ctx, store.Task{ProjectID: "p", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, up)
+	for _, id := range []int64{old.ID, recent.ID} {
+		_, _ = st.SetStatus(ctx, id, nil, tasks.Failed, "boom", true)
+	}
+	_, _ = st.Pool.Exec(ctx, `UPDATE tasks SET finished_at = now() - interval '8 days' WHERE id = $1`, old.ID)
+
+	a := &fakeAttachments{}
+	m := &Maintainer{Store: st, Docker: &fakeDocker{}, Workspaces: &fakeWS{}, Attachments: a,
+		EventRetention: 720 * time.Hour, WorkspaceRetention: 7 * 24 * time.Hour, SidecarIdleTTL: time.Hour}
+	m.Once(ctx)
+
+	if l, _ := st.LiveAttachments(ctx, old.ID); len(l) != 0 {
+		t.Fatalf("failed task past retention keeps attachments: %v", l)
+	}
+	if l, _ := st.LiveAttachments(ctx, recent.ID); len(l) != 1 {
+		t.Fatalf("recently failed task lost its attachments (retry needs them): %v", l)
+	}
+	if len(a.swept) != 1 || a.swept[0] != old.ID || a.sweptAll != 1 {
+		t.Fatalf("sweeps: %v all=%d", a.swept, a.sweptAll)
+	}
+}

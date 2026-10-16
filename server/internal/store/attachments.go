@@ -96,6 +96,13 @@ func (s *Store) AttachmentsForRun(ctx context.Context, taskID, runID int64, retr
 	return current, earlier, err
 }
 
+// deleteAttachmentsTx marks a task's live attachments matching where ($1 is
+// the task id) deleted.
+func deleteAttachmentsTx(ctx context.Context, tx pgx.Tx, taskID int64, where string) error {
+	_, err := tx.Exec(ctx, `UPDATE attachments SET deleted_at = now() WHERE task_id = $1 AND deleted_at IS NULL AND `+where, taskID)
+	return err
+}
+
 // DeleteAttachments marks all of a task's attachments deleted (the files are
 // removed by the caller or the sweep). Returns how many were live.
 func (s *Store) DeleteAttachments(ctx context.Context, taskID int64) (int64, error) {

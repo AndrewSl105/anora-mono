@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/andrewsl105/anora/server/internal/attachments"
+	"github.com/andrewsl105/anora/server/internal/events"
 	"github.com/andrewsl105/anora/server/internal/store"
 	"github.com/andrewsl105/anora/server/internal/testutil"
 )
@@ -98,5 +100,38 @@ func TestSweepRemovesDeletedStrayAndOrphanedFiles(t *testing.T) {
 	}
 	if exists(t, f.TaskDir(taskID)) {
 		t.Fatal("task folder kept after its last attachment was deleted")
+	}
+}
+
+func TestWatchSweepsWhenTaskCompletes(t *testing.T) {
+	st := testutil.DB(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if _, err := st.CreateProject(ctx, "demo", store.ProjectFields{}); err != nil {
+		t.Fatal(err)
+	}
+	repo, _ := st.AddRepository(ctx, store.Repository{ProjectID: "demo", FullName: "o/r", BaseBranch: "dev", InstallationID: 1})
+	f := &attachments.Files{Dir: t.TempDir()}
+	img := &attachments.Image{Name: "a.png", Mime: "image/png", Width: 1, Height: 1, Data: []byte("x"), Thumb: []byte("t")}
+	up := &store.Upload{Items: []store.NewAttachment{{Name: "a.png", Mime: "image/png", Size: 1, Width: 1, Height: 1}}, Place: f.Place([]*attachments.Image{img})}
+	task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, up)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, _ := st.PendingRun(ctx, task.ID)
+	_ = st.MarkRunStarting(ctx, run.ID)
+
+	hub := events.NewHub()
+	go f.Watch(ctx, st, hub)
+	time.Sleep(50 * time.Millisecond) // let Watch subscribe
+	nt, err := st.SetStatus(ctx, task.ID, nil, "completed", "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hub.PublishTask(nt)
+	for deadline := time.Now().Add(5 * time.Second); exists(t, f.TaskDir(task.ID)); time.Sleep(20 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("files of a completed task were not removed")
+		}
 	}
 }

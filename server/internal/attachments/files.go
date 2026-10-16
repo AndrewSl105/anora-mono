@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
 
+	"github.com/andrewsl105/anora/server/internal/events"
 	"github.com/andrewsl105/anora/server/internal/store"
 )
 
@@ -143,6 +145,34 @@ func (f *Files) sweep(ctx context.Context, st *store.Store, taskID int64) error 
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// Watch sweeps a task's folder whenever the task reaches a status that
+// deletes attachments (completed, or failed/cancelled dropping a queued
+// message's images), so files go right away rather than at the next
+// maintenance pass. It returns when ctx ends.
+func (f *Files) Watch(ctx context.Context, st *store.Store, hub *events.Hub) {
+	ch, cancel := hub.Subscribe(64)
+	defer cancel()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case m, ok := <-ch:
+			if !ok {
+				return
+			}
+			if m.Task == nil {
+				continue
+			}
+			switch m.Task.Status {
+			case "completed", "failed", "cancelled":
+				if err := f.Sweep(ctx, st, m.Task.ID); err != nil {
+					slog.Warn("attachments: sweep", "task_id", m.Task.ID, "err", err)
+				}
+			}
+		}
+	}
 }
 
 // SweepAll sweeps every task folder under Dir; folders of tasks that no

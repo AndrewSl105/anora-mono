@@ -22,10 +22,17 @@ type Workspaces interface {
 	Remove(taskID int64) error
 }
 
+// Attachments is the attachment file store.
+type Attachments interface {
+	Sweep(ctx context.Context, st *store.Store, taskID int64) error
+	SweepAll(ctx context.Context, st *store.Store) error
+}
+
 type Maintainer struct {
 	Store              *store.Store
 	Docker             Docker
 	Workspaces         Workspaces
+	Attachments        Attachments // nil: no attachment cleanup
 	EventRetention     time.Duration
 	WorkspaceRetention time.Duration
 	SidecarIdleTTL     time.Duration
@@ -82,6 +89,15 @@ func (m *Maintainer) Once(ctx context.Context) {
 			log.Warn("cleanup workspace", "err", err)
 			continue
 		}
+		if m.Attachments != nil {
+			if _, err := m.Store.DeleteAttachments(ctx, t.ID); err != nil {
+				log.Warn("cleanup attachments", "err", err)
+				continue
+			}
+			if err := m.Attachments.Sweep(ctx, m.Store, t.ID); err != nil {
+				log.Warn("cleanup attachment files", "err", err)
+			}
+		}
 		if err := m.Store.MarkCleaned(ctx, t.ID); err == nil {
 			log.Info("cleaned workspace and Claude state")
 		}
@@ -94,6 +110,14 @@ func (m *Maintainer) Once(ctx context.Context) {
 	for _, t := range idle {
 		if err := m.Docker.RemoveSidecars(ctx, t.ID); err != nil {
 			slog.Warn("remove idle sidecars", "task_id", t.ID, "err", err)
+		}
+	}
+
+	// Files without a live attachment row: removed attachments whose files
+	// survived (a crash, a dropped watch message) and folders of deleted tasks.
+	if m.Attachments != nil {
+		if err := m.Attachments.SweepAll(ctx, m.Store); err != nil {
+			slog.Warn("attachments: sweep", "err", err)
 		}
 	}
 
