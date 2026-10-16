@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -16,7 +17,10 @@ type Config struct {
 	DatabaseURL   string
 	DockerHost    string
 	WorkspacesDir string
-	RunnerImage   string
+	// AttachmentsDir holds images attached to tasks, one folder per task;
+	// like WorkspacesDir, the same path on the host and in the container.
+	AttachmentsDir string
+	RunnerImage    string
 
 	ClaudeOAuthToken string
 	AnthropicAPIKey  string
@@ -70,12 +74,13 @@ func Load() (*Config, error) {
 	var errs []error
 	e := envReader{errs: &errs}
 	c := &Config{
-		HTTPAddr:      e.str("HTTP_ADDR", ":8080"),
-		PublicBaseURL: strings.TrimRight(e.str("PUBLIC_BASE_URL", ""), "/"),
-		DatabaseURL:   e.str("DATABASE_URL", ""),
-		DockerHost:    e.str("DOCKER_HOST", "tcp://docker-proxy:2375"),
-		WorkspacesDir: e.str("WORKSPACES_DIR", "/srv/anora/workspaces"),
-		RunnerImage:   e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/anora-agent:latest"),
+		HTTPAddr:       e.str("HTTP_ADDR", ":8080"),
+		PublicBaseURL:  strings.TrimRight(e.str("PUBLIC_BASE_URL", ""), "/"),
+		DatabaseURL:    e.str("DATABASE_URL", ""),
+		DockerHost:     e.str("DOCKER_HOST", "tcp://docker-proxy:2375"),
+		WorkspacesDir:  e.str("WORKSPACES_DIR", "/srv/anora/workspaces"),
+		AttachmentsDir: e.str("ATTACHMENTS_DIR", "/srv/anora/attachments"),
+		RunnerImage:    e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/anora-agent:latest"),
 
 		ClaudeOAuthToken: e.str("CLAUDE_CODE_OAUTH_TOKEN", ""),
 		AnthropicAPIKey:  e.str("ANTHROPIC_API_KEY", ""),
@@ -142,10 +147,19 @@ func (c *Config) Validate() error {
 	if c.SecretsScan != "gitleaks" && c.SecretsScan != "off" {
 		errs = append(errs, errors.New(`SECRETS_SCAN must be "gitleaks" or "off"`))
 	}
+	if within(c.AttachmentsDir, c.WorkspacesDir) || within(c.WorkspacesDir, c.AttachmentsDir) {
+		errs = append(errs, errors.New("ATTACHMENTS_DIR and WORKSPACES_DIR must not contain each other"))
+	}
 	if c.TelegramBotToken != "" && c.TelegramAllowedUserID == 0 {
 		errs = append(errs, errors.New("TELEGRAM_ALLOWED_USER_ID is required with TELEGRAM_BOT_TOKEN"))
 	}
 	return errors.Join(errs...)
+}
+
+// within reports whether path is dir or below it.
+func within(path, dir string) bool {
+	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
 }
 
 func (c *Config) GitHubEnabled() bool   { return c.GitHubAppID != 0 && c.GitHubPrivateKeyPath != "" }
