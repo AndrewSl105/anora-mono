@@ -106,6 +106,7 @@ Fill in `/srv/anora/.env` (every variable is described in `deploy/.env.example`)
 | `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) | step 4 |
 | `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET` | step 5 |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `TELEGRAM_MINIAPP_LINK` | step 6 |
+| `STT_PROVIDER` + provider credentials (optional) | step 6 |
 
 Leave `COOKIE_INSECURE=false`, `CORS_ORIGINS` empty (same origin), `ANORA_RUNNER_FAKE=false`, and `WORKSPACES_DIR=/srv/anora/workspaces`. `chmod 600 /srv/anora/.env`.
 
@@ -140,9 +141,13 @@ After creating it, note the **App ID** (`GITHUB_APP_ID`), generate a **private k
 
 1. [@BotFather](https://t.me/BotFather): `/newbot` → `TELEGRAM_BOT_TOKEN`. Find your numeric user id, e.g. with [@userinfobot](https://t.me/userinfobot) → `TELEGRAM_ALLOWED_USER_ID`. The bot and the Mini App accept only this user.
 2. `/newapp` → pick the bot, give a title, a short description and a 640×360 photo, then the **Web App URL** `https://anora.example.com` and a short name (e.g. `anora`). BotFather answers with `t.me/<bot>/<short name>`: put it in `TELEGRAM_MINIAPP_LINK` (used for deep links in group topics).
-3. Optional: `/mybots` → the bot → *Bot Settings* → *Menu Button* → the same URL, so the chat's menu button opens the app.
+3. The service registers the command list and configures the bot's menu button to open `WEB_APP_URL` at startup.
 
-The bot uses long polling; no Telegram webhook or domain setting is needed. For one topic per project: create a forum supergroup, add the bot as an admin, open a topic and send `/bind <project>`.
+The bot uses long polling; no Telegram webhook or domain setting is needed. For one topic per project: create a forum supergroup, add the bot as an admin, open a topic and send `/bind <project>`. Plain owner messages create a 24-hour draft; messages sent within three seconds are merged. Reply to any task card, question, or notification to answer the open question or send a follow-up.
+
+Voice messages are disabled by default. Set `STT_PROVIDER=openai` and `OPENAI_API_KEY` to use the file transcription API. The transcript is shown before task creation and echoed when voice is sent as a task reply. The OpenAI adapter uses `gpt-transcribe` and accepts Ukrainian and English without forcing a language.
+
+For a local sidecar, run the `whisper-server` binary from whisper.cpp with `--host 0.0.0.0 --convert --language auto`, keep it on a Docker network reachable only by the server, then set `STT_PROVIDER=whispercpp` and `WHISPERCPP_URL=http://whispercpp:8080`. Anora posts multipart audio to its `/inference` endpoint; `--convert` is required for Telegram's OGG and other non-WAV audio.
 
 ### 7. GitHub secrets
 
