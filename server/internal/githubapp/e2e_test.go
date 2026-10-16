@@ -94,7 +94,7 @@ func TestEndToEndPR(t *testing.T) {
 	}
 
 	// Follow-up from pr_open: new run on the same branch, PR comment, still pr_open.
-	if _, err := svc.Message(ctx, v.ID, "Also say hi"); err != nil {
+	if _, err := svc.Message(ctx, v.ID, "Also say hi", nil); err != nil {
 		t.Fatal(err)
 	}
 	answer(v.ID, "hi")

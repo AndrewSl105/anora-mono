@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/auth"
 	"github.com/andrewsl105/anora/server/internal/projects"
 	"github.com/andrewsl105/anora/server/internal/store"
@@ -261,7 +262,18 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var in tasks.CreateInput
-	if !decode(w, r, &in) {
+	if isMultipart(r) {
+		f, imgs, ok := readMultipart(w, r, "project_id", "repository_id", "title", "prompt")
+		if !ok {
+			return
+		}
+		repoID, err := formInt64(f, "repository_id")
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid", err.Error())
+			return
+		}
+		in = tasks.CreateInput{ProjectID: f["project_id"], RepositoryID: repoID, Title: f["title"], Prompt: f["prompt"], Images: imgs}
+	} else if !decode(w, r, &in) {
 		return
 	}
 	in.Source = "web"
@@ -423,10 +435,17 @@ func (s *Server) message(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Text string `json:"text"`
 	}
-	if !decode(w, r, &in) {
+	var imgs []*attachments.Image
+	if isMultipart(r) {
+		f, files, ok := readMultipart(w, r, "text")
+		if !ok {
+			return
+		}
+		in.Text, imgs = f["text"], files
+	} else if !decode(w, r, &in) {
 		return
 	}
-	v, err := s.Tasks.Message(r.Context(), id, in.Text)
+	v, err := s.Tasks.Message(r.Context(), id, in.Text, imgs)
 	if err != nil {
 		writeErr(w, r, err)
 		return

@@ -61,42 +61,37 @@ func (s *Store) LiveAttachments(ctx context.Context, taskID int64) ([]*Attachmen
 	return collectAttachments(rows)
 }
 
-// AttachmentsForRun hands a starting run its attachments: those not yet
-// given to any run (the task's create or the messages this run carries), or,
-// for a retry, the attachments of the task's creation again. They are marked
-// with the run; every other live attachment of the task is returned as
-// earlier. Both lists are oldest first.
+// AttachmentsForRun returns the attachments a starting run receives (those
+// linked to it when it was queued; for a retry, the attachments of the task's
+// creation again, which are relinked to it) and the task's other live
+// attachments that earlier runs received. Queued messages' attachments that
+// no run has received yet are in neither list. Both lists are oldest first.
 func (s *Store) AttachmentsForRun(ctx context.Context, taskID, runID int64, retry bool) (current, earlier []*Attachment, err error) {
 	err = s.Tx(ctx, func(tx pgx.Tx) error {
-		pick := `SELECT a.id FROM attachments a WHERE a.task_id = $1 AND a.deleted_at IS NULL AND (a.run_id IS NULL OR a.run_id = $2)`
 		if retry {
-			pick = `SELECT a.id FROM attachments a JOIN events e ON e.id = a.event_id
-				WHERE a.task_id = $1 AND a.deleted_at IS NULL AND e.type = 'created' AND $2::bigint IS NOT NULL`
+			if _, err := tx.Exec(ctx, `UPDATE attachments SET run_id = $2 WHERE task_id = $1 AND deleted_at IS NULL
+				AND event_id IN (SELECT id FROM events WHERE task_id = $1 AND type = 'created')`, taskID, runID); err != nil {
+				return err
+			}
 		}
-		if _, err := tx.Exec(ctx, `UPDATE attachments SET run_id = $2 WHERE id IN (`+pick+`) AND run_id IS NULL`, taskID, runID); err != nil {
-			return err
-		}
-		rows, err := tx.Query(ctx, `SELECT `+attachmentCols+`, id IN (`+pick+`) FROM attachments
-			WHERE task_id = $1 AND deleted_at IS NULL ORDER BY id`, taskID, runID)
+		rows, err := tx.Query(ctx, `SELECT `+attachmentCols+` FROM attachments
+			WHERE task_id = $1 AND deleted_at IS NULL AND run_id IS NOT NULL ORDER BY id`, taskID)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
+		all, err := collectAttachments(rows)
+		if err != nil {
+			return err
+		}
 		current, earlier = []*Attachment{}, []*Attachment{}
-		for rows.Next() {
-			var a Attachment
-			var cur bool
-			if err := rows.Scan(&a.ID, &a.TaskID, &a.EventID, &a.RunID, &a.Name, &a.Mime, &a.Size, &a.Width, &a.Height,
-				&a.CreatedAt, &a.DeletedAt, &cur); err != nil {
-				return err
-			}
-			if cur {
-				current = append(current, &a)
+		for _, a := range all {
+			if *a.RunID == runID {
+				current = append(current, a)
 			} else {
-				earlier = append(earlier, &a)
+				earlier = append(earlier, a)
 			}
 		}
-		return rows.Err()
+		return nil
 	})
 	return current, earlier, err
 }

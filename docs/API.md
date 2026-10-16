@@ -4,7 +4,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 
 ## Conventions
 
-- Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`). Unknown request fields are rejected.
+- Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`). Unknown request fields are rejected. `POST /tasks` and `POST /tasks/{id}/message` also accept `multipart/form-data` to attach images (see [Attachments](#attachments)).
 - **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`. **Telegram sessions** may instead send `Authorization: Bearer <token>` (the `token` from `auth/telegram`), because Telegram Web embeds the Mini App in a cross-site iframe where a `SameSite=Lax` cookie is never sent. Browser (`web`) sessions are cookie-only.
 - **CSRF**: every non-GET request must send `X-Requested-With: anora`, otherwise `403 csrf`.
 - **Errors**: `{"error": {"code": "<machine code>", "message": "<human text>"}}`.
@@ -16,6 +16,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
   | 403 | `csrf`, `forbidden` | missing header; `/metrics` from outside |
   | 404 | `not_found` | unknown id or endpoint |
   | 409 | `conflict`, `already_answered`, `in_use`, `not_running`, `no_workspace` | action not allowed in the current state |
+  | 410 | `gone` | the attachment was removed |
   | 429 | `rate_limited` | 5 failed logins per IP per 15 minutes |
   | 503 | `github_disabled`, `telegram_disabled` | integration not configured |
   | 500 | `internal` | bug; details are in the server log |
@@ -109,17 +110,18 @@ A **project** groups repositories and holds run settings. All override fields ar
 | | |
 |---|---|
 | `GET /tasks?project=&status=` | newest first. `status` takes a comma-separated list |
-| `POST /tasks` `{project_id, prompt, repository_id?, title?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars) |
+| `POST /tasks` `{project_id, prompt, repository_id?, title?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars). As multipart, add images in `files[]` |
 | `GET /tasks/{id}` | task view (see above) |
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
 | `GET /tasks/{id}/events?before_id=` | timeline backwards, **newest first**: events older than `before_id`; `before_id=0` starts at the newest event. Pass `next_cursor` back as `before_id` (not as `cursor`, which means `after_id`). Combining `before_id` with `after_id`/`cursor` is `400 invalid` |
 | `GET /tasks/{id}/runs` | the task's runs, oldest first, including a queued one (`started_at: null`): `{id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd, turns, started_at, finished_at}`. `kind` is `initial`, `resume`, `followup` or `retry`; `cost_usd` is the run's own cost. Paginated with `limit`/`cursor` |
 | `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
-| `POST /tasks/{id}/message` `{text}` | `queued`/`preparing`/`running`/`waiting_input`/`pushing`: **queued** (a run handles one prompt; nothing is injected into a live session). The text is kept in `queued_message` and starts the next run (same branch, same session) as soon as the current run ends: on `pr_open`/`completed` as a follow-up, on `paused` as a resume. If the task fails or is cancelled first, the text is dropped and a `message_dropped` event shows it. `paused`/`pr_open`/`completed`: starts a new run right away. Otherwise `409` |
+| `POST /tasks/{id}/message` `{text}` (multipart: plus `files[]`) | `queued`/`preparing`/`running`/`waiting_input`/`pushing`: **queued** (a run handles one prompt; nothing is injected into a live session). The text is kept in `queued_message` and starts the next run (same branch, same session) as soon as the current run ends: on `pr_open`/`completed` as a follow-up, on `paused` as a resume. If the task fails or is cancelled first, the text is dropped and a `message_dropped` event shows it. `paused`/`pr_open`/`completed`: starts a new run right away. Otherwise `409` |
 | `POST /tasks/{id}/interrupt` | `running`/`waiting_input`: stops Claude and **ends the run** ("Interrupted by the user."); what it committed is pushed as for any finished run, and the session is kept. A queued message then starts the next run; otherwise send a follow-up message |
 | `POST /tasks/{id}/cancel` | ends the task (`cancelled`), stops the runner |
 | `POST /tasks/{id}/retry` | `failed`/`cancelled` only: queues the original prompt again on the same branch |
+| `GET /tasks/{id}/attachments/{attachmentId}` | the image (`?thumb=1`: JPEG, longest side ≤ 480 px); `410 gone` once removed |
 | `GET /stats` | `{running, queued, waiting_input, cost_usd_today, cost_usd_month}` (server-local days) |
 
 ### Timeline events
@@ -139,9 +141,10 @@ Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` disc
 
   | type | payload |
   |---|---|
+  | `created` | `{attachments}`: the task was created, with the images attached to it (`[]` when none). Tasks created before this event existed have none |
   | `status` | `{status, reason?}` |
   | `answer` | `{question_id, text, answered_via}` (`web` or `telegram`) |
-  | `message` | `{text, delivery: "queued"\|"new_run"}` (`"injected"` only in timelines recorded before messages were queued) |
+  | `message` | `{text, delivery: "queued"\|"new_run", attachments?}` (`"injected"` only in timelines recorded before messages were queued; `attachments` only when images were sent) |
   | `message_dropped` | `{text, reason: "failed"\|"cancelled"}`: a queued message that never started a run |
   | `interrupt` | `{}` |
   | `run_started` | `{run_id, kind}` (`initial`, `resume`, `followup`, `retry`) |
@@ -151,6 +154,16 @@ Every event type has a typed schema in `openapi.yaml`: `Event` is a `oneOf` disc
   | `pr_closed` | `{number, merged}` |
   | `ci` | `{status: "pending"\|"success"\|"failure", name, url}` |
   | `diff_rejected` | `{reason}` |
+
+### Attachments
+
+Images go with a task's prompt or with a message. Send the request as `multipart/form-data`: the same fields as the JSON body (`project_id`, `repository_id`, `title`, `prompt`, or `text`) plus up to 10 files in `files[]`. The text is still required.
+
+- Accepted: PNG, JPEG, WebP and GIF, detected from the content (name and declared type are ignored). At most 40 MB per file, 100 MB per request and 50 megapixels per image. Animated GIF and WebP are rejected. Anything else is `400 invalid` with a message naming the file.
+- Metadata is removed before storing: JPEG, PNG and GIF are re-encoded (a JPEG's EXIF orientation is applied to the pixels first); WebP loses its EXIF and XMP chunks. `size`, `width` and `height` describe the stored file.
+- Each attachment is `{id, name, mime, size, width, height}`. Task attachments are listed in the task's `created` event, message attachments in its `message` event.
+- Download with `GET /tasks/{id}/attachments/{attachmentId}` (session required like every endpoint; `?thumb=1` for a thumbnail). Telegram Web clients send the bearer token, so fetch the image and show it from a blob URL rather than an `<img src>`.
+- The agent sees the images of the input it is working on (the prompt, or the messages a run starts with) at `/attachments/<id>.<ext>`, plus the task's earlier images. They are removed (`410 gone`, files deleted) when the task becomes `completed`, and with the workspace for `failed` and `cancelled` tasks (`WORKSPACE_RETENTION`), so Retry and follow-ups still have them until then. Images of a queued message that is dropped (`message_dropped`) are removed with it.
 
 ## WebSocket
 

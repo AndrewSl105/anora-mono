@@ -556,7 +556,7 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 		if out.paused != nil {
 			qid := tasks.QuestionID(run.ID, out.paused.QuestionID)
 			if q, err := s.Store.GetQuestion(ctx, qid); err == nil && q.Answer != nil && q.AnsweredVia != nil && *q.AnsweredVia != "expired" {
-				if _, _, err := s.Store.QueueMessage(ctx, taskID, []string{tasks.Running, tasks.WaitingInput}, tasks.ResumeInput(q.Text, *q.Answer), false); err != nil {
+				if _, _, err := s.Store.QueueMessage(ctx, taskID, []string{tasks.Running, tasks.WaitingInput}, tasks.ResumeInput(q.Text, *q.Answer), false, nil); err != nil {
 					log.Error("queue late answer", "err", err)
 				}
 			}

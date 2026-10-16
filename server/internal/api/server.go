@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/auth"
 	"github.com/andrewsl105/anora/server/internal/config"
 	"github.com/andrewsl105/anora/server/internal/events"
@@ -47,7 +48,9 @@ type Server struct {
 	Health   func(ctx context.Context) map[string]error
 	Limiter  *auth.FailLimiter
 	Tickets  *auth.Tickets
-	Now      func() time.Time
+	// Files serves attachments; nil disables the download endpoint.
+	Files *attachments.Files
+	Now   func() time.Time
 }
 
 func (s *Server) now() time.Time {
@@ -88,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/tasks/{id}/events", a(s.taskEvents))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/runs", a(s.taskRuns))
 	mux.HandleFunc("GET /api/v1/tasks/{id}/diff", a(s.taskDiff))
+	mux.HandleFunc("GET /api/v1/tasks/{id}/attachments/{attachmentId}", a(s.attachment))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/answer", a(s.answer))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/message", a(s.message))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/interrupt", a(s.control(s.Tasks.Interrupt)))

@@ -20,7 +20,7 @@ func TestTurnsAndLastActivity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"})
+	task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

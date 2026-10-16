@@ -258,7 +258,7 @@ func TestFakeRunCancelAndFollowUp(t *testing.T) {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
-	if _, err := e.svc.Message(ctx, v.ID, "more"); err == nil {
+	if _, err := e.svc.Message(ctx, v.ID, "more", nil); err == nil {
 		t.Fatal("message to a cancelled task must be rejected")
 	}
 
@@ -271,7 +271,7 @@ func TestFakeRunCancelAndFollowUp(t *testing.T) {
 	view, _ := e.svc.Get(ctx, v.ID)
 	_, _ = e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web")
 	e.waitStatus(v.ID, tasks.Completed, time.Minute)
-	if _, err := e.svc.Message(ctx, v.ID, "Also add a footer"); err != nil {
+	if _, err := e.svc.Message(ctx, v.ID, "Also add a footer", nil); err != nil {
 		t.Fatal(err)
 	}
 	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
@@ -291,7 +291,7 @@ func TestMessageWhileRunningIsQueued(t *testing.T) {
 	ctx := context.Background()
 	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Queue me", Source: "api"})
 	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
-	view, err := e.svc.Message(ctx, v.ID, "Also add a footer")
+	view, err := e.svc.Message(ctx, v.ID, "Also add a footer", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +326,7 @@ func TestInterruptEndsRunAndStartsQueuedMessage(t *testing.T) {
 	ctx := context.Background()
 	v, _ := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Redirect me", Source: "api"})
 	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
-	if _, err := e.svc.Message(ctx, v.ID, "Do this instead"); err != nil {
+	if _, err := e.svc.Message(ctx, v.ID, "Do this instead", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.svc.Interrupt(ctx, v.ID); err != nil {

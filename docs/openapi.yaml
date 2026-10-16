@@ -304,6 +304,9 @@ paths:
       operationId: createTask
       tags: [tasks]
       summary: Create a task
+      description: |
+        JSON, or `multipart/form-data` with the same fields plus image files in
+        `files[]`. The attachments are listed in the task's `created` event.
       parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
       requestBody:
         required: true
@@ -318,6 +321,21 @@ paths:
                 repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
                 title: { type: string, description: Defaults to the first line of the prompt }
                 prompt: { type: string }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [project_id, prompt]
+              additionalProperties: false
+              properties:
+                project_id: { type: string }
+                repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
+                title: { type: string, description: Defaults to the first line of the prompt }
+                prompt: { type: string }
+                'files[]':
+                  type: array
+                  maxItems: 10
+                  items: { type: string, format: binary }
+                  description: PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content
       responses:
         '201':
           description: Queued
@@ -412,6 +430,30 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
 
+  /api/v1/tasks/{id}/attachments/{attachmentId}:
+    get:
+      operationId: getAttachment
+      tags: [tasks]
+      summary: Download an attachment (owner only)
+      description: |
+        The cleaned image as stored (metadata removed), or with `thumb=1` a JPEG
+        whose longest side is at most 480 px. `410 gone` once the attachment was
+        removed (the task completed, or workspace retention ran).
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - { name: attachmentId, in: path, required: true, schema: { type: integer, format: int64 } }
+        - { name: thumb, in: query, schema: { type: string, enum: ['1'] } }
+      responses:
+        '200':
+          description: The image
+          content:
+            image/png: { schema: { type: string, format: binary } }
+            image/jpeg: { schema: { type: string, format: binary } }
+            image/webp: { schema: { type: string, format: binary } }
+            image/gif: { schema: { type: string, format: binary } }
+        '404': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+
   /api/v1/tasks/{id}/answer:
     post:
       operationId: answerQuestion
@@ -449,6 +491,9 @@ paths:
         (`queued_message` on the task, event `message` with `delivery: queued`) and
         starts the next run when the current one ends. `paused`/`pr_open`/`completed`:
         starts a new run now (`delivery: new_run`). Otherwise `409`.
+        JSON, or `multipart/form-data` with `text` plus image files in `files[]`;
+        the attachments are listed in the `message` event and reach the run that
+        handles the text.
       parameters:
         - $ref: '#/components/parameters/TaskID'
         - $ref: '#/components/parameters/XRequestedWith'
@@ -462,6 +507,18 @@ paths:
               additionalProperties: false
               properties:
                 text: { type: string }
+          multipart/form-data:
+            schema:
+              type: object
+              required: [text]
+              additionalProperties: false
+              properties:
+                text: { type: string }
+                'files[]':
+                  type: array
+                  maxItems: 10
+                  items: { type: string, format: binary }
+                  description: PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content
       responses:
         '200':
           description: Queued, or a new run was started
@@ -822,6 +879,7 @@ components:
         - $ref: '#/components/schemas/DoneEvent'
         - $ref: '#/components/schemas/PausedEvent'
         - $ref: '#/components/schemas/ErrorEvent'
+        - $ref: '#/components/schemas/CreatedEvent'
         - $ref: '#/components/schemas/StatusEvent'
         - $ref: '#/components/schemas/AnswerEvent'
         - $ref: '#/components/schemas/MessageEvent'
@@ -848,6 +906,7 @@ components:
           done: '#/components/schemas/DoneEvent'
           paused: '#/components/schemas/PausedEvent'
           error: '#/components/schemas/ErrorEvent'
+          created: '#/components/schemas/CreatedEvent'
           status: '#/components/schemas/StatusEvent'
           answer: '#/components/schemas/AnswerEvent'
           message: '#/components/schemas/MessageEvent'
@@ -863,7 +922,7 @@ components:
 
     EventType:
       type: string
-      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, status, answer, message, message_dropped, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
+      enum: [ready, started, assistant_text, tool_use, tool_result, question, usage, committed, done, paused, error, created, status, answer, message, message_dropped, interrupt, run_started, run_finished, pr_opened, pr_updated, pr_closed, ci, diff_rejected]
 
     EventBase:
       type: object
@@ -1124,6 +1183,34 @@ components:
 
     # ---- backend events ----
 
+    Attachment:
+      type: object
+      description: An image attached to a task or a message. Download it with `GET /tasks/{id}/attachments/{id}`.
+      required: [id, name, mime, size, width, height]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, description: Original file name }
+        mime: { type: string, enum: [image/png, image/jpeg, image/webp, image/gif] }
+        size: { type: integer, format: int64, description: Bytes of the stored (cleaned) file }
+        width: { type: integer }
+        height: { type: integer }
+
+    CreatedEvent:
+      allOf:
+        - $ref: '#/components/schemas/EventBase'
+        - type: object
+          required: [type, seq, payload]
+          properties:
+            type: { type: string, enum: [created] }
+            seq: { type: 'null' }
+            payload: { $ref: '#/components/schemas/CreatedPayload' }
+
+    CreatedPayload:
+      type: object
+      required: [attachments]
+      properties:
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: Images attached to the task (may be empty) }
+
     StatusEvent:
       allOf:
         - $ref: '#/components/schemas/EventBase'
@@ -1178,6 +1265,7 @@ components:
           type: string
           enum: [queued, new_run, injected]
           description: '`queued`: waits for the active run to end, then starts the next run. `new_run`: started a run right away. `injected`: only in timelines recorded before messages were queued (such text was not delivered reliably).'
+        attachments: { type: array, items: { $ref: '#/components/schemas/Attachment' }, description: Images sent with the message; absent when there are none }
 
     MessageDroppedEvent:
       allOf:

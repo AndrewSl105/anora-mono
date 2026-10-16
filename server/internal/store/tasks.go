@@ -60,8 +60,9 @@ func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	return &t, nil
 }
 
-// CreateTask inserts a queued task, its initial pending run, and a status event.
-func (s *Store) CreateTask(ctx context.Context, t Task) (*Task, error) {
+// CreateTask inserts a queued task, its initial pending run, a `created`
+// event with the upload's attachments (up may be nil) and a status event.
+func (s *Store) CreateTask(ctx context.Context, t Task, up *Upload) (*Task, error) {
 	var out *Task
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
 		var err error
@@ -71,11 +72,16 @@ func (s *Store) CreateTask(ctx context.Context, t Task) (*Task, error) {
 		if err != nil {
 			return err
 		}
-		if _, err := insertRun(ctx, tx, out.ID, "initial", t.Prompt); err != nil {
+		runID, err := insertRun(ctx, tx, out.ID, "initial", t.Prompt)
+		if err != nil {
+			return err
+		}
+		created, err := insertEventWithUploadTx(ctx, tx, out.ID, &runID, "created", map[string]any{}, up, true)
+		if err != nil {
 			return err
 		}
 		ev, err := insertBackendEvent(ctx, tx, out.ID, nil, "status", map[string]any{"status": "queued"})
-		out.StatusEvents = []*Event{ev}
+		out.StatusEvents = []*Event{created, ev}
 		return err
 	})
 	if isFKViolation(err) {
@@ -212,7 +218,11 @@ func drainQueuedTx(ctx context.Context, tx pgx.Tx, t *Task) (*Task, error) {
 		if _, err := tx.Exec(ctx, `DELETE FROM runs WHERE task_id = $1 AND started_at IS NULL`, t.ID); err != nil {
 			return nil, err
 		}
-		if _, err := insertRun(ctx, tx, t.ID, kind, text); err != nil {
+		runID, err := insertRun(ctx, tx, t.ID, kind, text)
+		if err != nil {
+			return nil, err
+		}
+		if err := linkQueuedAttachmentsTx(ctx, tx, t.ID, runID); err != nil {
 			return nil, err
 		}
 		if err := tx.QueryRow(ctx, `UPDATE tasks SET queued_message = NULL WHERE id = $1 RETURNING queued_message`, t.ID).Scan(&nt.QueuedMessage); err != nil {
@@ -235,9 +245,10 @@ func drainQueuedTx(ctx context.Context, tx pgx.Tx, t *Task) (*Task, error) {
 }
 
 // QueueMessage appends text to the task's queued message while the task is in
-// one of `from`, records a message event with delivery "queued", and returns
-// the task. ErrConflict when the task has left those states.
-func (s *Store) QueueMessage(ctx context.Context, id int64, from []string, text string, event bool) (*Task, *Event, error) {
+// one of `from`, records a message event with delivery "queued" (carrying the
+// upload's attachments; up may be nil), and returns the task. ErrConflict
+// when the task has left those states.
+func (s *Store) QueueMessage(ctx context.Context, id int64, from []string, text string, event bool, up *Upload) (*Task, *Event, error) {
 	var out *Task
 	var ev *Event
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
@@ -252,7 +263,25 @@ func (s *Store) QueueMessage(ctx context.Context, id int64, from []string, text 
 		if err != nil || !event {
 			return err
 		}
-		ev, err = insertBackendEvent(ctx, tx, id, nil, "message", map[string]any{"text": text, "delivery": "queued"})
+		ev, err = insertEventWithUploadTx(ctx, tx, id, nil, "message", map[string]any{"text": text, "delivery": "queued"}, up, false)
+		return err
+	})
+	return out, ev, err
+}
+
+// RequeueMessage starts a new run with a message right away: like Requeue,
+// plus a message event with delivery "new_run" carrying the upload's
+// attachments, all in one transaction.
+func (s *Store) RequeueMessage(ctx context.Context, id int64, from []string, kind, text string, up *Upload) (*Task, *Event, error) {
+	var out *Task
+	var ev *Event
+	err := s.Tx(ctx, func(tx pgx.Tx) error {
+		var err error
+		var runID int64
+		if out, runID, err = requeueTx(ctx, tx, id, from, kind, text); err != nil {
+			return err
+		}
+		ev, err = insertEventWithUploadTx(ctx, tx, id, &runID, "message", map[string]any{"text": text, "delivery": "new_run"}, up, false)
 		return err
 	})
 	return out, ev, err
@@ -263,16 +292,22 @@ func (s *Store) Requeue(ctx context.Context, id int64, from []string, kind, inpu
 	var out *Task
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
 		var err error
-		if out, err = setStatusTx(ctx, tx, id, from, "queued", "", false); err != nil {
-			return err
-		}
-		if _, err := tx.Exec(ctx, `DELETE FROM runs WHERE task_id = $1 AND started_at IS NULL`, id); err != nil {
-			return err
-		}
-		_, err = insertRun(ctx, tx, id, kind, input)
+		out, _, err = requeueTx(ctx, tx, id, from, kind, input)
 		return err
 	})
 	return out, err
+}
+
+func requeueTx(ctx context.Context, tx pgx.Tx, id int64, from []string, kind, input string) (*Task, int64, error) {
+	t, err := setStatusTx(ctx, tx, id, from, "queued", "", false)
+	if err != nil {
+		return nil, 0, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM runs WHERE task_id = $1 AND started_at IS NULL`, id); err != nil {
+		return nil, 0, err
+	}
+	runID, err := insertRun(ctx, tx, id, kind, input)
+	return t, runID, err
 }
 
 func (s *Store) SetBranch(ctx context.Context, id int64, branch string) error {

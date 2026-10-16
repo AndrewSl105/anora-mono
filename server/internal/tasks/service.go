@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/events"
 	"github.com/andrewsl105/anora/server/internal/store"
 )
@@ -34,6 +35,8 @@ type Service struct {
 	Store    *store.Store
 	Hub      *events.Hub
 	Executor Executor
+	// Files stores attachments; nil rejects uploads.
+	Files *attachments.Files
 }
 
 // View is a task with its latest run, open question and PR info.
@@ -50,6 +53,8 @@ type CreateInput struct {
 	Title        string `json:"title"`
 	Prompt       string `json:"prompt"`
 	Source       string `json:"-"`
+	// Images are validated uploads (attachments.Process).
+	Images []*attachments.Image `json:"-"`
 }
 
 func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
@@ -84,13 +89,37 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
 	if in.Source == "" {
 		in.Source = "api"
 	}
-	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source})
+	up, release, err := s.upload(in.Images)
+	if err != nil {
+		return nil, err
+	}
+	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source}, up)
+	release()
 	if err != nil {
 		return nil, err
 	}
 	s.publishTask(t)
 	s.wake()
 	return s.Get(ctx, t.ID)
+}
+
+// upload turns validated images into a store.Upload. release must be called
+// once the store call that inserts them has returned (it holds off sweeps).
+func (s *Service) upload(imgs []*attachments.Image) (*store.Upload, func(), error) {
+	if len(imgs) == 0 {
+		return nil, func() {}, nil
+	}
+	if s.Files == nil {
+		return nil, nil, fmt.Errorf("%w: attachments are not configured", ErrInvalid)
+	}
+	if len(imgs) > attachments.MaxFiles {
+		return nil, nil, fmt.Errorf("%w: at most %d images per request", ErrInvalid, attachments.MaxFiles)
+	}
+	up := &store.Upload{Place: s.Files.Place(imgs)}
+	for _, im := range imgs {
+		up.Items = append(up.Items, store.NewAttachment{Name: im.Name, Mime: im.Mime, Size: int64(len(im.Data)), Width: im.Width, Height: im.Height})
+	}
+	return up, s.Files.Hold(), nil
 }
 
 func hasRepo(p *store.Project, id int64) bool {
@@ -184,8 +213,9 @@ func (s *Service) Answer(ctx context.Context, taskID int64, questionID, text, vi
 }
 
 // Message queues text while a run is pending or active (it becomes the next
-// run when the current one ends) or starts a follow-up run right away.
-func (s *Service) Message(ctx context.Context, taskID int64, text string) (*View, error) {
+// run when the current one ends) or starts a follow-up run right away. imgs
+// are attached to the message (validated uploads; may be nil).
+func (s *Service) Message(ctx context.Context, taskID int64, text string, imgs []*attachments.Image) (*View, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, fmt.Errorf("%w: text is required", ErrInvalid)
@@ -197,7 +227,7 @@ func (s *Service) Message(ctx context.Context, taskID int64, text string) (*View
 		if err != nil {
 			return nil, err
 		}
-		err = s.message(ctx, t, text)
+		err = s.message(ctx, t, text, imgs)
 		if errors.Is(err, ErrConflict) && attempt < 2 {
 			continue
 		}
@@ -208,10 +238,19 @@ func (s *Service) Message(ctx context.Context, taskID int64, text string) (*View
 	}
 }
 
-func (s *Service) message(ctx context.Context, t *store.Task, text string) error {
-	switch MessageActionFor(t.Status) {
+func (s *Service) message(ctx context.Context, t *store.Task, text string, imgs []*attachments.Image) error {
+	action := MessageActionFor(t.Status)
+	if action != MessageQueue && action != MessageNewRun {
+		return fmt.Errorf("%w: cannot send a message to a task in state %s", ErrConflict, t.Status)
+	}
+	up, release, err := s.upload(imgs)
+	if err != nil {
+		return err
+	}
+	defer release()
+	switch action {
 	case MessageQueue:
-		nt, ev, err := s.Store.QueueMessage(ctx, t.ID, QueueStates, text, true)
+		nt, ev, err := s.Store.QueueMessage(ctx, t.ID, QueueStates, text, true, up)
 		if err != nil {
 			return err
 		}
@@ -222,16 +261,14 @@ func (s *Service) message(ctx context.Context, t *store.Task, text string) error
 		if t.Status == Paused {
 			kind = RunResume
 		}
-		nt, err := s.Store.Requeue(ctx, t.ID, []string{t.Status}, kind, text)
+		nt, ev, err := s.Store.RequeueMessage(ctx, t.ID, []string{t.Status}, kind, text, up)
 		if err != nil {
 			return err
 		}
-		ev, _ := s.Store.AddBackendEvent(ctx, t.ID, nil, "message", map[string]any{"text": text, "delivery": "new_run"})
-		s.publishEvent(ev)
+		// The status events first, then the message, as before.
 		s.publishTask(nt)
+		s.publishEvent(ev)
 		s.wake()
-	default:
-		return fmt.Errorf("%w: cannot send a message to a task in state %s", ErrConflict, t.Status)
 	}
 	return nil
 }

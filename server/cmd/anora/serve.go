@@ -12,6 +12,7 @@ import (
 	"github.com/mymmrac/telego"
 
 	"github.com/andrewsl105/anora/server/internal/api"
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/auth"
 	"github.com/andrewsl105/anora/server/internal/config"
 	"github.com/andrewsl105/anora/server/internal/events"
@@ -53,10 +54,11 @@ func runServe() error {
 	}
 	docker := &runnermgr.Manager{Docker: dc, SidecarMemory: cfg.SidecarMemory}
 	ws := &workspace.Manager{Dir: cfg.WorkspacesDir}
+	files := &attachments.Files{Dir: cfg.AttachmentsDir}
 
 	met := metrics.New(st)
 	hub := events.NewHub()
-	taskSvc := &tasks.Service{Store: st, Hub: hub}
+	taskSvc := &tasks.Service{Store: st, Hub: hub, Files: files}
 	sched := scheduler.New(&scheduler.Scheduler{
 		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws,
 		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},
@@ -100,7 +102,8 @@ func runServe() error {
 			Store: st, PasswordHash: cfg.AdminPasswordHash, TOTPSecret: cfg.AdminTOTPSecret,
 			SessionSecret: []byte(cfg.SessionSecret), CookieInsecure: cfg.CookieInsecure,
 		},
-		Hub: hub,
+		Hub:   hub,
+		Files: files,
 		Diff: func(ctx context.Context, t *store.Task, repo *store.Repository, limit int) (string, bool, error) {
 			return ws.Diff(ctx, t.ID, repo.BaseBranch, limit)
 		},

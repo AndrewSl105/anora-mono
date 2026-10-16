@@ -182,7 +182,11 @@ export interface paths {
         /** List tasks, newest first */
         get: operations["listTasks"];
         put?: never;
-        /** Create a task */
+        /**
+         * Create a task
+         * @description JSON, or `multipart/form-data` with the same fields plus image files in
+         *     `files[]`. The attachments are listed in the task's `created` event.
+         */
         post: operations["createTask"];
         delete?: never;
         options?: never;
@@ -264,6 +268,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tasks/{id}/attachments/{attachmentId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an attachment (owner only)
+         * @description The cleaned image as stored (metadata removed), or with `thumb=1` a JPEG
+         *     whose longest side is at most 480 px. `410 gone` once the attachment was
+         *     removed (the task completed, or workspace retention ran).
+         */
+        get: operations["getAttachment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tasks/{id}/answer": {
         parameters: {
             query?: never;
@@ -296,6 +322,9 @@ export interface paths {
          *     (`queued_message` on the task, event `message` with `delivery: queued`) and
          *     starts the next run when the current one ends. `paused`/`pr_open`/`completed`:
          *     starts a new run now (`delivery: new_run`). Otherwise `409`.
+         *     JSON, or `multipart/form-data` with `text` plus image files in `files[]`;
+         *     the attachments are listed in the `message` event and reach the run that
+         *     handles the text.
          */
         post: operations["sendMessage"];
         delete?: never;
@@ -626,9 +655,9 @@ export interface components {
          *     have `seq` set and their `payload` is the runner event verbatim
          *     (including `type`, `ts`, `seq`); backend events have `seq: null`.
          */
-        Event: components["schemas"]["ReadyEvent"] | components["schemas"]["StartedEvent"] | components["schemas"]["AssistantTextEvent"] | components["schemas"]["ToolUseEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["QuestionEvent"] | components["schemas"]["UsageEvent"] | components["schemas"]["CommittedEvent"] | components["schemas"]["DoneEvent"] | components["schemas"]["PausedEvent"] | components["schemas"]["ErrorEvent"] | components["schemas"]["StatusEvent"] | components["schemas"]["AnswerEvent"] | components["schemas"]["MessageEvent"] | components["schemas"]["MessageDroppedEvent"] | components["schemas"]["InterruptEvent"] | components["schemas"]["RunStartedEvent"] | components["schemas"]["RunFinishedEvent"] | components["schemas"]["PrOpenedEvent"] | components["schemas"]["PrUpdatedEvent"] | components["schemas"]["PrClosedEvent"] | components["schemas"]["CiEvent"] | components["schemas"]["DiffRejectedEvent"];
+        Event: components["schemas"]["ReadyEvent"] | components["schemas"]["StartedEvent"] | components["schemas"]["AssistantTextEvent"] | components["schemas"]["ToolUseEvent"] | components["schemas"]["ToolResultEvent"] | components["schemas"]["QuestionEvent"] | components["schemas"]["UsageEvent"] | components["schemas"]["CommittedEvent"] | components["schemas"]["DoneEvent"] | components["schemas"]["PausedEvent"] | components["schemas"]["ErrorEvent"] | components["schemas"]["CreatedEvent"] | components["schemas"]["StatusEvent"] | components["schemas"]["AnswerEvent"] | components["schemas"]["MessageEvent"] | components["schemas"]["MessageDroppedEvent"] | components["schemas"]["InterruptEvent"] | components["schemas"]["RunStartedEvent"] | components["schemas"]["RunFinishedEvent"] | components["schemas"]["PrOpenedEvent"] | components["schemas"]["PrUpdatedEvent"] | components["schemas"]["PrClosedEvent"] | components["schemas"]["CiEvent"] | components["schemas"]["DiffRejectedEvent"];
         /** @enum {string} */
-        EventType: "ready" | "started" | "assistant_text" | "tool_use" | "tool_result" | "question" | "usage" | "committed" | "done" | "paused" | "error" | "status" | "answer" | "message" | "message_dropped" | "interrupt" | "run_started" | "run_finished" | "pr_opened" | "pr_updated" | "pr_closed" | "ci" | "diff_rejected";
+        EventType: "ready" | "started" | "assistant_text" | "tool_use" | "tool_result" | "question" | "usage" | "committed" | "done" | "paused" | "error" | "created" | "status" | "answer" | "message" | "message_dropped" | "interrupt" | "run_started" | "run_finished" | "pr_opened" | "pr_updated" | "pr_closed" | "ci" | "diff_rejected";
         EventBase: {
             /** Format: int64 */
             id: number;
@@ -891,6 +920,38 @@ export interface components {
             message: string;
             session_id?: string;
         };
+        /** @description An image attached to a task or a message. Download it with `GET /tasks/{id}/attachments/{id}`. */
+        Attachment: {
+            /** Format: int64 */
+            id: number;
+            /** @description Original file name */
+            name: string;
+            /** @enum {string} */
+            mime: "image/png" | "image/jpeg" | "image/webp" | "image/gif";
+            /**
+             * Format: int64
+             * @description Bytes of the stored (cleaned) file
+             */
+            size: number;
+            width: number;
+            height: number;
+        };
+        CreatedEvent: components["schemas"]["EventBase"] & {
+            /** @enum {string} */
+            type: "created";
+            seq: null;
+            payload: components["schemas"]["CreatedPayload"];
+        } & {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "created";
+        };
+        CreatedPayload: {
+            /** @description Images attached to the task (may be empty) */
+            attachments: components["schemas"]["Attachment"][];
+        };
         StatusEvent: components["schemas"]["EventBase"] & {
             /** @enum {string} */
             type: "status";
@@ -945,6 +1006,8 @@ export interface components {
              * @enum {string}
              */
             delivery: "queued" | "new_run" | "injected";
+            /** @description Images sent with the message; absent when there are none */
+            attachments?: components["schemas"]["Attachment"][];
         };
         MessageDroppedEvent: components["schemas"]["EventBase"] & {
             /** @enum {string} */
@@ -1559,6 +1622,19 @@ export interface operations {
                     title?: string;
                     prompt: string;
                 };
+                "multipart/form-data": {
+                    project_id: string;
+                    /**
+                     * Format: int64
+                     * @description Defaults to the project's default repository
+                     */
+                    repository_id?: number;
+                    /** @description Defaults to the first line of the prompt */
+                    title?: string;
+                    prompt: string;
+                    /** @description PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content */
+                    "files[]"?: string[];
+                };
             };
         };
         responses: {
@@ -1693,6 +1769,36 @@ export interface operations {
             409: components["responses"]["Error"];
         };
     };
+    getAttachment: {
+        parameters: {
+            query?: {
+                thumb?: "1";
+            };
+            header?: never;
+            path: {
+                id: components["parameters"]["TaskID"];
+                attachmentId: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The image */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": string;
+                    "image/jpeg": string;
+                    "image/webp": string;
+                    "image/gif": string;
+                };
+            };
+            404: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+        };
+    };
     answerQuestion: {
         parameters: {
             query?: never;
@@ -1742,6 +1848,11 @@ export interface operations {
             content: {
                 "application/json": {
                     text: string;
+                };
+                "multipart/form-data": {
+                    text: string;
+                    /** @description PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content */
+                    "files[]"?: string[];
                 };
             };
         };

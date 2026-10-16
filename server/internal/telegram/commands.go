@@ -121,7 +121,7 @@ func (b *Bot) onMessage(ctx context.Context, m *telego.Message) {
 			b.reply(ctx, m, "Usage: /msg &lt;id&gt; &lt;text&gt;", nil)
 			return
 		}
-		v, err := b.Tasks.Message(ctx, id, text)
+		v, err := b.Tasks.Message(ctx, id, text, nil)
 		if err != nil {
 			b.reply(ctx, m, "⚠️ "+esc(errText(err)), nil)
 			return

@@ -20,7 +20,7 @@ func newTask(t *testing.T, st *store.Store) *store.Task {
 	if err != nil {
 		t.Fatal(err)
 	}
-	task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"})
+	task, err := st.CreateTask(ctx, store.Task{ProjectID: "demo", RepositoryID: repo.ID, Title: "t", Prompt: "p", Source: "api"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,10 +38,10 @@ func TestQueuedMessageStartsNextRun(t *testing.T) {
 	}
 
 	active := []string{"running", "waiting_input"}
-	if _, ev, err := st.QueueMessage(ctx, task.ID, active, "one", true); err != nil || ev == nil || !json.Valid(ev.Payload) {
+	if _, ev, err := st.QueueMessage(ctx, task.ID, active, "one", true, nil); err != nil || ev == nil || !json.Valid(ev.Payload) {
 		t.Fatalf("queue: %v %v", ev, err)
 	}
-	nt, _, err := st.QueueMessage(ctx, task.ID, active, "two", true)
+	nt, _, err := st.QueueMessage(ctx, task.ID, active, "two", true, nil)
 	if err != nil || str(nt.QueuedMessage) != "one\n\ntwo" {
 		t.Fatalf("queued %q %v", str(nt.QueuedMessage), err)
 	}
@@ -63,7 +63,7 @@ func TestQueuedMessageStartsNextRun(t *testing.T) {
 	if _, err := st.SetStatus(ctx, task.ID, nil, "completed", "", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.QueueMessage(ctx, task.ID, active, "late", true); !errors.Is(err, store.ErrConflict) {
+	if _, _, err := st.QueueMessage(ctx, task.ID, active, "late", true, nil); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("queue on completed: %v", err)
 	}
 }
@@ -75,7 +75,7 @@ func TestQueuedMessageResumesPausedTask(t *testing.T) {
 	if _, err := st.SetStatus(ctx, task.ID, nil, "waiting_input", "", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := st.QueueMessage(ctx, task.ID, []string{"waiting_input"}, "answer restated", false); err != nil {
+	if _, _, err := st.QueueMessage(ctx, task.ID, []string{"waiting_input"}, "answer restated", false, nil); err != nil {
 		t.Fatal(err)
 	}
 	nt, err := st.SetStatus(ctx, task.ID, nil, "paused", "timeout", false)
@@ -91,7 +91,7 @@ func TestQueuedMessageDroppedOnCancel(t *testing.T) {
 	st := testutil.DB(t)
 	ctx := context.Background()
 	task := newTask(t, st)
-	if _, _, err := st.QueueMessage(ctx, task.ID, []string{"queued"}, "never mind", true); err != nil {
+	if _, _, err := st.QueueMessage(ctx, task.ID, []string{"queued"}, "never mind", true, nil); err != nil {
 		t.Fatal(err)
 	}
 	nt, err := st.SetStatus(ctx, task.ID, nil, "cancelled", "by owner", true)
