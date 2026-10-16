@@ -75,6 +75,7 @@ export const en = {
   },
   task: {
     tabs: { activity: 'Activity', diff: 'Diff', info: 'Info' },
+    copyError: 'Copy error',
     actions: {
       cancel: 'Cancel task',
       interrupt: 'Stop and finish run',

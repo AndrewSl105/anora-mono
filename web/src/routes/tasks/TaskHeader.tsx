@@ -1,5 +1,4 @@
 import { useNavigate } from 'react-router'
-import { toast } from 'sonner'
 import { ArrowLeft, Ban, Copy, ExternalLink, GitPullRequest, MoreVertical, OctagonPause, RotateCcw } from 'lucide-react'
 import type { TaskView } from '@/api/types'
 import { useTaskAction } from '@/api/hooks'
@@ -13,6 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useConfirm } from '@/components/confirm'
+import { CopyButton, copyText } from '@/components/CopyButton'
 import { can } from '@/lib/status'
 import { usd } from '@/lib/format'
 import { useRuntime } from '@/telegram/runtime'
@@ -36,14 +36,8 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
     if (await confirm(t.task.confirmCancel, t.task.actions.cancel)) action.mutate('cancel')
   }
 
-  async function copyBranch() {
-    if (!task.branch) return
-    try {
-      await navigator.clipboard.writeText(task.branch)
-      toast.success(t.common.copied)
-    } catch {
-      toast.error(t.common.somethingWrong)
-    }
+  function copyBranch() {
+    if (task.branch) void copyText(task.branch)
   }
 
   return (
@@ -126,7 +120,10 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
       </div>
       {task.branch && <p className="mt-1.5 truncate font-mono text-xs text-muted-foreground">{task.branch}</p>}
       {task.status_reason && (task.status === 'failed' || task.status === 'cancelled' || task.status === 'paused') && (
-        <p className="mt-2 rounded-md bg-red-500/10 px-2.5 py-1.5 text-xs text-red-700 dark:text-red-300">{task.status_reason}</p>
+        <div className="mt-2 flex items-start gap-1 rounded-md bg-red-500/10 py-1.5 pr-1 pl-2.5 text-xs text-red-700 dark:text-red-300">
+          <p className="min-w-0 flex-1 py-1 break-words">{task.status_reason}</p>
+          <CopyButton text={task.status_reason} label={t.task.copyError} className="-my-0.5" />
+        </div>
       )}
     </header>
   )
