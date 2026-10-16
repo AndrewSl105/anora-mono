@@ -221,6 +221,7 @@ export const en = {
     backend: 'Backend',
     healthy: 'Healthy',
     unhealthy: 'Unhealthy',
+    session: 'Session',
   },
   system: {
     offline: 'Reconnecting…',
