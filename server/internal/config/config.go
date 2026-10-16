@@ -36,8 +36,8 @@ type Config struct {
 	WebAppURL             string
 	// TelegramMiniAppLink is the optional t.me/<bot>/<app> link for deep links in groups.
 	TelegramMiniAppLink string
-	// STTProvider is "off", "openai", or "whispercpp". The sidecar protocol
-	// is documented but only OpenAI is implemented in-process for now.
+	// STTProvider is "off", "openai", or "whispercpp". OpenAI is called
+	// directly; whispercpp uses the optional HTTP sidecar protocol.
 	STTProvider   string
 	OpenAIAPIKey  string
 	WhisperCPPURL string

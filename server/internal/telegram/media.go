@@ -46,16 +46,21 @@ func transcribeHTTP(ctx context.Context, client *http.Client, endpoint, apiKey, 
 	var body bytes.Buffer
 	w := multipart.NewWriter(&body)
 	for key, value := range fields {
-		_ = w.WriteField(key, value)
+		if err := w.WriteField(key, value); err != nil {
+			return "", err
+		}
 	}
 	name = strings.Map(func(r rune) rune {
-		if r == '\r' || r == '\n' || r == '"' {
+		if r == '\r' || r == '\n' || r == '"' || r == '\\' {
 			return -1
 		}
 		return r
 	}, name)
 	if name == "" {
 		name = "audio.ogg"
+	}
+	if mime == "" {
+		mime = "application/octet-stream"
 	}
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="file"; filename="%s"`, name))
@@ -67,7 +72,9 @@ func transcribeHTTP(ctx context.Context, client *http.Client, endpoint, apiKey, 
 	if _, err = part.Write(data); err != nil {
 		return "", err
 	}
-	_ = w.Close()
+	if err := w.Close(); err != nil {
+		return "", err
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, &body)
 	if err != nil {
 		return "", err
