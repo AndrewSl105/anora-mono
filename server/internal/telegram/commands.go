@@ -76,53 +76,58 @@ func (b *Bot) onMessage(ctx context.Context, m *telego.Message) {
 	b.handleMessage(ctx, m)
 }
 
-func (b *Bot) handleMessage(ctx context.Context, m *telego.Message) {
+func (b *Bot) handleMessage(ctx context.Context, m *telego.Message) bool {
 	text := strings.TrimSpace(m.Text)
 	if text == "" {
 		text = strings.TrimSpace(m.Caption)
 	}
 	cmd, args, isCmd := ParseCommand(text)
 	if isCmd {
-		b.react(ctx, m, "👀")
+		if !albumAcknowledged(ctx) {
+			b.react(ctx, m, "👀")
+		}
 		if err := b.handleCommand(ctx, m, cmd, args); err != nil {
 			b.rejectMessage(ctx, m, err)
-			return
+			return false
 		}
 		b.react(ctx, m, "✅")
-		return
+		return true
 	}
 	if !supportedMessage(m) {
-		return
+		return false
 	}
-	b.react(ctx, m, "👀")
+	if !albumAcknowledged(ctx) {
+		b.react(ctx, m, "👀")
+	}
 	if r := m.ReplyToMessage; r != nil {
 		if p, err := b.Store.TelegramReplyPrompt(ctx, m.Chat.ID, int64(r.MessageID)); err == nil {
 			if err := b.handlePromptReply(ctx, m, p); err != nil {
 				b.rejectMessage(ctx, m, err)
-				return
+				return false
 			}
 			b.react(ctx, m, "✅")
-			return
+			return true
 		}
 		if taskID, err := b.Store.TelegramTaskByMessage(ctx, m.Chat.ID, int64(r.MessageID)); err == nil {
 			if err := b.routeTaskReply(ctx, m, taskID); err != nil {
 				b.rejectMessage(ctx, m, err)
-				return
+				return false
 			}
 			b.react(ctx, m, "✅")
-			return
+			return true
 		}
 	}
 	if err := b.mergeDraft(ctx, m); err != nil {
 		b.rejectMessage(ctx, m, err)
-		return
+		return false
 	}
 	b.react(ctx, m, "✅")
+	return true
 }
 
 func supportedMessage(m *telego.Message) bool {
 	return strings.TrimSpace(m.Text) != "" || strings.TrimSpace(m.Caption) != "" || len(m.Photo) > 0 ||
-		m.Voice != nil || m.Audio != nil || m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/")
+		m.Voice != nil || m.Audio != nil || isImageDocument(m.Document)
 }
 
 func (b *Bot) rejectMessage(ctx context.Context, m *telego.Message, err error) {
@@ -400,7 +405,15 @@ func (b *Bot) mergeDraft(ctx context.Context, m *telego.Message) error {
 	} else if p, r, err := b.Store.TelegramChatProject(ctx, m.Chat.ID, int64(m.MessageThreadID)); err == nil {
 		project, repo = p, r
 	}
-	d, err := b.Store.MergeTelegramDraft(ctx, m.Chat.ID, int64(m.MessageThreadID), int64(m.MessageID), project, repo, text, media, time.Now().Add(-b.MergeWindow))
+	window := b.MergeWindow
+	if m.MediaGroupID != "" {
+		wait := b.AlbumWait
+		if wait == 0 {
+			wait = defaultAlbumWait
+		}
+		window += wait
+	}
+	d, err := b.Store.MergeTelegramDraft(ctx, m.Chat.ID, int64(m.MessageThreadID), int64(m.MessageID), project, repo, text, media, time.Now().Add(-window))
 	if err != nil {
 		return err
 	}

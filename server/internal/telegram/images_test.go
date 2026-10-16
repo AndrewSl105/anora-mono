@@ -127,6 +127,9 @@ func TestImageWithoutCaptionAsksForText(t *testing.T) {
 	if _, ok := prompt.markup.(*telego.ForceReply); !ok {
 		t.Fatalf("prompt markup %T, want ForceReply", prompt.markup)
 	}
+	if taskID, err := e.st.TelegramTaskByMessage(ctx, owner, int64(prompt.msgID)); err != nil || taskID != e.task {
+		t.Fatalf("image prompt is not registered as a task message: task=%d err=%v", taskID, err)
+	}
 	if len(e.messageEvents(t)) != 0 {
 		t.Fatal("images without text must not reach the task yet")
 	}
@@ -137,6 +140,71 @@ func TestImageWithoutCaptionAsksForText(t *testing.T) {
 	msgs := e.messageEvents(t)
 	if len(msgs) != 1 || msgs[0]["text"] != "Fix the overlap shown here" || len(msgs[0]["attachments"].([]any)) != 1 {
 		t.Fatalf("message after the text reply: %v", msgs)
+	}
+}
+
+func TestAlbumAcknowledgesEveryPart(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	for i := 1; i <= 3; i++ {
+		e.bot.onMessage(ctx, e.photo(i, map[bool]string{true: "Use these"}[i == 2], "album-react", e.card))
+	}
+	eventually(t, "album delivery reactions", func() bool {
+		reactions := e.api.reactionSnapshot()
+		seen, delivered := 0, 0
+		for _, reaction := range reactions {
+			if reaction == "👀" {
+				seen++
+			}
+			if reaction == "✅" {
+				delivered++
+			}
+		}
+		return seen >= 3 && delivered >= 3
+	})
+}
+
+func TestAlbumCollectionStillMergesWithRecentText(t *testing.T) {
+	e := newImageEnv(t)
+	e.bot.MergeWindow = 50 * time.Millisecond
+	ctx := context.Background()
+	e.bot.onMessage(ctx, &telego.Message{MessageID: 10, From: &telego.User{ID: owner}, Chat: telego.Chat{ID: owner, Type: "private"}, Text: "Use the screenshots"})
+	time.Sleep(40 * time.Millisecond)
+	e.bot.onMessage(ctx, e.photo(11, "", "album-draft", 0))
+	e.bot.onMessage(ctx, e.photo(12, "", "album-draft", 0))
+	eventually(t, "merged text and album draft", func() bool {
+		var count, images int
+		if err := e.st.Pool.QueryRow(ctx, `SELECT count(*), coalesce(sum(jsonb_array_length(media)), 0) FROM telegram_drafts`).Scan(&count, &images); err != nil {
+			return false
+		}
+		return count == 1 && images == 2
+	})
+}
+
+func TestOnlyTaskNotificationsUseSound(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	task, err := e.st.GetTask(ctx, e.task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.bot.send(ctx, target{owner, 0}, "draft", nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"question", "pr", "failed", "ci_failed", "limit", "transcript"} {
+		if _, err := e.bot.sendTask(ctx, task, kind, kind, nil, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sends, _, _ := e.api.snapshot()
+	wantSound := map[string]bool{"question": true, "pr": true, "failed": true, "ci_failed": true, "limit": true}
+	for _, message := range sends {
+		if message.text == "draft" && !message.silent {
+			t.Fatal("draft message was audible")
+		}
+		if expected := wantSound[message.text]; message.text != "draft" && message.silent == expected {
+			t.Errorf("kind %q silent=%v, want sound=%v", message.text, message.silent, expected)
+		}
 	}
 }
 
@@ -158,5 +226,18 @@ func TestNewCommandCaptionAttachesPhoto(t *testing.T) {
 	live, _ := e.st.LiveAttachments(ctx, created.ID)
 	if len(live) != 1 || live[0].Width != 20 {
 		t.Fatalf("attachments of the new task: %+v", live)
+	}
+}
+
+func TestImageDocumentWithGenericMIMEIsAccepted(t *testing.T) {
+	e := newImageEnv(t)
+	ctx := context.Background()
+	m := &telego.Message{MessageID: 22, From: &telego.User{ID: owner}, Chat: telego.Chat{ID: owner, Type: "private"},
+		Caption: "Use this exact image", ReplyToMessage: &telego.Message{MessageID: e.card},
+		Document: &telego.Document{FileID: e.files + "/screen", FileName: "screen.PNG", MimeType: "application/octet-stream"}}
+	e.bot.onMessage(ctx, m)
+	msgs := e.messageEvents(t)
+	if len(msgs) != 1 || len(msgs[0]["attachments"].([]any)) != 1 {
+		t.Fatalf("image document message: %v", msgs)
 	}
 }

@@ -41,16 +41,23 @@ type pendingImages struct {
 }
 
 type albumMediaKey struct{}
+type albumAcknowledgedKey struct{}
 
 // withAlbumMedia carries the media of an album's other parts to
 // incomingDraftContent, so the existing routes see the whole album.
 func withAlbumMedia(ctx context.Context, media []store.TelegramDraftMedia) context.Context {
-	return context.WithValue(ctx, albumMediaKey{}, media)
+	ctx = context.WithValue(ctx, albumMediaKey{}, media)
+	return context.WithValue(ctx, albumAcknowledgedKey{}, true)
 }
 
 func albumMedia(ctx context.Context) []store.TelegramDraftMedia {
 	m, _ := ctx.Value(albumMediaKey{}).([]store.TelegramDraftMedia)
 	return m
+}
+
+func albumAcknowledged(ctx context.Context) bool {
+	acknowledged, _ := ctx.Value(albumAcknowledgedKey{}).(bool)
+	return acknowledged
 }
 
 // messageMedia is the image of one message (photo or image document).
@@ -60,15 +67,34 @@ func messageMedia(m *telego.Message) []store.TelegramDraftMedia {
 		p := m.Photo[len(m.Photo)-1]
 		media = append(media, store.TelegramDraftMedia{FileID: p.FileID, Name: "photo.jpg", Kind: "image"})
 	}
-	if m.Document != nil && strings.HasPrefix(m.Document.MimeType, "image/") {
+	if isImageDocument(m.Document) {
 		media = append(media, store.TelegramDraftMedia{FileID: m.Document.FileID, Name: m.Document.FileName, Kind: "image"})
 	}
 	return media
 }
 
+func isImageDocument(d *telego.Document) bool {
+	if d == nil {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(d.MimeType), "image/") {
+		return true
+	}
+	name := strings.ToLower(d.FileName)
+	for _, ext := range []string{".png", ".jpg", ".jpeg", ".webp", ".gif"} {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
+}
+
 // collectAlbum adds a part of a media group; the group is handled once no
 // new part arrived for AlbumWait.
 func (b *Bot) collectAlbum(ctx context.Context, m *telego.Message) {
+	// Each Telegram update is acknowledged as soon as it arrives, even though
+	// the group is delivered only after the short collection window.
+	b.react(ctx, m, "👀")
 	wait := b.AlbumWait
 	if wait == 0 {
 		wait = defaultAlbumWait
@@ -116,7 +142,17 @@ func (b *Bot) handleAlbum(ctx context.Context, parts []*telego.Message) {
 			lead.ReplyToMessage = p.ReplyToMessage
 		}
 	}
-	b.handleMessage(withAlbumMedia(ctx, others), lead)
+	ok := b.handleMessage(withAlbumMedia(ctx, others), lead)
+	for _, p := range parts {
+		if p == lead {
+			continue
+		}
+		if ok {
+			b.react(ctx, p, "✅")
+		} else {
+			b.react(ctx, p, "❌")
+		}
+	}
 }
 
 // askImageText asks for the text that goes with images sent to a task
@@ -128,6 +164,9 @@ func (b *Bot) askImageText(ctx context.Context, m *telego.Message, taskID int64,
 		return err
 	}
 	if err := b.Store.AddTelegramReplyPrompt(ctx, m.Chat.ID, int64(id), store.TelegramReplyPrompt{Kind: "task_images", TaskID: taskID}); err != nil {
+		return err
+	}
+	if err := b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{ChatID: m.Chat.ID, MessageID: int64(id), TaskID: taskID, Kind: "image_prompt"}); err != nil {
 		return err
 	}
 	b.images.mu.Lock()

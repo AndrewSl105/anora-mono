@@ -22,6 +22,7 @@ type sent struct {
 	msgID        int
 	text         string
 	markup       any
+	silent       bool
 }
 
 type fakeAPI struct {
@@ -37,7 +38,7 @@ func (f *fakeAPI) SendMessage(_ context.Context, p *telego.SendMessageParams) (*
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.nextID++
-	f.sends = append(f.sends, sent{chat: p.ChatID.ID, thread: int64(p.MessageThreadID), msgID: f.nextID, text: p.Text, markup: p.ReplyMarkup})
+	f.sends = append(f.sends, sent{chat: p.ChatID.ID, thread: int64(p.MessageThreadID), msgID: f.nextID, text: p.Text, markup: p.ReplyMarkup, silent: p.DisableNotification})
 	return &telego.Message{MessageID: f.nextID}, nil
 }
 
@@ -85,6 +86,12 @@ func (f *fakeAPI) snapshot() ([]sent, []sent, []string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]sent(nil), f.sends...), append([]sent(nil), f.edits...), append([]string(nil), f.callbacks...)
+}
+
+func (f *fakeAPI) reactionSnapshot() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.reactions...)
 }
 
 func eventually(t *testing.T, what string, cond func() bool) {

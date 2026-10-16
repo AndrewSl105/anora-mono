@@ -115,9 +115,9 @@ func (b *Bot) targetFor(ctx context.Context, t *store.Task) (target, store.Teleg
 	return target{b.OwnerID, 0}, tt
 }
 
-func (b *Bot) send(ctx context.Context, to target, text string, markup telego.ReplyMarkup, replyTo int) (int, error) {
+func (b *Bot) sendMode(ctx context.Context, to target, text string, markup telego.ReplyMarkup, replyTo int, sound bool) (int, error) {
 	p := &telego.SendMessageParams{ChatID: tu.ID(to.chatID), MessageThreadID: int(to.threadID), Text: clamp(text), ParseMode: telego.ModeHTML,
-		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: markup}
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: markup, DisableNotification: !sound}
 	if replyTo != 0 {
 		p.ReplyParameters = &telego.ReplyParameters{MessageID: replyTo, AllowSendingWithoutReply: true}
 	}
@@ -129,13 +129,20 @@ func (b *Bot) send(ctx context.Context, to target, text string, markup telego.Re
 	return m.MessageID, nil
 }
 
+// send is for cards, commands, drafts and prompts, which should not produce a
+// second audible notification. Task event notifications opt into sound below.
+func (b *Bot) send(ctx context.Context, to target, text string, markup telego.ReplyMarkup, replyTo int) (int, error) {
+	return b.sendMode(ctx, to, text, markup, replyTo, false)
+}
+
 func (b *Bot) sendTask(ctx context.Context, t *store.Task, kind, text string, kb *telego.InlineKeyboardMarkup, replyCard bool) (int, error) {
 	to, tt := b.targetFor(ctx, t)
 	reply := 0
 	if replyCard {
 		reply = int(tt.MessageID)
 	}
-	id, err := b.send(ctx, to, text, kb, reply)
+	sound := kind == "question" || kind == "pr" || kind == "failed" || kind == "ci_failed" || kind == "limit"
+	id, err := b.sendMode(ctx, to, text, kb, reply, sound)
 	if err == nil {
 		b.fail("record_message", b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{
 			ChatID: to.chatID, MessageID: int64(id), TaskID: t.ID, Kind: kind, HasButtons: kb != nil,
