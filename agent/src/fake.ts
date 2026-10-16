@@ -1,6 +1,8 @@
-import { writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { ATTACHMENTS_DIR, hasAttachments } from "./attachments.ts";
 import { Cancelled, QuestionTimeout } from "./control.ts";
+import type { Emitter } from "./emitter.ts";
 import type { Session } from "./session.ts";
 
 export const FAKE_FILE = "ANORA_FAKE.md";
@@ -16,6 +18,7 @@ export const fakeSession: Session = async ({ cmd, workspace, emitter, control })
   emitter.emit({ type: "tool_result", tool: "Glob", ok: true, summary: "3 files" });
   emitter.emit({ type: "tool_use", tool: "Read", summary: "Read README.md" });
   emitter.emit({ type: "tool_result", tool: "Read", ok: true });
+  if (hasAttachments()) probeAttachments(emitter);
 
   const questionId = "q1";
   emitter.emit({ type: "question", question_id: questionId, text: "Which greeting should I write?", options: ["hello", "hi"] });
@@ -41,3 +44,23 @@ export const fakeSession: Session = async ({ cmd, workspace, emitter, control })
   emitter.emit({ type: "usage", cost_usd_total: 0.01, input_tokens: 100, output_tokens: 50, turns: 2 });
   return { kind: "done", session_id: sessionId, summary: `Wrote ${FAKE_FILE} with "${answer}".`, cost_usd_total: 0.01 };
 };
+
+// probeAttachments reads every attached image and tries to write next to
+// them, so tests can check the mount is there, readable and read-only.
+function probeAttachments(emitter: Emitter): void {
+  const files = readdirSync(ATTACHMENTS_DIR).filter((f) => !f.startsWith(".")).sort();
+  for (const f of files) {
+    const path = join(ATTACHMENTS_DIR, f);
+    emitter.emit({ type: "tool_use", tool: "Read", summary: `Read ${path} (${readFileSync(path).length} bytes)` });
+    emitter.emit({ type: "tool_result", tool: "Read", ok: true });
+  }
+  const probe = join(ATTACHMENTS_DIR, ".write-probe");
+  emitter.emit({ type: "tool_use", tool: "Write", summary: `Write ${probe}` });
+  try {
+    writeFileSync(probe, "x");
+    emitter.emit({ type: "tool_result", tool: "Write", ok: true });
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? "error";
+    emitter.emit({ type: "tool_result", tool: "Write", ok: false, summary: `${code}: ${ATTACHMENTS_DIR} is read-only` });
+  }
+}

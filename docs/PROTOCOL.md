@@ -66,6 +66,21 @@ Notes for the backend:
 
 On exit `4` the runner still commits work in progress so a follow-up run can continue from it.
 
+## Attachments
+
+When the task has images attached (API.md, "Attachments"), Anora Runner bind-mounts the task's attachment folder **read-only** at `/attachments`: `/attachments/<id>.<ext>` (PNG, JPEG, WebP or GIF, metadata removed), plus thumbnails in `/attachments/.thumbs/`. Without attachments nothing is mounted and `/attachments` does not exist. There is no stdin command for attachments: the `run` command's `prompt` ends with a block that lists them:
+
+```
+Attached images (open each with the Read tool before you start):
+- /attachments/12.png (mock.png, 1200x600)
+
+Earlier attachments of this task (still available; Read them if they matter for this request):
+- /attachments/7.jpg (photo.jpg, 3024x4032)
+The folder /attachments is read-only; copy an image into the repository only if the change needs it.
+```
+
+"Attached images" are those sent with this run's input (the task prompt, the messages a follow-up carries, or, for a retry, the task's own images again); "Earlier attachments" are the task's other images still kept. Either section is left out when empty. The runner passes `/attachments` to the SDK as an additional directory when it exists, and its `PreToolUse` policy refuses writes there (Write/Edit, Bash writes and redirections) with an explanation; reads, and copies out of it, are allowed.
+
 ## Event log
 
 Every event is also appended to `/workspace/.anora/events.jsonl`. The runner adds `.anora/` to `.git/info/exclude` so the log is never committed.
@@ -77,6 +92,7 @@ Every event is also appended to `/workspace/.anora/events.jsonl`. The runner add
 | `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | Claude auth; the OAuth token wins. Missing both → `error{code:"no_auth"}`, exit `1`. |
 | `ANORA_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `ANORA_FAKE.md`, commits, `done`. An `interrupt` while it waits ends the run as `done` ("Interrupted by the user.", no changes), like a real session. |
 | `ANORA_WORKSPACE` | workspace path, default `/workspace` (tests only). |
+| `ANORA_ATTACHMENTS` | attachment folder, default `/attachments` (tests only). In fake mode, when it exists, the runner reads every file in it (a `tool_use` "Read /attachments/<file> (<n> bytes)" each) and tries to write `.write-probe` there (`tool_result` `ok: false`, "EROFS: … read-only" on the read-only mount) before asking its question. |
 
 ## Example
 

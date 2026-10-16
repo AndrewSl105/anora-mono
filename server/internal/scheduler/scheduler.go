@@ -8,11 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/config"
 	"github.com/andrewsl105/anora/server/internal/events"
 	"github.com/andrewsl105/anora/server/internal/runnermgr"
@@ -69,6 +71,8 @@ type Scheduler struct {
 	Workspace *workspace.Manager
 	Publisher Publisher // nil: commits stay local (phase 3 / GitHub not configured)
 	Hooks     Hooks
+	// Files holds task attachments, mounted read-only into runners; nil = none.
+	Files *attachments.Files
 
 	wake chan struct{}
 	mu   sync.Mutex
@@ -265,6 +269,11 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	}
 
 	cmd := s.runCommand(t, run, project, repo, branch)
+	attDir, err := s.prepareAttachments(ctx, t.ID, run, &cmd)
+	if err != nil {
+		s.fail(ctx, t, "attachments: "+err.Error())
+		return
+	}
 	if run.Kind == tasks.RunResume || run.Kind == tasks.RunFollowup {
 		if t.SessionID != nil {
 			cmd.ResumeSessionID = *t.SessionID
@@ -278,7 +287,7 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	}
 	r, err := s.Docker.StartRunner(ctx, runnermgr.RunnerSpec{
 		TaskID: t.ID, RunID: run.ID, Project: t.ProjectID, Image: image,
-		Workspace: s.Workspace.Path(t.ID), Env: env,
+		Workspace: s.Workspace.Path(t.ID), Attachments: attDir, Env: env,
 		Memory: deref(project.RunnerMemory, s.Cfg.RunnerMemory),
 		CPUs:   deref(project.RunnerCPUs, s.Cfg.RunnerCPUs),
 		User:   s.Cfg.RunnerUser,
@@ -370,6 +379,50 @@ func (s *Scheduler) runCommand(t *store.Task, run *store.Run, p *store.Project, 
 			AuthorEmail: commitEmail,
 		},
 	})
+}
+
+// prepareAttachments lists the run's attachments at the end of its prompt and
+// returns the host folder to mount at /attachments ("" when the task has no
+// live attachments, so nothing is mounted).
+func (s *Scheduler) prepareAttachments(ctx context.Context, taskID int64, run *store.Run, cmd *runnermgr.RunCommand) (string, error) {
+	if s.Files == nil {
+		return "", nil
+	}
+	cur, earlier, err := s.Store.AttachmentsForRun(ctx, taskID, run.ID, run.Kind == tasks.RunRetry)
+	if err != nil || len(cur)+len(earlier) == 0 {
+		return "", err
+	}
+	dir := s.Files.TaskDir(taskID)
+	// A missing bind source would be created by Docker as root.
+	if _, err := os.Stat(dir); err != nil {
+		return "", err
+	}
+	cmd.Prompt += AttachmentBlock(cur, earlier)
+	return dir, nil
+}
+
+// AttachmentBlock is appended to a run's prompt: the images that came with
+// this input and the task's earlier ones, as paths in the agent container.
+func AttachmentBlock(cur, earlier []*store.Attachment) string {
+	if len(cur)+len(earlier) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	list := func(as []*store.Attachment) {
+		for _, a := range as {
+			fmt.Fprintf(&b, "- %s (%s, %dx%d)\n", attachments.AgentPath(a), a.Name, a.Width, a.Height)
+		}
+	}
+	if len(cur) > 0 {
+		b.WriteString("\n\nAttached images (open each with the Read tool before you start):\n")
+		list(cur)
+	}
+	if len(earlier) > 0 {
+		b.WriteString("\n\nEarlier attachments of this task (still available; Read them if they matter for this request):\n")
+		list(earlier)
+	}
+	b.WriteString("\nThe folder " + attachments.AgentDir + " is read-only; copy an image into the repository only if the change needs it.\n")
+	return b.String()
 }
 
 // SystemPrompt is appended to Claude Code's default system prompt.

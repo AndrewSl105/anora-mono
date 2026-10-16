@@ -231,9 +231,12 @@ type RunnerSpec struct {
 	Project   string
 	Image     string
 	Workspace string // host path, bind-mounted at /workspace
-	Env       map[string]string
-	Memory    string
-	CPUs      float64
+	// Attachments is the task's attachment folder on the host, bind-mounted
+	// read-only at /attachments; empty = no mount.
+	Attachments string
+	Env         map[string]string
+	Memory      string
+	CPUs        float64
 	// User is "uid:gid"; default 1000:1000 (shared with Anora Runner).
 	User string
 }
@@ -296,10 +299,7 @@ func (m *Manager) StartRunner(ctx context.Context, s RunnerSpec) (*Runner, error
 		},
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(NetworkName(s.TaskID)),
-			Binds: []string{
-				s.Workspace + ":/workspace",
-				VolumeName(s.TaskID) + ":/home/runner/.claude",
-			},
+			Binds:       binds(s),
 			Resources: container.Resources{
 				Memory:    memory,
 				NanoCPUs:  int64(s.CPUs * 1e9),
@@ -579,4 +579,15 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+func binds(s RunnerSpec) []string {
+	b := []string{
+		s.Workspace + ":/workspace",
+		VolumeName(s.TaskID) + ":/home/runner/.claude",
+	}
+	if s.Attachments != "" {
+		b = append(b, s.Attachments+":/attachments:ro")
+	}
+	return b
 }

@@ -1,8 +1,12 @@
 package scheduler_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/andrewsl105/anora/server/internal/attachments"
 	"github.com/andrewsl105/anora/server/internal/config"
 	"github.com/andrewsl105/anora/server/internal/events"
 	"github.com/andrewsl105/anora/server/internal/projects"
@@ -29,6 +34,7 @@ type env struct {
 	sched  *scheduler.Scheduler
 	docker *runnermgr.Manager
 	ws     *workspace.Manager
+	files  *attachments.Files
 	bare   string
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -67,8 +73,9 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 		RunnerUser:      fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 	}
 	hub := events.NewHub()
-	svc := &tasks.Service{Store: st, Hub: hub}
-	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws})
+	files := &attachments.Files{Dir: filepath.Join(t.TempDir(), "attachments")}
+	svc := &tasks.Service{Store: st, Hub: hub, Files: files}
+	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws, Files: files})
 	svc.Executor = sched
 
 	ps := &projects.Service{Store: st}
@@ -81,7 +88,7 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	e := &env{t: t, st: st, svc: svc, sched: sched, docker: docker, ws: ws, bare: bare, cancel: cancel, done: make(chan struct{})}
+	e := &env{t: t, st: st, svc: svc, sched: sched, docker: docker, ws: ws, files: files, bare: bare, cancel: cancel, done: make(chan struct{})}
 	go func() { _ = sched.Run(runCtx); close(e.done) }()
 	t.Cleanup(func() {
 		cancel()
@@ -490,4 +497,71 @@ func TestReconcile(t *testing.T) {
 	if ids[999_999_999] || ids[done.ID] {
 		t.Fatalf("leftover resources: %v", ids)
 	}
+}
+
+func TestAttachmentsMountedReadOnly(t *testing.T) {
+	e := newEnv(t, time.Minute, nil)
+	ctx := context.Background()
+	var png bytes.Buffer
+	if err := pngEncode(&png, 64, 32); err != nil {
+		t.Fatal(err)
+	}
+	img, err := attachments.Process("mock.png", png.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Match the mock", Source: "api", Images: []*attachments.Image{img}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake runner reads every attachment and tries to write next to them
+	// before it asks its question.
+	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	live, err := e.st.LiveAttachments(ctx, v.ID)
+	if err != nil || len(live) != 1 {
+		t.Fatalf("attachments: %v %v", live, err)
+	}
+	wantRead := fmt.Sprintf("Read %s (%d bytes)", attachments.AgentPath(live[0]), len(img.Data))
+	evs, _ := e.st.ListEvents(ctx, v.ID, 0, 500)
+	var read, denied bool
+	for _, ev := range evs {
+		var p struct {
+			Tool, Summary string
+			OK            *bool
+		}
+		_ = json.Unmarshal(ev.Payload, &p)
+		if ev.Type == "tool_use" && p.Summary == wantRead {
+			read = true
+		}
+		if ev.Type == "tool_result" && p.Tool == "Write" && p.OK != nil && !*p.OK && strings.Contains(p.Summary, "read-only") {
+			denied = true
+		}
+	}
+	if !read || !denied {
+		var all []string
+		for _, ev := range evs {
+			all = append(all, string(ev.Payload))
+		}
+		t.Fatalf("read %v (want %q), write denied %v; events:\n%s", read, wantRead, denied, strings.Join(all, "\n"))
+	}
+	if _, err := os.Stat(filepath.Join(e.files.TaskDir(v.ID), ".write-probe")); !os.IsNotExist(err) {
+		t.Fatalf("the agent wrote into the attachment folder: %v", err)
+	}
+	// The run's stored input stays the owner's text; the block goes only to the runner.
+	if run, _ := e.st.LatestRun(ctx, v.ID); run.Input != "Match the mock" {
+		t.Fatalf("run input %q", run.Input)
+	}
+	view, _ := e.svc.Get(ctx, v.ID)
+	if _, err := e.svc.Answer(ctx, v.ID, view.OpenQuestion.ID, "hello", "web"); err != nil {
+		t.Fatal(err)
+	}
+	e.waitStatus(v.ID, tasks.Completed, time.Minute)
+}
+
+func pngEncode(w *bytes.Buffer, width, height int) error {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	for i := range img.Pix {
+		img.Pix[i] = 0xC0
+	}
+	return png.Encode(w, img)
 }

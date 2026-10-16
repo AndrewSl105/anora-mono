@@ -1,5 +1,6 @@
 // Real Claude Code session via @anthropic-ai/claude-agent-sdk.
 import { query, type CanUseTool, type HookCallback, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-agent-sdk";
+import { ATTACHMENTS_DIR, hasAttachments } from "./attachments.ts";
 import { QuestionTimeout } from "./control.ts";
 import { ASK_TOOL, Mapper, classifyResult, resultText } from "./mapper.ts";
 import { checkTool } from "./policy.ts";
@@ -81,6 +82,8 @@ export const claudeSession: Session = async ({ cmd, workspace, emitter, control 
     prompt: input(),
     options: {
       cwd: workspace,
+      // Attached images live outside the workspace; the prompt lists them.
+      ...(hasAttachments() ? { additionalDirectories: [ATTACHMENTS_DIR] } : {}),
       ...(cmd.model ? { model: cmd.model } : {}),
       ...(cmd.resume_session_id ? { resume: cmd.resume_session_id } : {}),
       maxTurns: cmd.limits.max_turns,

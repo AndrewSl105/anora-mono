@@ -102,3 +102,28 @@ test("Bash tool goes through checkBash", () => {
   assert.equal(checkTool("Bash", { command: "git push" }, WS).allow, false);
   assert.equal(checkTool("Bash", { command: "npm test" }, WS).allow, true);
 });
+
+test("attachments are readable but read-only", () => {
+  for (const p of ["/attachments/1.png", "../attachments/2.jpg", "/attachments"]) {
+    for (const tool of ["Write", "Edit"]) {
+      const d = checkTool(tool, { file_path: p }, WS);
+      assert.equal(d.allow, false, `${tool} ${p}`);
+      if (!d.allow) assert.match(d.reason, /read-only/);
+    }
+  }
+  assert.equal(checkTool("Read", { file_path: "/attachments/1.png" }, WS).allow, true);
+  assert.equal(checkTool("Glob", { pattern: "/attachments/*" }, WS).allow, true);
+  for (const cmd of [
+    "rm /attachments/1.png",
+    "mv /attachments/1.png x.png",
+    "echo x > /attachments/note.txt",
+    "cp x.png /attachments/1.png",
+    "sed -i s/a/b/ /attachments/1.png",
+    "touch /attachments/new",
+  ]) {
+    assert.equal(checkBash(cmd).allow, false, cmd);
+  }
+  for (const cmd of ["ls -la /attachments", "file /attachments/1.png", "cp /attachments/1.png public/mock.png", "cat /attachments/1.png | wc -c"]) {
+    assert.equal(checkBash(cmd).allow, true, cmd);
+  }
+});

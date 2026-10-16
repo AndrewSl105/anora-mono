@@ -2,7 +2,7 @@
 // unit-tested without the SDK. The backend's diff validation (no .github/
 // changes, secrets scan) is the second line of defence; this hook gives
 // Claude an early, explained "no" instead of a failed push.
-import { isAbsolute, normalize, relative } from "node:path";
+import { isAbsolute, normalize, relative, resolve } from "node:path";
 
 export type PolicyDecision = { allow: true } | { allow: false; reason: string };
 
@@ -26,6 +26,7 @@ export function checkTool(toolName: string, input: unknown, workspace: string): 
   if (WRITE_TOOLS.has(toolName)) {
     for (const p of paths) {
       if (isUnderGithubDir(p, workspace)) return deny(githubReason(p));
+      if (isUnderAttachments(p, workspace)) return deny(attachmentsReason(p));
     }
   }
   if (WRITE_TOOLS.has(toolName) || READ_TOOLS.has(toolName)) {
@@ -39,6 +40,18 @@ export function checkTool(toolName: string, input: unknown, workspace: string): 
 const environReason = "Reading process environments (/proc/*/environ) is not allowed in this sandbox.";
 const githubReason = (p: string) =>
   `Changes under .github/ are not allowed (${p}). CI configuration is managed by the repository owner; describe the change you would make in your summary instead.`;
+
+// Attached images are mounted read-only at /attachments; reading them is
+// allowed, changing them is not (the mount enforces it, this explains it).
+export const ATTACHMENTS = "/attachments";
+const attachmentsReason = (p: string) =>
+  `${ATTACHMENTS} is read-only (${p}): it holds the images the owner attached. Copy a file into /workspace if the change needs it there.`;
+
+export function isUnderAttachments(p: string, workspace: string): boolean {
+  const unquoted = p.replace(/^['"]|['"]$/g, "");
+  const abs = isAbsolute(unquoted) ? normalize(unquoted) : resolve(workspace, unquoted);
+  return abs === ATTACHMENTS || abs.startsWith(ATTACHMENTS + "/");
+}
 
 // isUnderGithubDir reports whether a path points into a `.github` directory,
 // relative to the workspace or anywhere in an absolute path.
@@ -100,6 +113,7 @@ export function checkBash(command: string): PolicyDecision {
   const redirect = /(?:^|[^<>&\d])\d*>>?\|?\s*(['"]?)([^\s'";|&]+)\1/g;
   for (const m of command.matchAll(redirect)) {
     if (isUnderGithubDir(m[2]!, "/workspace")) return deny(githubReason(m[2]!));
+    if (isUnderAttachments(m[2]!, "/workspace")) return deny(attachmentsReason(m[2]!));
   }
 
   for (const segment of command.split(SEPARATORS)) {
@@ -146,11 +160,14 @@ function checkSegment(toks: string[]): PolicyDecision {
     return deny("Dumping the environment is not allowed; it contains credentials. Read specific, non-secret variables instead (e.g. echo $NODE_ENV).");
   }
 
+  const inPlaceEdit = (cmd === "sed" || cmd === "perl") && args.some((a) => /^-[a-zA-Z]*i/.test(a));
   const gh = args.find((a) => isUnderGithubDir(a, "/workspace"));
-  if (gh) {
-    const inPlaceEdit = (cmd === "sed" || cmd === "perl") && args.some((a) => /^-[a-zA-Z]*i/.test(a));
-    if (WRITE_COMMANDS.has(cmd) || inPlaceEdit) return deny(githubReason(gh));
-  }
+  if (gh && (WRITE_COMMANDS.has(cmd) || inPlaceEdit)) return deny(githubReason(gh));
+  const att = args.find((a) => isUnderAttachments(a, "/workspace"));
+  // cp/rsync/install from /attachments into the workspace only read it: the
+  // destination is the last argument.
+  const copiesOut = (cmd === "cp" || cmd === "rsync" || cmd === "install") && !isUnderAttachments(args[args.length - 1] ?? "", "/workspace");
+  if (att && (inPlaceEdit || (WRITE_COMMANDS.has(cmd) && !copiesOut))) return deny(attachmentsReason(att));
   return ALLOW;
 }
 

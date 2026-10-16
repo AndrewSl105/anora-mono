@@ -60,7 +60,7 @@ func runServe() error {
 	hub := events.NewHub()
 	taskSvc := &tasks.Service{Store: st, Hub: hub, Files: files}
 	sched := scheduler.New(&scheduler.Scheduler{
-		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws,
+		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws, Files: files,
 		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},
 	})
 	taskSvc.Executor = sched
