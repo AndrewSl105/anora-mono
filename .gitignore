@@ -6,9 +6,9 @@ node_modules/
 agent/dist/
 
 # Env and secrets
-deploy/.env
-deploy/.env.*
-!deploy/.env.example
+.env
+.env.*
+!.env.example
 *.pem
 
 # OS / editors
