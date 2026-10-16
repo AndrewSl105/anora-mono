@@ -125,6 +125,12 @@ func runServe() error {
 		bot := &telegram.Bot{
 			API: tg, Store: st, Tasks: taskSvc, Hub: hub, OwnerID: cfg.TelegramAllowedUserID,
 			WebAppURL: cfg.WebAppURL, MiniAppLink: cfg.TelegramMiniAppLink, OnError: met.TelegramError,
+			STTEnabled: cfg.STTProvider != "off",
+		}
+		if cfg.STTProvider == "openai" {
+			bot.STT = &telegram.OpenAITranscriber{APIKey: cfg.OpenAIAPIKey}
+		} else if cfg.STTProvider == "whispercpp" {
+			bot.STT = &telegram.WhisperCPPTranscriber{URL: cfg.WhisperCPPURL}
 		}
 		wg.Add(1)
 		go func() {

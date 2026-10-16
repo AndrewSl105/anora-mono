@@ -4,11 +4,12 @@ package telegram
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,11 +22,14 @@ import (
 	"github.com/andrewsl105/anora/server/internal/tasks"
 )
 
-// API is the subset of *telego.Bot the bot uses (faked in tests).
 type API interface {
-	SendMessage(ctx context.Context, params *telego.SendMessageParams) (*telego.Message, error)
-	EditMessageText(ctx context.Context, params *telego.EditMessageTextParams) (*telego.Message, error)
-	AnswerCallbackQuery(ctx context.Context, params *telego.AnswerCallbackQueryParams) error
+	SendMessage(context.Context, *telego.SendMessageParams) (*telego.Message, error)
+	EditMessageText(context.Context, *telego.EditMessageTextParams) (*telego.Message, error)
+	EditMessageReplyMarkup(context.Context, *telego.EditMessageReplyMarkupParams) (*telego.Message, error)
+	AnswerCallbackQuery(context.Context, *telego.AnswerCallbackQueryParams) error
+	SetMessageReaction(context.Context, *telego.SetMessageReactionParams) error
+	GetFile(context.Context, *telego.GetFileParams) (*telego.File, error)
+	FileDownloadURL(string) string
 }
 
 type Bot struct {
@@ -34,22 +38,17 @@ type Bot struct {
 	Tasks   *tasks.Service
 	Hub     *events.Hub
 	OwnerID int64
-	// WebAppURL is the Mini App base URL; MiniAppLink optionally is the
-	// t.me/<bot>/<app> link used for deep links in groups.
-	WebAppURL   string
-	MiniAppLink string
-	// EditInterval throttles status message edits (default 3 s).
-	EditInterval time.Duration
-	OnError      func(op string)
 
-	// createMu makes "create task from Telegram, then record where it came
-	// from" atomic with respect to the hub listener sending its status message.
+	WebAppURL, MiniAppLink string
+	EditInterval           time.Duration
+	MergeWindow            time.Duration
+	STT                    Transcriber
+	STTEnabled             bool
+	OnError                func(string)
+
 	createMu sync.RWMutex
-	// statusMu serialises sending the first status message of a task.
 	statusMu sync.Mutex
-
 	mu       sync.Mutex
-	activity map[int64]string
 	edits    map[int64]*editState
 }
 
@@ -58,25 +57,32 @@ type editState struct {
 	pending bool
 }
 
+type target struct{ chatID, threadID int64 }
+
 func (b *Bot) init() {
 	if b.EditInterval == 0 {
 		b.EditInterval = 3 * time.Second
 	}
-	b.activity = map[int64]string{}
-	b.edits = map[int64]*editState{}
+	if b.MergeWindow == 0 {
+		b.MergeWindow = 3 * time.Second
+	}
+	if b.edits == nil {
+		b.edits = map[int64]*editState{}
+	}
 }
 
-// Run long-polls updates and follows the hub until ctx ends.
 func (b *Bot) Run(ctx context.Context, tg *telego.Bot) error {
 	b.init()
-	updates, err := tg.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{
-		Timeout:        30,
-		AllowedUpdates: []string{"message", "callback_query"},
-	})
+	updates, err := tg.UpdatesViaLongPolling(ctx, &telego.GetUpdatesParams{Timeout: 30, AllowedUpdates: []string{"message", "callback_query"}})
 	if err != nil {
 		return err
 	}
-	_ = tg.SetMyCommands(ctx, &telego.SetMyCommandsParams{Commands: commandList})
+	b.fail("set_commands", tg.SetMyCommands(ctx, &telego.SetMyCommandsParams{Commands: commandList}))
+	if b.WebAppURL != "" {
+		b.fail("set_menu", tg.SetChatMenuButton(ctx, &telego.SetChatMenuButtonParams{MenuButton: &telego.MenuButtonWebApp{
+			Type: telego.ButtonTypeWebApp, Text: "Open Anora", WebApp: telego.WebAppInfo{URL: b.WebAppURL},
+		}}))
+	}
 	go b.follow(ctx)
 	for u := range updates {
 		b.HandleUpdate(ctx, u)
@@ -84,11 +90,7 @@ func (b *Bot) Run(ctx context.Context, tg *telego.Bot) error {
 	return nil
 }
 
-// Start runs only the hub listener (tests drive HandleUpdate directly).
-func (b *Bot) Start(ctx context.Context) {
-	b.init()
-	go b.follow(ctx)
-}
+func (b *Bot) Start(ctx context.Context) { b.init(); go b.follow(ctx) }
 
 func (b *Bot) fail(op string, err error) {
 	if err == nil {
@@ -100,14 +102,6 @@ func (b *Bot) fail(op string, err error) {
 	}
 }
 
-// ---- outgoing ----
-
-type target struct {
-	chatID, threadID int64
-}
-
-// targetFor is where a task's messages go: the chat it was created from, the
-// project's forum topic, or the owner's private chat.
 func (b *Bot) targetFor(ctx context.Context, t *store.Task) (target, store.TelegramTarget) {
 	tt, _ := b.Store.TaskTelegram(ctx, t.ID)
 	if tt.ChatID != 0 {
@@ -119,13 +113,11 @@ func (b *Bot) targetFor(ctx context.Context, t *store.Task) (target, store.Teleg
 	return target{b.OwnerID, 0}, tt
 }
 
-func (b *Bot) send(ctx context.Context, to target, text string, kb *telego.InlineKeyboardMarkup) (int, error) {
-	p := &telego.SendMessageParams{
-		ChatID: tu.ID(to.chatID), MessageThreadID: int(to.threadID), Text: clamp(text), ParseMode: telego.ModeHTML,
-		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true},
-	}
-	if kb != nil {
-		p.ReplyMarkup = kb
+func (b *Bot) send(ctx context.Context, to target, text string, markup telego.ReplyMarkup, replyTo int) (int, error) {
+	p := &telego.SendMessageParams{ChatID: tu.ID(to.chatID), MessageThreadID: int(to.threadID), Text: clamp(text), ParseMode: telego.ModeHTML,
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: markup}
+	if replyTo != 0 {
+		p.ReplyParameters = &telego.ReplyParameters{MessageID: replyTo, AllowSendingWithoutReply: true}
 	}
 	m, err := b.API.SendMessage(ctx, p)
 	if err != nil {
@@ -135,14 +127,33 @@ func (b *Bot) send(ctx context.Context, to target, text string, kb *telego.Inlin
 	return m.MessageID, nil
 }
 
+func (b *Bot) sendTask(ctx context.Context, t *store.Task, kind, text string, kb *telego.InlineKeyboardMarkup, replyCard bool) (int, error) {
+	to, tt := b.targetFor(ctx, t)
+	reply := 0
+	if replyCard {
+		reply = int(tt.MessageID)
+	}
+	id, err := b.send(ctx, to, text, kb, reply)
+	if err == nil {
+		b.fail("record_message", b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{
+			ChatID: to.chatID, MessageID: int64(id), TaskID: t.ID, Kind: kind, HasButtons: kb != nil,
+		}))
+	}
+	return id, err
+}
+
 func (b *Bot) edit(ctx context.Context, chatID int64, msgID int, text string, kb *telego.InlineKeyboardMarkup) {
-	_, err := b.API.EditMessageText(ctx, &telego.EditMessageTextParams{
-		ChatID: tu.ID(chatID), MessageID: msgID, Text: clamp(text), ParseMode: telego.ModeHTML,
-		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: kb,
-	})
+	_, err := b.API.EditMessageText(ctx, &telego.EditMessageTextParams{ChatID: tu.ID(chatID), MessageID: msgID, Text: clamp(text),
+		ParseMode: telego.ModeHTML, LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true}, ReplyMarkup: kb})
 	if err != nil && !strings.Contains(err.Error(), "message is not modified") {
 		b.fail("edit", err)
 	}
+}
+
+func (b *Bot) react(ctx context.Context, m *telego.Message, emoji string) {
+	err := b.API.SetMessageReaction(ctx, &telego.SetMessageReactionParams{ChatID: tu.ID(m.Chat.ID), MessageID: m.MessageID,
+		Reaction: []telego.ReactionType{&telego.ReactionTypeEmoji{Type: telego.ReactionEmoji, Emoji: emoji}}})
+	b.fail("reaction", err)
 }
 
 func (b *Bot) appButton(label, path string, private bool) (telego.InlineKeyboardButton, bool) {
@@ -163,28 +174,76 @@ func (b *Bot) appButton(label, path string, private bool) (telego.InlineKeyboard
 	return tu.InlineKeyboardButton(label).WithURL(url), true
 }
 
-// taskButtons: Open in app, Cancel (while not terminal), PR (when it exists).
-func (b *Bot) taskButtons(t *store.Task, private bool) *telego.InlineKeyboardMarkup {
-	var row []telego.InlineKeyboardButton
-	if btn, ok := b.appButton("Open in app", fmt.Sprintf("/tasks/%d", t.ID), private); ok {
-		row = append(row, btn)
+func (b *Bot) callback(ctx context.Context, c store.TelegramCallback) string {
+	if id, err := b.Store.FindTelegramCallback(ctx, c); err == nil {
+		return "c:" + id
 	}
-	if !tasks.IsTerminal(t.Status) {
-		row = append(row, tu.InlineKeyboardButton("Cancel").WithCallbackData(fmt.Sprintf("cancel|%d", t.ID)))
+	buf := make([]byte, 7)
+	if _, err := rand.Read(buf); err != nil {
+		b.fail("callback_random", err)
+		return "x"
 	}
-	if t.PRURL != nil {
-		row = append(row, tu.InlineKeyboardButton("PR").WithURL(*t.PRURL))
+	c.ID = base64.RawURLEncoding.EncodeToString(buf)
+	ttl := 30 * 24 * time.Hour
+	if strings.HasPrefix(c.Action, "draft_") || c.Action == "answer" || c.Action == "own_answer" {
+		ttl = 24 * time.Hour
 	}
-	if t.Status == tasks.Failed || t.Status == tasks.Cancelled {
-		row = append(row, tu.InlineKeyboardButton("Retry").WithCallbackData(fmt.Sprintf("retry|%d", t.ID)))
+	if err := b.Store.AddTelegramCallback(ctx, c, time.Now().Add(ttl)); err != nil {
+		b.fail("callback_store", err)
+		return "x"
 	}
-	if len(row) == 0 {
-		return nil
-	}
-	return tu.InlineKeyboard(row)
+	return "c:" + c.ID
 }
 
-// ensureStatus sends the status message once and remembers it.
+func (b *Bot) taskButtons(ctx context.Context, t *store.Task, private bool) *telego.InlineKeyboardMarkup {
+	var buttons []telego.InlineKeyboardButton
+	open, hasOpen := b.appButton("📱 Open", fmt.Sprintf("/tasks/%d", t.ID), private)
+	switch t.Status {
+	case tasks.PROpen:
+		if t.PRURL != nil {
+			buttons = append(buttons, tu.InlineKeyboardButton(fmt.Sprintf("🔗 PR #%d", deref(t.PRNumber))).WithURL(*t.PRURL))
+		}
+		if hasOpen {
+			buttons = append(buttons, open)
+		}
+	case tasks.Failed, tasks.Cancelled:
+		buttons = append(buttons, tu.InlineKeyboardButton("🔁 Retry").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "retry", TaskID: t.ID})))
+		if hasOpen {
+			buttons = append(buttons, open)
+		}
+	case tasks.Queued, tasks.Preparing, tasks.Running, tasks.WaitingInput, tasks.Pushing:
+		if hasOpen {
+			buttons = append(buttons, open)
+		}
+		buttons = append(buttons, tu.InlineKeyboardButton("⏹ Stop").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "cancel", TaskID: t.ID})))
+	default:
+		if hasOpen {
+			buttons = append(buttons, open)
+		}
+	}
+	if len(buttons) == 0 {
+		return nil
+	}
+	var rows [][]telego.InlineKeyboardButton
+	for len(buttons) > 0 {
+		n := min(2, len(buttons))
+		rows = append(rows, tu.InlineKeyboardRow(buttons[:n]...))
+		buttons = buttons[n:]
+	}
+	return tu.InlineKeyboard(rows...)
+}
+
+func (b *Bot) card(ctx context.Context, t *store.Task) string {
+	c := cardData{Task: t, Now: time.Now()}
+	if r, err := b.Store.GetRepository(ctx, t.RepositoryID); err == nil {
+		c.Repo = r.FullName
+	}
+	if r, err := b.Store.LatestRun(ctx, t.ID); err == nil {
+		c.Run = r
+	}
+	return renderCard(c)
+}
+
 func (b *Bot) ensureStatus(ctx context.Context, t *store.Task) (target, int) {
 	b.createMu.RLock()
 	defer b.createMu.RUnlock()
@@ -194,24 +253,19 @@ func (b *Bot) ensureStatus(ctx context.Context, t *store.Task) (target, int) {
 	if tt.MessageID != 0 {
 		return to, int(tt.MessageID)
 	}
-	id, err := b.send(ctx, to, renderStatus(t, b.activityOf(t.ID)), b.taskButtons(t, to.threadID == 0 && to.chatID == b.OwnerID))
+	kb := b.taskButtons(ctx, t, to.threadID == 0 && to.chatID == b.OwnerID)
+	id, err := b.send(ctx, to, b.card(ctx, t), kb, 0)
 	if err != nil {
 		return to, 0
 	}
 	_ = b.Store.SetTaskTelegram(ctx, t.ID, store.TelegramTarget{ChatID: to.chatID, ThreadID: to.threadID, MessageID: int64(id)})
+	_ = b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{ChatID: to.chatID, MessageID: int64(id), TaskID: t.ID, Kind: "card", HasButtons: kb != nil})
 	b.mu.Lock()
 	b.edits[t.ID] = &editState{last: time.Now()}
 	b.mu.Unlock()
 	return to, id
 }
 
-func (b *Bot) activityOf(id int64) string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.activity[id]
-}
-
-// requestEdit coalesces status edits to one per EditInterval per message.
 func (b *Bot) requestEdit(ctx context.Context, taskID int64) {
 	b.mu.Lock()
 	st := b.edits[taskID]
@@ -224,11 +278,11 @@ func (b *Bot) requestEdit(ctx context.Context, taskID int64) {
 		return
 	}
 	wait := b.EditInterval - time.Since(st.last)
-	st.pending = true
-	b.mu.Unlock()
 	if wait < 0 {
 		wait = 0
 	}
+	st.pending = true
+	b.mu.Unlock()
 	time.AfterFunc(wait, func() {
 		b.mu.Lock()
 		st.pending = false
@@ -247,10 +301,25 @@ func (b *Bot) editStatus(ctx context.Context, taskID int64) {
 	if msgID == 0 {
 		return
 	}
-	b.edit(ctx, to.chatID, msgID, renderStatus(t, b.activityOf(taskID)), b.taskButtons(t, to.threadID == 0 && to.chatID == b.OwnerID))
+	b.edit(ctx, to.chatID, msgID, b.card(ctx, t), b.taskButtons(ctx, t, to.threadID == 0 && to.chatID == b.OwnerID))
 }
 
-// follow turns hub messages into Telegram messages.
+func (b *Bot) removeStaleButtons(ctx context.Context, taskID int64) {
+	msgs, err := b.Store.TelegramMessagesWithButtons(ctx, taskID)
+	if err != nil {
+		b.fail("stale_buttons", err)
+		return
+	}
+	for _, m := range msgs {
+		_, err := b.API.EditMessageReplyMarkup(ctx, &telego.EditMessageReplyMarkupParams{ChatID: tu.ID(m.ChatID), MessageID: int(m.MessageID)})
+		if err != nil && !strings.Contains(err.Error(), "message is not modified") {
+			b.fail("stale_buttons", err)
+			continue
+		}
+		_ = b.Store.ClearTelegramMessageButtons(ctx, m.ChatID, m.MessageID)
+	}
+}
+
 func (b *Bot) follow(ctx context.Context) {
 	msgs, unsub := b.Hub.Subscribe(1024)
 	defer unsub()
@@ -273,13 +342,19 @@ func (b *Bot) follow(ctx context.Context) {
 }
 
 func (b *Bot) onTask(ctx context.Context, t *store.Task) {
-	if _, msgID := b.ensureStatus(ctx, t); msgID != 0 {
+	if len(t.StatusEvents) > 0 {
+		b.removeStaleButtons(ctx, t.ID)
+	}
+	if _, id := b.ensureStatus(ctx, t); id != 0 {
 		b.requestEdit(ctx, t.ID)
 	}
 	if t.Status == tasks.Failed && len(t.StatusEvents) > 0 {
-		to, _ := b.targetFor(ctx, t)
-		_, _ = b.send(ctx, to, fmt.Sprintf("❌ <b>#%d failed</b>: %s", t.ID, esc(cut(deref(t.StatusReason), 500))),
-			b.taskButtons(t, to.chatID == b.OwnerID))
+		reason := deref(t.StatusReason)
+		heading := "Task failed"
+		if h := humanizeError(reason); strings.Contains(strings.ToLower(h.Summary), "limit") {
+			heading = "Limit hit"
+		}
+		_, _ = b.sendTask(ctx, t, "failed", renderErrorNotification(t, heading, reason), b.taskButtons(ctx, t, b.targetPrivate(ctx, t)), true)
 	}
 }
 
@@ -302,17 +377,7 @@ func (b *Bot) onEvent(ctx context.Context, ev *store.Event) {
 	var p payload
 	_ = json.Unmarshal(ev.Payload, &p)
 	switch ev.Type {
-	case "tool_use", "assistant_text":
-		line := p.Summary
-		if ev.Type == "assistant_text" {
-			line = strings.SplitN(strings.TrimSpace(p.Text), "\n", 2)[0]
-		}
-		if line == "" {
-			return
-		}
-		b.mu.Lock()
-		b.activity[ev.TaskID] = line
-		b.mu.Unlock()
+	case "tool_use", "assistant_text", "usage":
 		b.requestEdit(ctx, ev.TaskID)
 	case "question":
 		if ev.RunID != nil {
@@ -321,53 +386,53 @@ func (b *Bot) onEvent(ctx context.Context, ev *store.Event) {
 	case "answer":
 		b.refreshQuestion(ctx, ev.TaskID, p.Question)
 	case "pr_opened":
-		b.notify(ctx, ev.TaskID, func(t *store.Task) string {
-			return fmt.Sprintf("🔀 <b>#%d PR opened</b>: <a href=\"%s\">#%d</a> %s", t.ID, esc(p.URL), p.Number, esc(cut(t.Title, 100)))
+		b.notify(ctx, ev.TaskID, "pr", func(t *store.Task) string {
+			return fmt.Sprintf("✅ <b>#%d · PR #%d opened</b>\n%s", t.ID, p.Number, esc(cut(t.Title, 120)))
 		})
 	case "ci":
 		if p.Status == "failure" {
-			b.notify(ctx, ev.TaskID, func(t *store.Task) string {
-				link := esc(cut(p.Name, 80))
+			b.notify(ctx, ev.TaskID, "ci_failed", func(t *store.Task) string {
+				name := esc(cut(p.Name, 100))
 				if p.URL != "" {
-					link = fmt.Sprintf("<a href=\"%s\">%s</a>", esc(p.URL), link)
+					name = fmt.Sprintf("<a href=\"%s\">%s</a>", esc(p.URL), name)
 				}
-				return fmt.Sprintf("🔴 <b>#%d CI failed</b>: %s", t.ID, link)
-			})
-		} else {
-			b.requestEdit(ctx, ev.TaskID)
-		}
-	case "error":
-		if p.Code == "limit_exceeded" {
-			b.notify(ctx, ev.TaskID, func(t *store.Task) string {
-				return fmt.Sprintf("⏱ <b>#%d hit a limit</b>: %s", t.ID, esc(cut(p.Message, 300)))
+				return fmt.Sprintf("❌ <b>#%d · CI failed</b>\n%s", t.ID, name)
 			})
 		}
 	}
 }
 
-func (b *Bot) notify(ctx context.Context, taskID int64, text func(*store.Task) string) {
+func (b *Bot) targetPrivate(ctx context.Context, t *store.Task) bool {
+	to, _ := b.targetFor(ctx, t)
+	return to.threadID == 0 && to.chatID == b.OwnerID
+}
+
+func (b *Bot) notify(ctx context.Context, taskID int64, kind string, text func(*store.Task) string) {
 	t, err := b.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return
 	}
-	to, _ := b.targetFor(ctx, t)
-	_, _ = b.send(ctx, to, text(t), b.taskButtons(t, to.chatID == b.OwnerID))
+	_, _ = b.sendTask(ctx, t, kind, text(t), b.taskButtons(ctx, t, b.targetPrivate(ctx, t)), true)
 }
 
-func (b *Bot) questionKeyboard(q *store.Question) *telego.InlineKeyboardMarkup {
-	if q.Answer != nil || len(q.Options) == 0 {
+func (b *Bot) questionKeyboard(ctx context.Context, q *store.Question) *telego.InlineKeyboardMarkup {
+	if q.Answer != nil {
 		return nil
 	}
+	var buttons []telego.InlineKeyboardButton
+	for i, option := range q.Options {
+		buttons = append(buttons, tu.InlineKeyboardButton(cut(option, 40)).WithCallbackData(b.callback(ctx, store.TelegramCallback{
+			Action: "answer", TaskID: q.TaskID, QuestionID: q.ID, Value: fmt.Sprint(i),
+		})))
+	}
+	buttons = append(buttons, tu.InlineKeyboardButton("✍️ Own answer").WithCallbackData(b.callback(ctx, store.TelegramCallback{
+		Action: "own_answer", TaskID: q.TaskID, QuestionID: q.ID,
+	})))
 	var rows [][]telego.InlineKeyboardButton
-	for i, o := range q.Options {
-		data := fmt.Sprintf("ans|%s|%d", q.ID, i)
-		if len(data) > 64 {
-			continue
-		}
-		rows = append(rows, tu.InlineKeyboardRow(tu.InlineKeyboardButton(cut(o, 60)).WithCallbackData(data)))
-	}
-	if len(rows) == 0 {
-		return nil
+	for len(buttons) > 0 {
+		n := min(2, len(buttons))
+		rows = append(rows, tu.InlineKeyboardRow(buttons[:n]...))
+		buttons = buttons[n:]
 	}
 	return tu.InlineKeyboard(rows...)
 }
@@ -381,14 +446,13 @@ func (b *Bot) sendQuestion(ctx context.Context, taskID int64, questionID string)
 	if err != nil || q.TelegramMessageID != nil {
 		return
 	}
-	to, _ := b.targetFor(ctx, t)
-	id, err := b.send(ctx, to, renderQuestion(t, q), b.questionKeyboard(q))
+	kb := b.questionKeyboard(ctx, q)
+	id, err := b.sendTask(ctx, t, "question", renderQuestion(t, q), kb, true)
 	if err == nil {
 		_ = b.Store.SetQuestionTelegramMessage(ctx, q.ID, int64(id))
 	}
 }
 
-// refreshQuestion edits a question message to show the answer and who gave it.
 func (b *Bot) refreshQuestion(ctx context.Context, taskID int64, questionID string) {
 	q, err := b.Store.GetQuestion(ctx, questionID)
 	if err != nil || q.TelegramMessageID == nil {
@@ -400,27 +464,23 @@ func (b *Bot) refreshQuestion(ctx context.Context, taskID int64, questionID stri
 	}
 	to, _ := b.targetFor(ctx, t)
 	b.edit(ctx, to.chatID, int(*q.TelegramMessageID), renderQuestion(t, q), nil)
+	_ = b.Store.ClearTelegramMessageButtons(ctx, to.chatID, *q.TelegramMessageID)
 }
 
-// ---- incoming ----
-
-// HandleUpdate processes one update from the owner; everything else is dropped.
 func (b *Bot) HandleUpdate(ctx context.Context, u telego.Update) {
 	switch {
 	case u.Message != nil:
-		m := u.Message
-		if m.From == nil || m.From.ID != b.OwnerID {
-			slog.Info("telegram: ignored message from non-owner", "from", userID(m.From), "chat", m.Chat.ID)
+		if u.Message.From == nil || u.Message.From.ID != b.OwnerID {
+			slog.Info("telegram: ignored message from non-owner", "from", userID(u.Message.From), "chat", u.Message.Chat.ID)
 			return
 		}
-		b.onMessage(ctx, m)
+		b.onMessage(ctx, u.Message)
 	case u.CallbackQuery != nil:
-		cq := u.CallbackQuery
-		if cq.From.ID != b.OwnerID {
-			slog.Info("telegram: ignored callback from non-owner", "from", cq.From.ID)
+		if u.CallbackQuery.From.ID != b.OwnerID {
+			slog.Info("telegram: ignored callback from non-owner", "from", u.CallbackQuery.From.ID)
 			return
 		}
-		b.onCallback(ctx, cq)
+		b.onCallback(ctx, u.CallbackQuery)
 	}
 }
 
@@ -431,54 +491,69 @@ func userID(u *telego.User) int64 {
 	return u.ID
 }
 
-func (b *Bot) reply(ctx context.Context, m *telego.Message, text string, kb *telego.InlineKeyboardMarkup) {
-	_, _ = b.send(ctx, target{m.Chat.ID, int64(m.MessageThreadID)}, text, kb)
+func (b *Bot) reply(ctx context.Context, m *telego.Message, text string, markup telego.ReplyMarkup) (int, error) {
+	return b.send(ctx, target{m.Chat.ID, int64(m.MessageThreadID)}, text, markup, m.MessageID)
 }
 
 func (b *Bot) onCallback(ctx context.Context, cq *telego.CallbackQuery) {
 	answer := func(text string) {
 		b.fail("answer_callback", b.API.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: cq.ID, Text: text}))
 	}
-	parts := strings.Split(cq.Data, "|")
-	switch parts[0] {
-	case "ans":
-		if len(parts) != 3 {
-			answer("Unknown action")
-			return
-		}
-		q, err := b.Store.GetQuestion(ctx, parts[1])
-		i, _ := strconv.Atoi(parts[2])
+	if !strings.HasPrefix(cq.Data, "c:") {
+		answer("This action has expired")
+		return
+	}
+	c, err := b.Store.TelegramCallback(ctx, strings.TrimPrefix(cq.Data, "c:"))
+	if err != nil {
+		answer("This action has expired")
+		return
+	}
+	switch c.Action {
+	case "answer":
+		q, err := b.Store.GetQuestion(ctx, c.QuestionID)
+		var i int
+		_, _ = fmt.Sscan(c.Value, &i)
 		if err != nil || i < 0 || i >= len(q.Options) {
 			answer("Question not found")
 			return
 		}
-		if _, err := b.Tasks.Answer(ctx, q.TaskID, q.ID, q.Options[i], "telegram"); err != nil {
+		if _, err = b.Tasks.Answer(ctx, q.TaskID, q.ID, q.Options[i], "telegram"); err != nil {
 			answer(errText(err))
 			return
 		}
 		answer("Answered: " + cut(q.Options[i], 150))
-	case "cancel", "retry", "task":
-		if len(parts) != 2 {
-			answer("Unknown action")
+	case "own_answer":
+		m := cq.Message
+		if m == nil {
+			answer("Open the task chat to answer")
 			return
 		}
-		id, _ := strconv.ParseInt(parts[1], 10, 64)
-		var err error
-		switch parts[0] {
-		case "cancel":
-			_, err = b.Tasks.Cancel(ctx, id)
-		case "retry":
-			_, err = b.Tasks.Retry(ctx, id)
-		case "task":
-			if m := cq.Message; m != nil {
-				b.showTask(ctx, target{m.GetChat().ID, 0}, id)
-			}
+		threadID := int64(0)
+		if mm := m.Message(); mm != nil {
+			threadID = int64(mm.MessageThreadID)
 		}
+		id, err := b.send(ctx, target{m.GetChat().ID, threadID}, "✍️ Write your answer", &telego.ForceReply{ForceReply: true, InputFieldPlaceholder: "Your answer"}, 0)
+		if err == nil {
+			_ = b.Store.AddTelegramReplyPrompt(ctx, m.GetChat().ID, int64(id), store.TelegramReplyPrompt{Kind: "question", TaskID: c.TaskID, QuestionID: c.QuestionID})
+			_ = b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{ChatID: m.GetChat().ID, MessageID: int64(id), TaskID: c.TaskID, Kind: "answer_prompt"})
+		}
+		answer("Write your answer below")
+	case "cancel":
+		_, err := b.Tasks.Cancel(ctx, c.TaskID)
 		if err != nil {
 			answer(errText(err))
 			return
 		}
-		answer("OK")
+		answer("Stopped")
+	case "retry":
+		_, err := b.Tasks.Retry(ctx, c.TaskID)
+		if err != nil {
+			answer(errText(err))
+			return
+		}
+		answer("Retry started")
+	case "draft_create", "draft_cancel", "draft_project", "draft_repo", "draft_edit":
+		b.handleDraftCallback(ctx, cq, c, answer)
 	default:
 		answer("Unknown action")
 	}
@@ -487,13 +562,13 @@ func (b *Bot) onCallback(ctx context.Context, cq *telego.CallbackQuery) {
 func errText(err error) string {
 	switch {
 	case errors.Is(err, store.ErrConflict):
-		msg := err.Error()
-		if msg == store.ErrConflict.Error() {
+		if err.Error() == store.ErrConflict.Error() {
 			return "Already answered or not allowed now"
 		}
-		return cut(msg, 190)
+		return cut(err.Error(), 190)
 	case errors.Is(err, store.ErrNotFound):
 		return "Not found"
+	default:
+		return cut(err.Error(), 190)
 	}
-	return cut(err.Error(), 190)
 }

@@ -36,6 +36,11 @@ type Config struct {
 	WebAppURL             string
 	// TelegramMiniAppLink is the optional t.me/<bot>/<app> link for deep links in groups.
 	TelegramMiniAppLink string
+	// STTProvider is "off", "openai", or "whispercpp". The sidecar protocol
+	// is documented but only OpenAI is implemented in-process for now.
+	STTProvider   string
+	OpenAIAPIKey  string
+	WhisperCPPURL string
 
 	AdminPasswordHash string
 	AdminTOTPSecret   string
@@ -94,6 +99,9 @@ func Load() (*Config, error) {
 		TelegramAllowedUserID: e.int64("TELEGRAM_ALLOWED_USER_ID", 0),
 		WebAppURL:             strings.TrimRight(e.str("WEB_APP_URL", ""), "/"),
 		TelegramMiniAppLink:   e.str("TELEGRAM_MINIAPP_LINK", ""),
+		STTProvider:           strings.ToLower(e.str("STT_PROVIDER", "off")),
+		OpenAIAPIKey:          e.str("OPENAI_API_KEY", ""),
+		WhisperCPPURL:         strings.TrimRight(e.str("WHISPERCPP_URL", ""), "/"),
 
 		AdminPasswordHash: e.str("ADMIN_PASSWORD_HASH", ""),
 		AdminTOTPSecret:   e.str("ADMIN_TOTP_SECRET", ""),
@@ -152,6 +160,19 @@ func (c *Config) Validate() error {
 	}
 	if c.TelegramBotToken != "" && c.TelegramAllowedUserID == 0 {
 		errs = append(errs, errors.New("TELEGRAM_ALLOWED_USER_ID is required with TELEGRAM_BOT_TOKEN"))
+	}
+	switch c.STTProvider {
+	case "off":
+	case "openai":
+		if c.OpenAIAPIKey == "" {
+			errs = append(errs, errors.New("OPENAI_API_KEY is required with STT_PROVIDER=openai"))
+		}
+	case "whispercpp":
+		if c.WhisperCPPURL == "" {
+			errs = append(errs, errors.New("WHISPERCPP_URL is required with STT_PROVIDER=whispercpp"))
+		}
+	default:
+		errs = append(errs, errors.New(`STT_PROVIDER must be "off", "openai", or "whispercpp"`))
 	}
 	return errors.Join(errs...)
 }
