@@ -36,7 +36,7 @@ Database tests need `ANORA_TEST_DATABASE_URL` (the Makefile sets it for `make te
 
 ## Local development
 
-`make dev` (repository root) runs `deploy/docker-compose.dev.yml`: the server, Postgres and the Docker socket proxy with the fake agent (`ANORA_RUNNER_FAKE`, no Claude), `COOKIE_INSECURE=true`, no GitHub App and no Telegram bot, plus the web client's Vite dev server. Workspaces live in `./.dev/workspaces` (same absolute path inside the container). `ANORA_DEV_PORT` (default `8080`) changes the published port and `ANORA_DEV_CLIENT_ORIGIN` (default `http://localhost:5173`) the web origin, which is allowed for the WebSocket (`CORS_ORIGINS`) and used for links.
+`make dev` (repository root) runs `deploy/docker-compose.dev.yml`: the server, Postgres and the Docker socket proxy with the fake agent (`ANORA_RUNNER_FAKE`, no Claude), `COOKIE_INSECURE=true`, no GitHub App and no Telegram bot, plus the web client's Vite dev server. Workspaces live in `./.dev/workspaces` and attachments in `./.dev/attachments` (same absolute paths inside the container). `ANORA_DEV_PORT` (default `8080`) changes the published port and `ANORA_DEV_CLIENT_ORIGIN` (default `http://localhost:5173`) the web origin, which is allowed for the WebSocket (`CORS_ORIGINS`) and used for links.
 
 Without a GitHub App the "add repository" picker is unavailable, so add a public repository through the API (the clone is anonymous; commits stay local and the task ends `completed`):
 

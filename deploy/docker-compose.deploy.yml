@@ -37,12 +37,14 @@ services:
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
       WORKSPACES_DIR: /srv/anora/workspaces
+      ATTACHMENTS_DIR: /srv/anora/attachments
       GITHUB_APP_PRIVATE_KEY_PATH: /secrets/github-app.pem
       DATABASE_URL: postgres://anora:${PG_PASSWORD}@postgres:5432/anora?sslmode=disable
     volumes:
       # Same path on the host and in the container, so bind mounts of agent
-      # workspaces resolve on the host. Must be owned by uid 1000.
+      # workspaces and attachments resolve on the host. Must be owned by uid 1000.
       - /srv/anora/workspaces:/srv/anora/workspaces
+      - /srv/anora/attachments:/srv/anora/attachments
       - /srv/anora/secrets/github-app.pem:/secrets/github-app.pem:ro
     # stack: Caddy reaches it, and it reaches GitHub, Telegram and registries.
     networks: [stack, internal]

@@ -73,10 +73,11 @@ The release workflow logs in over SSH as a deploy user that can run Docker. On U
 
 ```sh
 sudo usermod -aG docker "$USER"            # the deploy user; log in again afterwards
-sudo mkdir -p /srv/anora/workspaces /srv/anora/secrets /srv/anora/backups
+sudo mkdir -p /srv/anora/workspaces /srv/anora/attachments /srv/anora/secrets /srv/anora/backups
 sudo chown "$USER": /srv/anora              # the release workflow copies deploy files here
-# The server and the agent containers run as uid 1000 and share the workspaces.
-sudo chown -R 1000:1000 /srv/anora/workspaces /srv/anora/secrets
+# The server and the agent containers run as uid 1000 and share the workspaces
+# and attachments.
+sudo chown -R 1000:1000 /srv/anora/workspaces /srv/anora/attachments /srv/anora/secrets
 ```
 
 ```
@@ -85,6 +86,7 @@ sudo chown -R 1000:1000 /srv/anora/workspaces /srv/anora/secrets
 ├── Caddyfile                   copied by the release workflow on every deploy
 ├── .env                        created by hand (step 2), chmod 600
 ├── workspaces/                 task checkouts, uid 1000
+├── attachments/                images attached to tasks, one folder per task, uid 1000
 ├── secrets/github-app.pem      GitHub App key, uid 1000, chmod 600
 └── backups/                    pg_dump files (step 10)
 ```
@@ -108,7 +110,7 @@ Fill in `/srv/anora/.env` (every variable is described in `deploy/.env.example`)
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `TELEGRAM_MINIAPP_LINK` | step 6 |
 | `STT_PROVIDER` + provider credentials (optional) | step 6 |
 
-Leave `COOKIE_INSECURE=false`, `CORS_ORIGINS` empty (same origin), `ANORA_RUNNER_FAKE=false`, and `WORKSPACES_DIR=/srv/anora/workspaces`. `chmod 600 /srv/anora/.env`.
+Leave `COOKIE_INSECURE=false`, `CORS_ORIGINS` empty (same origin), `ANORA_RUNNER_FAKE=false`, `WORKSPACES_DIR=/srv/anora/workspaces` and `ATTACHMENTS_DIR=/srv/anora/attachments`. `chmod 600 /srv/anora/.env`.
 
 ### 3. Owner login (password + TOTP)
 
@@ -202,5 +204,5 @@ Restore with `docker compose -f docker-compose.deploy.yml exec -T postgres pg_re
 - **Health**: `GET /healthz` checks Postgres and Docker.
 - **Metrics** (`GET /metrics`, internal network only): `anora_tasks{status}`, `anora_queue_length`, `anora_run_duration_seconds{project}`, `anora_cost_usd_total{project}`, `anora_runner_exits_total{code}`, `anora_telegram_api_errors_total{op}`, `anora_github_api_errors_total{op}`.
 - **Logs**: `docker compose -f docker-compose.deploy.yml logs -f server`; JSON (`log/slog`), task lines carry `task_id`, `run_id` and `project`.
-- **Retention** (every 10 minutes): agent events of finished tasks older than `EVENT_RETENTION` are deleted (status events stay); workspaces and Claude state volumes are deleted `WORKSPACE_RETENTION` after a task finishes; idle sidecars are removed after `SIDECAR_IDLE_TTL`; expired sessions are purged.
+- **Retention** (every 10 minutes): agent events of finished tasks older than `EVENT_RETENTION` are deleted (status events stay); workspaces, Claude state volumes and the attachments of failed and cancelled tasks are deleted `WORKSPACE_RETENTION` after a task finishes (a completed task's attachments go right away); attachment files without a task are swept; idle sidecars are removed after `SIDECAR_IDLE_TTL`; expired sessions are purged.
 - **Restart safety**: on startup, running agents are re-attached and missed events replayed from `<workspace>/.anora/events.jsonl`; exits that happened while the server was down are applied, vanished runs fail with reason `lost`, interrupted preparation is re-queued, interrupted pushes retried, orphaned containers and networks removed.

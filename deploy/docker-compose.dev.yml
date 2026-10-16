@@ -22,6 +22,7 @@ services:
       DATABASE_URL: postgres://anora:anora@postgres:5432/anora?sslmode=disable
       DOCKER_HOST: tcp://docker-proxy:2375
       WORKSPACES_DIR: ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+      ATTACHMENTS_DIR: ${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
       RUNNER_IMAGE: anora-agent:dev
       ANORA_RUNNER_FAKE: "true"
       COOKIE_INSECURE: "true"
@@ -42,6 +43,7 @@ services:
       - "127.0.0.1:${ANORA_DEV_PORT:-8080}:8080"
     volumes:
       - ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}:${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+      - ${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}:${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
     networks: [default, internal]
     depends_on:
       postgres:
