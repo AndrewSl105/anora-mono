@@ -351,10 +351,14 @@ func (b *Bot) onTask(ctx context.Context, t *store.Task) {
 	if t.Status == tasks.Failed && len(t.StatusEvents) > 0 {
 		reason := deref(t.StatusReason)
 		heading := "Task failed"
+		kind := "failed"
 		if h := humanizeError(reason); strings.Contains(strings.ToLower(h.Summary), "limit") {
 			heading = "Limit hit"
+			kind = "limit"
 		}
-		_, _ = b.sendTask(ctx, t, "failed", renderErrorNotification(t, heading, reason), b.taskButtons(ctx, t, b.targetPrivate(ctx, t)), true)
+		if !b.Store.HasTelegramTaskMessageKind(ctx, t.ID, kind) {
+			_, _ = b.sendTask(ctx, t, kind, renderErrorNotification(t, heading, reason), b.taskButtons(ctx, t, b.targetPrivate(ctx, t)), true)
+		}
 	}
 }
 
@@ -398,6 +402,13 @@ func (b *Bot) onEvent(ctx context.Context, ev *store.Event) {
 				}
 				return fmt.Sprintf("❌ <b>#%d · CI failed</b>\n%s", t.ID, name)
 			})
+		}
+	case "error":
+		if p.Code == "limit_exceeded" || strings.Contains(strings.ToLower(p.Code), "limit") {
+			t, err := b.Store.GetTask(ctx, ev.TaskID)
+			if err == nil && !b.Store.HasTelegramTaskMessageKind(ctx, t.ID, "limit") {
+				_, _ = b.sendTask(ctx, t, "limit", renderErrorNotification(t, "Limit hit", p.Message), b.taskButtons(ctx, t, b.targetPrivate(ctx, t)), true)
+			}
 		}
 	}
 }

@@ -89,6 +89,12 @@ func (s *Store) TelegramTaskByMessage(ctx context.Context, chatID, messageID int
 	return id, notFound(err)
 }
 
+func (s *Store) HasTelegramTaskMessageKind(ctx context.Context, taskID int64, kind string) bool {
+	var exists bool
+	_ = s.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM telegram_task_messages WHERE task_id = $1 AND kind = $2)`, taskID, kind).Scan(&exists)
+	return exists
+}
+
 // TelegramMessagesWithButtons returns non-card task messages whose buttons
 // must be removed when a new run starts or task state changes.
 func (s *Store) TelegramMessagesWithButtons(ctx context.Context, taskID int64) ([]TelegramMessage, error) {

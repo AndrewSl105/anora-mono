@@ -121,6 +121,7 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 		b.ensureStatus(ctx, v.Task)
 		if d.CardMessageID != 0 {
 			b.edit(ctx, d.ChatID, int(d.CardMessageID), fmt.Sprintf("✅ Created <b>#%d · %s</b>", v.ID, esc(cut(v.Title, 100))), nil)
+			_ = b.Store.AddTelegramTaskMessage(ctx, store.TelegramMessage{ChatID: d.ChatID, MessageID: d.CardMessageID, TaskID: v.ID, Kind: "draft_created"})
 		}
 		_ = b.Store.DeleteTelegramDraft(ctx, d.ID)
 		answer("Task created")
