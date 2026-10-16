@@ -28,6 +28,7 @@ type imageState struct {
 type album struct {
 	parts []*telego.Message
 	timer *time.Timer
+	first time.Time // when the first part arrived
 }
 
 type promptKey struct{ chatID, messageID int64 }
@@ -41,6 +42,23 @@ type pendingImages struct {
 }
 
 type albumMediaKey struct{}
+
+type arrivedKey struct{}
+
+// withArrived records when a message (an album: its first part) arrived, so
+// the draft merge window is measured from there, not from when the album was
+// handled after collecting its parts.
+func withArrived(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, arrivedKey{}, t)
+}
+
+func arrived(ctx context.Context) time.Time {
+	if t, ok := ctx.Value(arrivedKey{}).(time.Time); ok {
+		return t
+	}
+	return time.Now()
+}
+
 type albumAcknowledgedKey struct{}
 
 // withAlbumMedia carries the media of an album's other parts to
@@ -107,7 +125,7 @@ func (b *Bot) collectAlbum(ctx context.Context, m *telego.Message) {
 	key := fmt.Sprintf("%d/%s", m.Chat.ID, m.MediaGroupID)
 	a := b.images.albums[key]
 	if a == nil {
-		a = &album{}
+		a = &album{first: time.Now()}
 		b.images.albums[key] = a
 	} else {
 		a.timer.Stop()
@@ -118,7 +136,7 @@ func (b *Bot) collectAlbum(ctx context.Context, m *telego.Message) {
 		parts := a.parts
 		delete(b.images.albums, key)
 		b.images.mu.Unlock()
-		b.handleAlbum(ctx, parts)
+		b.handleAlbum(withArrived(ctx, a.first), parts)
 	})
 }
 

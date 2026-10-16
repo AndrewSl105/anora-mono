@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
@@ -405,15 +404,7 @@ func (b *Bot) mergeDraft(ctx context.Context, m *telego.Message) error {
 	} else if p, r, err := b.Store.TelegramChatProject(ctx, m.Chat.ID, int64(m.MessageThreadID)); err == nil {
 		project, repo = p, r
 	}
-	window := b.MergeWindow
-	if m.MediaGroupID != "" {
-		wait := b.AlbumWait
-		if wait == 0 {
-			wait = defaultAlbumWait
-		}
-		window += wait
-	}
-	d, err := b.Store.MergeTelegramDraft(ctx, m.Chat.ID, int64(m.MessageThreadID), int64(m.MessageID), project, repo, text, media, time.Now().Add(-window))
+	d, err := b.Store.MergeTelegramDraft(ctx, m.Chat.ID, int64(m.MessageThreadID), int64(m.MessageID), project, repo, text, media, arrived(ctx).Add(-b.MergeWindow))
 	if err != nil {
 		return err
 	}
