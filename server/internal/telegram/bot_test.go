@@ -51,7 +51,11 @@ func (f *fakeAPI) EditMessageText(_ context.Context, p *telego.EditMessageTextPa
 func (f *fakeAPI) EditMessageReplyMarkup(_ context.Context, p *telego.EditMessageReplyMarkupParams) (*telego.Message, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.edits = append(f.edits, sent{chat: p.ChatID.ID, msgID: p.MessageID, markup: p.ReplyMarkup})
+	var markup any
+	if p.ReplyMarkup != nil { // a typed nil in `any` would not compare equal to nil
+		markup = p.ReplyMarkup
+	}
+	f.edits = append(f.edits, sent{chat: p.ChatID.ID, msgID: p.MessageID, markup: markup})
 	return &telego.Message{MessageID: p.MessageID}, nil
 }
 
