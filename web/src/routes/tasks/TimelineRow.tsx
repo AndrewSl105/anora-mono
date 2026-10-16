@@ -15,6 +15,7 @@ import type { TimelineItem } from '@/lib/timeline'
 import { STATUS } from '@/lib/status'
 import { cn } from '@/lib/utils'
 import { Markdown } from '@/components/Markdown'
+import { AttachmentGrid } from '@/components/attachments/AttachmentGrid'
 import { CopyButton } from '@/components/CopyButton'
 import { t } from '@/i18n/en'
 
@@ -78,7 +79,7 @@ function ToolRow({ item }: { item: Extract<TimelineItem, { kind: 'tool' }> }) {
   )
 }
 
-function TimelineRowImpl({ item }: { item: TimelineItem }) {
+function TimelineRowImpl({ item, taskId }: { item: TimelineItem; taskId: number }) {
   switch (item.kind) {
     case 'claude':
       return (
@@ -96,12 +97,20 @@ function TimelineRowImpl({ item }: { item: TimelineItem }) {
             )}
           >
             {item.text}
+            {item.attachments && <AttachmentGrid taskId={taskId} items={item.attachments} className="mt-2" />}
             {item.pending ? (
               <div className="mt-1 text-[11px] opacity-80">{tl.sending}</div>
             ) : (
               item.note && <div className="mt-1 text-[11px] opacity-80">{noteText(item.note)}</div>
             )}
           </div>
+        </div>
+      )
+    case 'attachments':
+      return (
+        <div className="flex flex-col items-end gap-1">
+          <AttachmentGrid taskId={taskId} items={item.attachments} />
+          <span className="text-[11px] text-muted-foreground">{t.attachments.taskImages(item.attachments.length)}</span>
         </div>
       )
     case 'tool':

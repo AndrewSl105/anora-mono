@@ -148,7 +148,7 @@ export function Timeline({ task, items: loaded, older, loading, stopping }: Prop
                         open={answerable && !item.answer && task.open_question?.id === item.questionId}
                       />
                     ) : (
-                      <TimelineRow item={item} />
+                      <TimelineRow item={item} taskId={task.id} />
                     )}
                   </div>
                 )

@@ -1,4 +1,4 @@
-import type { ApiEvent, TaskStatus } from '@/api/types'
+import type { ApiEvent, Attachment, TaskStatus } from '@/api/types'
 import { fullQuestionId } from '@/api/events'
 
 export type TimelineItem =
@@ -11,7 +11,10 @@ export type TimelineItem =
       /** queued: waiting for the run to end; dropped: the task ended first; injected: legacy timelines. */
       note?: 'queued' | 'injected' | { dropped: string }
       pending?: boolean
+      attachments?: Attachment[]
     }
+  /** Images attached when the task was created (the prompt itself is on the Info tab). */
+  | { kind: 'attachments'; key: string; attachments: Attachment[]; at: string }
   | { kind: 'tool'; key: string; tool: string; summary: string; ok: boolean | null; error?: string; at: string }
   | {
       kind: 'question'
@@ -114,11 +117,17 @@ export function buildTimeline(events: ApiEvent[], local: ApiEvent[] = []): Timel
       case 'message': {
         const m = e.payload
         const item: Extract<TimelineItem, { kind: 'user' }> = { kind: 'user', key, text: m.text, at, pending }
+        if (m.attachments?.length) item.attachments = m.attachments
         if (m.delivery === 'queued') {
           item.note = 'queued'
           waiting.push(item)
         } else if (m.delivery === 'injected') item.note = 'injected'
         items.push(item)
+        break
+      }
+      case 'created': {
+        const atts = e.payload.attachments
+        if (atts.length) items.push({ kind: 'attachments', key, attachments: atts, at })
         break
       }
       case 'message_dropped':

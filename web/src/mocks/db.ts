@@ -1,4 +1,4 @@
-import type { ApiEvent, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
+import type { ApiEvent, Attachment, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
 
 // In-memory backend for mock mode (VITE_MOCK=1) and tests. Shapes follow
 // docs/openapi.yaml; the OpenAPI file has no examples to generate from.
@@ -39,6 +39,7 @@ type Db = {
   events: Map<number, ApiEvent[]>
   runs: Map<number, Run[]>
   questions: Map<number, Question[]>
+  attachments: Map<number, MockAttachment>
   nextEventId: number
   nextTaskId: number
   nextRepoId: number
@@ -51,11 +52,26 @@ export const db: Db = {
   events: new Map(),
   runs: new Map(),
   questions: new Map(),
+  attachments: new Map(),
   nextEventId: 1,
   nextTaskId: 1,
   nextRepoId: 10,
   nextRunId: 1,
 }
+
+export type MockAttachment = { taskId: number; meta: Attachment; bytes: Uint8Array; deleted: boolean }
+
+let nextAttachmentId = 1
+
+/** Stores an image like the backend (in memory) and returns its event metadata. */
+export function addAttachment(taskId: number, name: string, mime: string, bytes: Uint8Array, width: number, height: number): Attachment {
+  const meta: Attachment = { id: nextAttachmentId++, name, mime: mime as Attachment['mime'], size: bytes.byteLength, width, height }
+  db.attachments.set(meta.id, { taskId, meta, bytes, deleted: false })
+  return meta
+}
+
+/** A small UI mockup (160×100 PNG) for seeded attachments. */
+const DEMO_PNG = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAKAAAABkCAIAAACO1KzYAAABAklEQVR42u3dsQmAMBRF0ezkBC6jw1rbq5WljSCSQhdQBBHC98AdIOR0eUVS1QwKXHIFgAVYgAVYgAVYgAELsAALsAALsAD/FnjbswIHGLAAC7AAC7AA6xnwNC9FdXXOrh91BhgwYMCAAQMGDBgwYMCAAQMGDBgwYMCAvwNW8LFBgAEDBgwYMGDAgAEDBhzwoQMwYMCAAQMGDBgwYMCAAQMGDBgwYMCAARsbjA2AAQMGDBiwAAswYMCAAQMGDPgtcN2uhQQYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBgwYMGDAgAEDBuxzSgEWYMACLMACLMACLMCABViABViABVg3HWD39G8mgeiqAAAAAElFTkSuQmCC'), (c) => c.charCodeAt(0))
 
 export function addEvent(taskId: number, type: string, payload: Record<string, unknown>, runner = false, createdAt?: string): ApiEvent {
   const list = db.events.get(taskId) ?? []
@@ -167,6 +183,11 @@ export function setStatus(task: Task, status: TaskStatus, reason?: string) {
   task.updated_at = new Date().toISOString()
   task.finished_at = ['completed', 'failed', 'cancelled'].includes(status) ? task.updated_at : null
   addEvent(task.id, 'status', reason ? { status, reason } : { status })
+  // Like the backend, a completed task's images are removed (simplified: kept
+  // while a queued message waits, since it may carry some of them).
+  if (status === 'completed' && !task.queued_message) {
+    for (const a of db.attachments.values()) if (a.taskId === task.id) a.deleted = true
+  }
   const text = task.queued_message
   if (!text) return
   if (status === 'paused' || status === 'pr_open' || status === 'completed') {
@@ -224,6 +245,7 @@ export function seed() {
 
   // A task waiting for an answer.
   const t5 = makeTask({ project_id: 'anora', title: 'Retry webhook deliveries with backoff', status: 'queued', created_at: ago(25), source: 'telegram' })
+  addEvent(t5.id, 'created', { attachments: [addAttachment(t5.id, 'retry-flow.png', 'image/png', DEMO_PNG, 160, 100)] }, false, ago(25))
   const r5 = startRun(t5.id, 'initial', t5.prompt, ago(24))
   addEvent(t5.id, 'assistant_text', { text: 'Webhook deliveries currently fail hard on the first 5xx. I can add retries in `internal/webhooks`.' }, true, ago(23))
   addEvent(t5.id, 'tool_use', { tool: 'Grep', summary: 'Grep "deliver(" internal/' }, true, ago(23))
@@ -235,6 +257,10 @@ export function seed() {
 
   // A long finished task: its timeline needs several pages (scroll-up paging).
   const t7 = makeTask({ project_id: 'bioma', title: 'Migrate every component to the new design tokens', status: 'queued', created_at: ago(60 * 30) })
+  // Its image was removed when it completed: the timeline shows "Image removed".
+  const removed = addAttachment(t7.id, 'tokens.png', 'image/png', DEMO_PNG, 160, 100)
+  db.attachments.get(removed.id)!.deleted = true
+  addEvent(t7.id, 'created', { attachments: [removed] }, false, ago(60 * 30))
   startRun(t7.id, 'initial', t7.prompt, ago(60 * 30))
   for (let i = 1; i <= 260; i++) {
     const file = `src/components/C${String(i).padStart(3, '0')}.tsx`
@@ -264,6 +290,8 @@ export function resetDb() {
   db.events.clear()
   db.runs.clear()
   db.questions.clear()
+  db.attachments.clear()
+  nextAttachmentId = 1
   db.nextEventId = 1
   db.nextTaskId = 1
   db.nextRunId = 1

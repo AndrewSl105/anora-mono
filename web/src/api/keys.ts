@@ -11,6 +11,7 @@ export const keys = {
     events: (id: number) => ['tasks', 'events', id] as const,
     runs: (id: number) => ['tasks', 'runs', id] as const,
     diff: (id: number) => ['tasks', 'diff', id] as const,
+    attachment: (taskId: number, id: number, thumb: boolean) => ['tasks', 'attachment', taskId, id, thumb] as const,
   },
   projects: {
     all: ['projects'] as const,

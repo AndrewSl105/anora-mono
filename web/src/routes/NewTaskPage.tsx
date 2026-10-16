@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, Link } from 'react-router'
 import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -12,6 +12,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { PageSpinner } from '@/components/PageSpinner'
 import { PrimaryAction, useClosingConfirmation } from '@/telegram/controls'
+import { useImagePicker } from '@/components/attachments/useImagePicker'
+import { AttachButton, DropOverlay, PickedImages } from '@/components/attachments/PickedImages'
 import { haptic } from '@/telegram/haptics'
 import { storage } from '@/lib/storage'
 import { t } from '@/i18n/en'
@@ -49,7 +51,9 @@ export default function NewTaskPage() {
   const projectId = form.watch('project_id')
   const prompt = form.watch('prompt')
   const project = useMemo(() => projects.data?.find((p) => p.id === projectId), [projects.data, projectId])
-  useClosingConfirmation(prompt.trim().length > 0)
+  const picker = useImagePicker()
+  const [progress, setProgress] = useState<number | null>(null)
+  useClosingConfirmation(prompt.trim().length > 0 || picker.picked.length > 0)
 
   // Pre-select the last used project once projects load.
   useEffect(() => {
@@ -73,7 +77,14 @@ export default function NewTaskPage() {
 
   const submit = form.handleSubmit(async (values) => {
     try {
-      const task = await create.mutateAsync(toCreateBody(values))
+      const files = picker.files
+      if (files.length) setProgress(0)
+      const task = await create.mutateAsync({
+        ...toCreateBody(values),
+        files,
+        onProgress: files.length ? setProgress : undefined,
+      })
+      picker.clear()
       haptic.success()
       storage.set(LAST_PROJECT, values.project_id)
       storage.set(draftKey(values.project_id), null)
@@ -82,6 +93,8 @@ export default function NewTaskPage() {
     } catch (e) {
       haptic.error()
       toast.error(errorMessage(e))
+    } finally {
+      setProgress(null)
     }
   })
 
@@ -110,8 +123,10 @@ export default function NewTaskPage() {
             void submit()
           }
         }}
-        className="mx-auto max-w-2xl space-y-5 px-4 pt-4 pb-6"
+        className="relative mx-auto max-w-2xl space-y-5 px-4 pt-4 pb-6"
+        {...picker.dropProps}
       >
+        <DropOverlay show={picker.dragging} />
         <h1 className="text-xl font-semibold">{t.newTask.title}</h1>
 
         <div className="grid gap-5 sm:grid-cols-2">
@@ -171,8 +186,15 @@ export default function NewTaskPage() {
             placeholder={t.newTask.promptPlaceholder}
             className="min-h-40 field-sizing-content"
             aria-invalid={!!errors.prompt}
+            onPaste={picker.onPaste}
           />
           {errors.prompt && <p className="text-xs text-destructive">{errors.prompt.message}</p>}
+          <div className="flex items-start gap-2">
+            <AttachButton picker={picker} disabled={create.isPending} className="-ml-2" />
+            <div className="min-w-0 flex-1 pt-1">
+              <PickedImages picker={picker} progress={progress} />
+            </div>
+          </div>
         </div>
 
         <div className="space-y-2">

@@ -1,7 +1,7 @@
 import { http, HttpResponse, ws, delay } from 'msw'
 import type { ApiEvent, Project, Task } from '@/api/types'
 import { GROUPS } from '@/lib/status'
-import { addEvent, db, makeTask, startRun, taskView } from './db'
+import { addAttachment, addEvent, db, makeTask, startRun, taskView } from './db'
 import { emitStatus, interruptRun, resumeAfterAnswer, setPush } from './simulator'
 
 const SESSION_KEY = 'anora.mock.session'
@@ -33,6 +33,52 @@ function authed() {
 
 function csrf(request: Request) {
   return request.headers.get('X-Requested-With') === 'anora' ? null : err(403, 'csrf', 'Missing X-Requested-With')
+}
+
+const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
+const MB = 1024 * 1024
+
+type Body = { fields: Record<string, string | undefined>; files: File[] }
+
+/** JSON or multipart (fields + files[]), validated like the backend (API.md, "Attachments"). */
+async function readBody(request: Request, allowed: string[]): Promise<Body | { error: Response }> {
+  if (!(request.headers.get('Content-Type') ?? '').startsWith('multipart/form-data')) {
+    return { fields: (await request.json()) as Record<string, string | undefined>, files: [] }
+  }
+  const form = await request.formData()
+  const fields: Record<string, string | undefined> = {}
+  const files: File[] = []
+  for (const [key, value] of form.entries()) {
+    if (key === 'files[]' || key === 'files') {
+      if (typeof value === 'string') return { error: err(400, 'invalid', 'files[] must be files') }
+      files.push(value)
+    } else if (allowed.includes(key)) fields[key] = String(value)
+    else return { error: err(400, 'invalid', `unknown field "${key}"`) }
+  }
+  if (files.length > 10) return { error: err(400, 'invalid', 'at most 10 images per request') }
+  if (files.reduce((n, f) => n + f.size, 0) > 100 * MB) return { error: err(400, 'invalid', 'the images are larger than 100 MB together') }
+  for (const f of files) {
+    if (!IMAGE_TYPES.includes(f.type)) return { error: err(400, 'invalid', `"${f.name}" is not a PNG, JPEG, WebP or GIF image`) }
+    if (f.size > 40 * MB) return { error: err(400, 'invalid', `"${f.name}" is larger than 40 MB`) }
+  }
+  return { fields, files }
+}
+
+async function storeImages(taskId: number, files: File[]) {
+  const out = []
+  for (const f of files) {
+    let width = 0
+    let height = 0
+    try {
+      const bmp = await createImageBitmap(f)
+      ;({ width, height } = bmp)
+      bmp.close()
+    } catch {
+      // Dimensions are only cosmetic in mock mode.
+    }
+    out.push(addAttachment(taskId, f.name || 'image', f.type, new Uint8Array(await f.arrayBuffer()), width, height))
+  }
+  return out
 }
 
 function guard(request: Request) {
@@ -250,7 +296,10 @@ export const handlers = [
   http.post(`${API}/tasks`, async ({ request }) => {
     const denied = guard(request)
     if (denied) return denied
-    const body = (await request.json()) as { project_id: string; prompt: string; repository_id?: number; title?: string }
+    const read = await readBody(request, ['project_id', 'prompt', 'repository_id', 'title'])
+    if ('error' in read) return read.error
+    const f = read.fields
+    const body = { project_id: f.project_id, prompt: f.prompt ?? '', repository_id: f.repository_id ? Number(f.repository_id) : undefined, title: f.title }
     const p = db.projects.find((x) => x.id === body.project_id)
     if (!p) return err(404, 'not_found', 'No such project')
     if (!body.prompt?.trim()) return err(400, 'invalid', 'prompt is required')
@@ -261,6 +310,8 @@ export const handlers = [
       status: 'queued',
       repository_id: body.repository_id ?? p.repositories.find((r) => r.is_default)?.id ?? 1,
     })
+    const attachments = await storeImages(task.id, read.files)
+    addEvent(task.id, 'created', { attachments })
     startRun(task.id, 'initial', task.prompt)
     addEvent(task.id, 'status', { status: 'queued' })
     pushTask(task)
@@ -289,6 +340,15 @@ export const handlers = [
         : (db.events.get(task.id) ?? []).filter((e) => e.id > Number(q.get('after_id') ?? q.get('cursor') ?? 0))
     const items = all.slice(0, limit)
     return HttpResponse.json({ items, next_cursor: all.length > limit ? String(items[items.length - 1].id) : '' })
+  }),
+  http.get(`${API}/tasks/:id/attachments/:aid`, async ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const a = db.attachments.get(Number(params.aid))
+    if (!a || a.taskId !== Number(params.id)) return err(404, 'not_found', 'No such attachment')
+    if (a.deleted) return err(410, 'gone', 'the attachment was removed')
+    await delay(200)
+    return new HttpResponse(a.bytes.slice().buffer, { headers: { 'Content-Type': a.meta.mime, 'Cache-Control': 'private' } })
   }),
   http.get(`${API}/tasks/:id/runs`, ({ request, params }) => {
     const denied = guard(request)
@@ -328,12 +388,19 @@ export const handlers = [
     if (denied) return denied
     const task = findTask(params.id)
     if (!task) return err(404, 'not_found', 'No such task')
-    const body = (await request.json()) as { text: string }
+    const read = await readBody(request, ['text'])
+    if ('error' in read) return read.error
+    const body = { text: read.fields.text ?? '' }
+    if (!body.text.trim()) return err(400, 'invalid', 'text is required')
     const queue = ['queued', 'preparing', 'running', 'waiting_input', 'pushing'].includes(task.status)
     const followup = ['paused', 'pr_open', 'completed'].includes(task.status)
     if (!queue && !followup) return err(409, 'conflict', 'Not allowed in this state')
     await delay(250)
-    pushEvent(task.id, addEvent(task.id, 'message', { text: body.text, delivery: queue ? 'queued' : 'new_run' }))
+    const attachments = await storeImages(task.id, read.files)
+    pushEvent(
+      task.id,
+      addEvent(task.id, 'message', { text: body.text, delivery: queue ? 'queued' : 'new_run', ...(attachments.length ? { attachments } : {}) }),
+    )
     if (queue) {
       task.queued_message = task.queued_message ? `${task.queued_message}\n\n${body.text}` : body.text
       pushTask(task)

@@ -107,3 +107,25 @@ describe('composerMode', () => {
     expect(composerMode('cancelled')).toBeNull()
   })
 })
+
+describe('attachments', () => {
+  const att = { id: 5, name: 'mock.png', mime: 'image/png' as const, size: 100, width: 800, height: 600 }
+  const ev = (id: number, type: string, payload: unknown) =>
+    ({ id, task_id: 1, run_id: null, seq: null, type, payload, created_at: '2026-10-16T10:00:00Z' }) as unknown as ApiEvent
+
+  it('shows the task images from its created event', () => {
+    const items = buildTimeline([ev(1, 'created', { attachments: [att] })])
+    expect(items).toEqual([{ kind: 'attachments', key: '1', attachments: [att], at: '2026-10-16T10:00:00Z' }])
+  })
+
+  it('shows nothing for a created event without images', () => {
+    expect(buildTimeline([ev(1, 'created', { attachments: [] })])).toEqual([])
+  })
+
+  it('puts message images in the bubble', () => {
+    const [item] = buildTimeline([ev(2, 'message', { text: 'like this', delivery: 'new_run', attachments: [att] })])
+    expect(item).toMatchObject({ kind: 'user', text: 'like this', attachments: [att] })
+    const [plain] = buildTimeline([ev(3, 'message', { text: 'no images', delivery: 'new_run' })])
+    expect(plain).not.toHaveProperty('attachments')
+  })
+})

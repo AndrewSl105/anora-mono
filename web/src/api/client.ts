@@ -71,3 +71,58 @@ export async function call<T>(promise: Promise<FetchResult<T>>): Promise<T> {
   if (response.ok) return data as T
   throw await toApiError(response, error)
 }
+
+export type UploadProgress = (fraction: number) => void
+
+/**
+ * POSTs multipart/form-data with upload progress (fetch has none, so this is
+ * XHR). Same rules as `api`: CSRF header, the Telegram bearer token, cookies,
+ * and one re-auth + retry after a 401. Resolves with the JSON body on 2xx,
+ * rejects with an ApiError otherwise.
+ */
+export async function uploadForm<T>(path: string, form: FormData, onProgress?: UploadProgress): Promise<T> {
+  let res = await sendForm(path, form, onProgress)
+  if (res.status === 401 && onUnauthorized && !NO_REAUTH.some((p) => path.startsWith(p))) {
+    reauth ??= onUnauthorized().finally(() => {
+      reauth = null
+    })
+    if (await reauth) res = await sendForm(path, form, onProgress)
+  }
+  const body: unknown = res.body ? safeJson(res.body) : undefined
+  if (res.status >= 200 && res.status < 300) return body as T
+  throw await toApiError(new Response(null, { status: res.status, statusText: res.statusText, headers: res.headers }), body)
+}
+
+type FormResult = { status: number; statusText: string; body: string; headers: Headers }
+
+function sendForm(path: string, form: FormData, onProgress?: UploadProgress): Promise<FormResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', path)
+    xhr.withCredentials = true
+    xhr.setRequestHeader('X-Requested-With', 'anora')
+    if (bearer) xhr.setRequestHeader('Authorization', `Bearer ${bearer}`)
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) onProgress(e.loaded / e.total)
+      }
+    }
+    xhr.onload = () => {
+      const headers = new Headers()
+      const retryAfter = xhr.getResponseHeader('Retry-After')
+      if (retryAfter) headers.set('Retry-After', retryAfter)
+      resolve({ status: xhr.status, statusText: xhr.statusText, body: xhr.responseText, headers })
+    }
+    xhr.onerror = () => reject(new TypeError('Network error while uploading'))
+    xhr.onabort = () => reject(new DOMException('Upload aborted', 'AbortError'))
+    xhr.send(form)
+  })
+}
+
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text)
+  } catch {
+    return undefined
+  }
+}

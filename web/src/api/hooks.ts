@@ -6,7 +6,7 @@ import {
   type QueryClient,
 } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { api, call, CSRF } from './client'
+import { api, call, CSRF, uploadForm, type UploadProgress } from './client'
 import { keys, type TaskFilter } from './keys'
 import {
   addLocalEvent,
@@ -169,12 +169,24 @@ function useTaskResult() {
   }
 }
 
+type CreateBody = { project_id: string; prompt: string; repository_id?: number; title?: string }
+
+/** Multipart body: the JSON fields as form fields plus files[] (API.md, "Attachments"). */
+export function toFormData(fields: Record<string, string | number | undefined>, files: File[]): FormData {
+  const form = new FormData()
+  for (const [k, v] of Object.entries(fields)) if (v !== undefined) form.append(k, String(v))
+  for (const f of files) form.append('files[]', f, f.name || 'image')
+  return form
+}
+
 export function useCreateTask() {
   const qc = useQueryClient()
   const apply = useTaskResult()
   return useMutation({
-    mutationFn: (body: { project_id: string; prompt: string; repository_id?: number; title?: string }) =>
-      call(api.POST('/api/v1/tasks', { params: { header: CSRF }, body })),
+    mutationFn: ({ files = [], onProgress, ...body }: CreateBody & { files?: File[]; onProgress?: UploadProgress }) =>
+      files.length
+        ? uploadForm<TaskView>('/api/v1/tasks', toFormData(body, files), onProgress)
+        : call(api.POST('/api/v1/tasks', { params: { header: CSRF }, body })),
     onSuccess: (task) => {
       apply(task)
       void qc.invalidateQueries({ queryKey: keys.stats })
@@ -209,8 +221,10 @@ export function useSendMessage(taskId: number) {
   const qc = useQueryClient()
   const apply = useTaskResult()
   return useMutation({
-    mutationFn: ({ text }: { text: string; queued: boolean }) =>
-      call(api.POST('/api/v1/tasks/{id}/message', { params: { path: { id: taskId }, header: CSRF }, body: { text } })),
+    mutationFn: ({ text, files = [], onProgress }: { text: string; queued: boolean; files?: File[]; onProgress?: UploadProgress }) =>
+      files.length
+        ? uploadForm<TaskView>(`/api/v1/tasks/${taskId}/message`, toFormData({ text }, files), onProgress)
+        : call(api.POST('/api/v1/tasks/{id}/message', { params: { path: { id: taskId }, header: CSRF }, body: { text } })),
     onMutate: ({ text, queued }) => {
       const local = addLocalEvent(qc, taskId, 'message', { text, delivery: queued ? 'queued' : 'new_run' })
       return { localId: local.id }
@@ -381,4 +395,29 @@ export function useHealth() {
     },
     refetchInterval: 60_000,
   })
+}
+
+export type AttachmentImage = { state: 'loading' } | { state: 'ready'; blob: Blob } | { state: 'removed' } | { state: 'error' }
+
+/**
+ * An attachment (or its thumbnail) as a Blob, shown with BlobImage. Fetched
+ * through the API client rather than <img src> because Telegram Web sends a
+ * bearer token, which an image request cannot carry. `removed` after a 410.
+ */
+export function useAttachmentImage(taskId: number, attachmentId: number, thumb: boolean): AttachmentImage {
+  const q = useQuery({
+    queryKey: keys.tasks.attachment(taskId, attachmentId, thumb),
+    queryFn: () =>
+      call(
+        api.GET('/api/v1/tasks/{id}/attachments/{attachmentId}', {
+          params: { path: { id: taskId, attachmentId }, query: thumb ? { thumb: '1' } : {} },
+          parseAs: 'blob',
+        }),
+      ) as Promise<Blob>,
+    staleTime: Infinity,
+    gcTime: thumb ? 10 * 60_000 : 60_000,
+    retry: (n, e) => !isApiError(e, 'gone') && !isApiError(e, 'not_found') && n < 2,
+  })
+  if (q.error) return isApiError(q.error, 'gone') ? { state: 'removed' } : { state: 'error' }
+  return q.data ? { state: 'ready', blob: q.data } : { state: 'loading' }
 }
