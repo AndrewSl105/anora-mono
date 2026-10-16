@@ -1,10 +1,14 @@
 import { cn } from '@/lib/utils'
 
+// Source: docs/brand/anora-icon.svg (viewBox shifted to centre the glyph vertically).
 export function Logo({ className }: { className?: string }) {
   return (
-    <svg viewBox="0 0 48 48" className={cn('text-primary', className)} aria-hidden="true">
-      <rect width="48" height="48" rx="12" fill="currentColor" />
-      <path d="M14 34 24 13l10 21M18.5 26h11" fill="none" stroke="var(--primary-foreground)" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 -23.5 512 512" className={cn('text-[#4167F5]', className)} aria-hidden="true">
+      <path
+        fill="currentColor"
+        fillRule="evenodd"
+        d="M217 55 C226 37 241 28 260 28 H290 C309 28 325 38 334 56 L486 365 C503 400 480 437 441 437 H399 C379 437 362 427 353 409 L327 357 H188 L162 409 C153 427 136 437 116 437 H74 C35 437 12 400 29 365 Z M256 98 C233 98 215 116 215 139 C215 158 226 173 242 179 V209 C242 224 234 238 221 246 C212 252 200 255 184 255 C166 255 152 265 143 280 C121 279 104 296 104 317 C104 339 122 357 144 357 C166 357 184 339 184 317 C184 311 183 305 180 300 C183 295 188 293 197 293 C223 293 245 283 257 265 C269 283 291 293 317 293 C326 293 331 295 334 300 C331 305 330 311 330 317 C330 339 348 357 370 357 C392 357 410 339 410 317 C410 296 393 279 371 280 C362 265 348 255 330 255 C314 255 302 252 293 246 C280 238 272 224 272 209 V179 C288 173 299 158 299 139 C299 116 281 98 258 98 Z"
+      />
     </svg>
   )
 }
