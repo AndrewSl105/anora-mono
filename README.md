@@ -196,7 +196,7 @@ Restore with `docker compose -f docker-compose.deploy.yml exec -T postgres pg_re
 
 ## CI/CD
 
-- **`ci.yml`** (pull requests and `main`): path-filtered jobs. `server/**`, `agent/**` or `docs/openapi.yaml` → `go vet`, `go test -p 1` against Postgres with the fake agent image, golangci-lint. `agent/**` → typecheck and tests. `web/**` or `docs/openapi.yaml` → schema check (fails if `schema.ts` is stale), typecheck, lint, unit tests, build, bundle budgets, Playwright (mock mode). `deploy/**` → compose files and Caddyfile validate.
+- **`ci.yml`** (pushes to `main` and manual runs; not on pull requests): path-filtered jobs. `server/**`, `agent/**` or `docs/openapi.yaml` → `go vet`, `go test -p 1` against Postgres with the fake agent image, golangci-lint. `agent/**` → typecheck and tests. `web/**` or `docs/openapi.yaml` → schema check (fails if `schema.ts` is stale), typecheck, lint, unit tests, build, bundle budgets, Playwright (mock mode). `deploy/**` → compose files and Caddyfile validate.
 - **`release.yml`** (push to `main`, or by hand for everything): builds and pushes only the changed images (`<sha>` and `latest`, linux/amd64), copies the deploy files to `/srv/anora`, pulls the changed images and always the agent image, `docker compose up -d`, reloads Caddy.
 
 ## Operations
