@@ -528,6 +528,14 @@ func (s *Scheduler) handleEvent(ctx context.Context, t *store.Task, runID int64,
 	if stored == nil {
 		return // already persisted (replay)
 	}
+	// The question row must exist before the event is published: subscribers
+	// (the Telegram bot) look it up as soon as they see the event.
+	if ev.Type == runnermgr.EvQuestion {
+		q := store.Question{ID: tasks.QuestionID(runID, ev.QuestionID), TaskID: t.ID, RunID: runID, Text: ev.Text, Options: ev.Options}
+		if _, err := s.Store.CreateQuestion(ctx, q); err != nil {
+			s.log(t, runID).Error("store question", "err", err)
+		}
+	}
 	s.Hub.PublishEvent(stored)
 
 	switch ev.Type {
@@ -544,10 +552,6 @@ func (s *Scheduler) handleEvent(ctx context.Context, t *store.Task, runID int64,
 			}
 		}
 	case runnermgr.EvQuestion:
-		q := store.Question{ID: tasks.QuestionID(runID, ev.QuestionID), TaskID: t.ID, RunID: runID, Text: ev.Text, Options: ev.Options}
-		if _, err := s.Store.CreateQuestion(ctx, q); err != nil {
-			s.log(t, runID).Error("store question", "err", err)
-		}
 		if nt, err := s.Store.SetStatus(ctx, t.ID, []string{tasks.Running}, tasks.WaitingInput, "", false); err == nil {
 			s.Hub.PublishTask(nt)
 		}
