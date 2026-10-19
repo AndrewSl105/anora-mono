@@ -444,6 +444,17 @@ export const handlers = [
     return HttpResponse.json(taskView(task))
   }),
 
+  http.post(`${API}/tasks/:id/merge`, ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const task = findTask(params.id)
+    if (!task) return err(404, 'not_found', 'No such task')
+    if (task.status !== 'pr_open' || task.pr_number == null) return err(409, 'conflict', 'Not allowed')
+    pushEvent(task.id, addEvent(task.id, 'pr_closed', { number: task.pr_number, merged: true }))
+    emitStatus(task, 'completed', 'PR merged')
+    return HttpResponse.json(taskView(task))
+  }),
+
   // ---- System ----
   http.get(`${API}/stats`, ({ request }) => {
     const denied = guard(request)

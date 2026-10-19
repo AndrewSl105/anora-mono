@@ -242,13 +242,14 @@ export function useSendMessage(taskId: number) {
   })
 }
 
-type TaskActionKind = 'cancel' | 'interrupt' | 'retry'
+type TaskActionKind = 'cancel' | 'interrupt' | 'retry' | 'merge'
 const ACTION_PATH = {
   cancel: '/api/v1/tasks/{id}/cancel',
   interrupt: '/api/v1/tasks/{id}/interrupt',
   retry: '/api/v1/tasks/{id}/retry',
+  merge: '/api/v1/tasks/{id}/merge',
 } as const
-const ACTION_DONE = { cancel: t.task.cancelled, interrupt: t.task.interrupted, retry: t.task.retried }
+const ACTION_DONE = { cancel: t.task.cancelled, interrupt: t.task.interrupted, retry: t.task.retried, merge: t.task.merged }
 
 export function useTaskAction(taskId: number) {
   const apply = useTaskResult()

@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -80,6 +81,13 @@ func (f *fakeGitHub) serve(w http.ResponseWriter, r *http.Request) {
 		f.openPRs[in.Head] = n
 		w.WriteHeader(201)
 		_, _ = w.Write([]byte(`{"number":` + itoa(n) + `,"html_url":"https://github.com/o/r/pull/` + itoa(n) + `"}`))
+	case r.Method == "PUT" && r.URL.Path == "/repos/o/r/pulls/13/merge":
+		w.WriteHeader(405)
+		_, _ = w.Write([]byte(`{"message":"Pull Request is not mergeable"}`))
+	case r.Method == "PUT" && strings.HasPrefix(r.URL.Path, "/repos/o/r/pulls/") && strings.HasSuffix(r.URL.Path, "/merge"):
+		_, _ = w.Write([]byte(`{"sha":"abc","merged":true,"message":"Pull Request successfully merged"}`))
+	case r.Method == "DELETE" && strings.HasPrefix(r.URL.Path, "/repos/o/r/git/refs/heads/"):
+		w.WriteHeader(204)
 	case r.Method == "POST" && strings.HasPrefix(r.URL.Path, "/repos/o/r/issues/"):
 		w.WriteHeader(201)
 		_, _ = w.Write([]byte(`{"id":1}`))
@@ -312,5 +320,81 @@ func TestWebhook(t *testing.T) {
 	body = `{"zen":"hi"}`
 	if code := post("ping", body, sign([]byte("whsec"), []byte(body))); code != 200 {
 		t.Fatalf("ping: %d", code)
+	}
+}
+
+func TestMerge(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	f, srv := newFakeGitHub(t)
+	hub := events.NewHub()
+	svc := &tasks.Service{Store: st, Hub: hub}
+	ps := &projects.Service{Store: st}
+	name := "P"
+	_, _ = ps.Create(ctx, projects.CreateInput{ID: "p", ProjectFields: store.ProjectFields{Name: &name}})
+	_, _ = ps.AddRepository(ctx, "p", projects.RepoInput{FullName: "o/r", InstallationID: 11})
+	newTask := func(pr int) int64 {
+		v, err := svc.Create(ctx, tasks.CreateInput{ProjectID: "p", Prompt: "Do X"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = st.SetBranch(ctx, v.ID, "agent/x")
+		_ = st.SetPR(ctx, v.ID, pr, "https://github.com/o/r/pull/"+itoa(pr))
+		for _, s := range []string{tasks.Preparing, tasks.Running, tasks.Pushing, tasks.PROpen} {
+			if _, err := svc.SetStatus(ctx, v.ID, s, ""); err != nil {
+				t.Fatalf("%s: %v", s, err)
+			}
+		}
+		return v.ID
+	}
+	id := newTask(9)
+
+	if _, err := svc.Merge(ctx, id); !errors.Is(err, tasks.ErrGitHubDisabled) {
+		t.Fatalf("without GitHub: %v", err)
+	}
+	svc.GitHub = testApp(t, srv.URL)
+	v, err := svc.Merge(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Status != tasks.Completed || *v.StatusReason != "PR merged" {
+		t.Fatalf("status %s reason %v", v.Status, v.StatusReason)
+	}
+	body := f.bodies["PUT /repos/o/r/pulls/9/merge"]
+	for _, want := range []string{`"merge_method":"squash"`, `"commit_title":"Do X (#9)"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("merge body missing %s: %s", want, body)
+		}
+	}
+	if f.count("DELETE /repos/o/r/git/refs/heads/agent/x") != 1 {
+		t.Fatalf("branch not deleted: %v", f.requests)
+	}
+	if _, err := svc.Merge(ctx, id); !errors.Is(err, tasks.ErrConflict) {
+		t.Fatalf("merging twice: %v", err)
+	}
+
+	// The webhook that follows records nothing twice.
+	h := &Webhook{Secret: []byte("whsec"), Store: st, Hub: hub, Tasks: svc}
+	body = `{"action":"closed","number":9,"pull_request":{"number":9,"merged":true},"repository":{"full_name":"o/r"}}`
+	req := httptest.NewRequest("POST", "/webhooks/github", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GitHub-Event", "pull_request")
+	req.Header.Set("X-Hub-Signature-256", sign([]byte("whsec"), []byte(body)))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("webhook: %d", rec.Code)
+	}
+	if evs, _ := st.LastEvents(ctx, id, []string{"pr_closed"}, 5); len(evs) != 1 {
+		t.Fatalf("pr_closed events: %d", len(evs))
+	}
+
+	// GitHub refusing the merge leaves the task open and says why.
+	id = newTask(13)
+	if _, err := svc.Merge(ctx, id); !errors.Is(err, tasks.ErrNotMergeable) || !strings.Contains(err.Error(), "not mergeable") {
+		t.Fatalf("not mergeable: %v", err)
+	}
+	if tk, _ := st.GetTask(ctx, id); tk.Status != tasks.PROpen {
+		t.Fatalf("status %s", tk.Status)
 	}
 }
