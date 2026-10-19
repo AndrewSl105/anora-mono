@@ -52,7 +52,7 @@ export const GROUPS: Record<TaskGroup, TaskStatus[]> = {
 export const ACTIVE_STATUSES = GROUPS.active
 
 // Actions per status, from the status table in docs/API.md.
-export type TaskAction = 'cancel' | 'message' | 'interrupt' | 'answer' | 'retry'
+export type TaskAction = 'cancel' | 'message' | 'interrupt' | 'answer' | 'retry' | 'merge'
 
 const ACTIONS: Record<TaskStatus, TaskAction[]> = {
   queued: ['message', 'cancel'],
@@ -61,7 +61,7 @@ const ACTIONS: Record<TaskStatus, TaskAction[]> = {
   waiting_input: ['answer', 'message', 'interrupt', 'cancel'],
   paused: ['answer', 'message', 'cancel'],
   pushing: ['message', 'cancel'],
-  pr_open: ['message', 'cancel'],
+  pr_open: ['merge', 'message', 'cancel'],
   completed: ['message'],
   failed: ['retry'],
   cancelled: ['retry'],

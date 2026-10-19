@@ -212,6 +212,9 @@ func (b *Bot) taskButtons(ctx context.Context, t *store.Task, private bool) *tel
 		if t.PRURL != nil {
 			buttons = append(buttons, tu.InlineKeyboardButton(fmt.Sprintf("🔗 PR #%d", deref(t.PRNumber))).WithURL(*t.PRURL))
 		}
+		if t.PRNumber != nil && b.Tasks.GitHub != nil {
+			buttons = append(buttons, tu.InlineKeyboardButton("🔀 Merge").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "merge", TaskID: t.ID})))
+		}
 		if hasOpen {
 			buttons = append(buttons, open)
 		}
@@ -572,10 +575,58 @@ func (b *Bot) onCallback(ctx context.Context, cq *telego.CallbackQuery) {
 			return
 		}
 		answer("Retry started")
+	case "merge", "merge_back":
+		b.mergeButtons(ctx, cq, c, answer)
+	case "merge_confirm":
+		v, err := b.Tasks.Merge(ctx, c.TaskID)
+		if err != nil {
+			answer(errText(err))
+			return
+		}
+		answer(fmt.Sprintf("PR #%d merged", deref(v.PRNumber)))
 	case "draft_create", "draft_cancel", "draft_project", "draft_repo", "draft_edit":
 		b.handleDraftCallback(ctx, cq, c, answer)
 	default:
 		answer("Unknown action")
+	}
+}
+
+// mergeButtons swaps a task message's buttons for a merge confirmation
+// ("merge") or back to the task buttons ("merge_back").
+func (b *Bot) mergeButtons(ctx context.Context, cq *telego.CallbackQuery, c store.TelegramCallback, answer func(string)) {
+	t, err := b.Store.GetTask(ctx, c.TaskID)
+	if err != nil {
+		answer(errText(err))
+		return
+	}
+	m := cq.Message
+	if m == nil {
+		answer("Open the task to merge")
+		return
+	}
+	if t.Status != tasks.PROpen || t.PRNumber == nil {
+		answer("The PR is no longer open")
+		return
+	}
+	threadID := int64(0)
+	if mm := m.Message(); mm != nil {
+		threadID = int64(mm.MessageThreadID)
+	}
+	kb := b.taskButtons(ctx, t, threadID == 0 && m.GetChat().ID == b.OwnerID)
+	if c.Action == "merge" {
+		kb = tu.InlineKeyboard(tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton(fmt.Sprintf("✅ Squash-merge #%d", *t.PRNumber)).WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "merge_confirm", TaskID: t.ID})),
+			tu.InlineKeyboardButton("✖ Not now").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "merge_back", TaskID: t.ID})),
+		))
+	}
+	_, err = b.API.EditMessageReplyMarkup(ctx, &telego.EditMessageReplyMarkupParams{ChatID: tu.ID(m.GetChat().ID), MessageID: m.GetMessageID(), ReplyMarkup: kb})
+	if err != nil && !strings.Contains(err.Error(), "message is not modified") {
+		b.fail("merge_buttons", err)
+	}
+	if c.Action == "merge" {
+		answer(fmt.Sprintf("Squash-merge PR #%d and delete its branch?", *t.PRNumber))
+	} else {
+		answer("")
 	}
 }
 

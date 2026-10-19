@@ -2,6 +2,7 @@ package githubapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -79,7 +80,10 @@ func (h *Webhook) pullRequest(ctx context.Context, e *github.PullRequestEvent) e
 		return err
 	}
 	merged := pr.GetMerged()
-	h.event(ctx, t.ID, "pr_closed", map[string]any{"number": pr.GetNumber(), "merged": merged})
+	// A merge from Anora (tasks.Service.Merge) has already recorded it.
+	if !h.closedRecorded(ctx, t.ID, pr.GetNumber()) {
+		h.event(ctx, t.ID, "pr_closed", map[string]any{"number": pr.GetNumber(), "merged": merged})
+	}
 	if tasks.IsTerminal(t.Status) {
 		return nil
 	}
@@ -94,6 +98,19 @@ func (h *Webhook) pullRequest(ctx context.Context, e *github.PullRequestEvent) e
 		return err
 	}
 	return nil
+}
+
+// closedRecorded reports whether the task's latest PR event is already a
+// pr_closed for number.
+func (h *Webhook) closedRecorded(ctx context.Context, taskID int64, number int) bool {
+	evs, err := h.Store.LastEvents(ctx, taskID, []string{"pr_opened", "pr_updated", "pr_closed"}, 1)
+	if err != nil || len(evs) == 0 || evs[0].Type != "pr_closed" {
+		return false
+	}
+	var p struct {
+		Number int `json:"number"`
+	}
+	return json.Unmarshal(evs[0].Payload, &p) == nil && p.Number == number
 }
 
 // CIStatus maps GitHub's action/status/conclusion to pending|success|failure.

@@ -97,6 +97,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{id}/interrupt", a(s.control(s.Tasks.Interrupt)))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/cancel", a(s.control(s.Tasks.Cancel)))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", a(s.control(s.Tasks.Retry)))
+	mux.HandleFunc("POST /api/v1/tasks/{id}/merge", a(s.control(s.Tasks.Merge)))
 	mux.HandleFunc("GET /api/v1/stats", a(s.stats))
 	mux.HandleFunc("POST /api/v1/ws/ticket", a(s.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", s.requireSessionOrTicket(s.websocket))

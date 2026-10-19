@@ -452,3 +452,72 @@ func TestReplyRoutingQuestionThenFollowup(t *testing.T) {
 		t.Fatalf("follow-up not queued: %+v", task.QueuedMessage)
 	}
 }
+
+type fakeMerger struct{ merged []int }
+
+func (f *fakeMerger) MergePR(_ context.Context, _ string, _ int64, number int, _, _ string) error {
+	f.merged = append(f.merged, number)
+	return nil
+}
+
+func TestMergeButtonConfirms(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	api := &fakeAPI{}
+	merger := &fakeMerger{}
+	svc := &tasks.Service{Store: st, Hub: events.NewHub(), GitHub: merger}
+	name := "Demo"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "demo", ProjectFields: store.ProjectFields{Name: &name}})
+	_, _ = (&projects.Service{Store: st}).AddRepository(ctx, "demo", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+	v, err := svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = st.SetPR(ctx, v.ID, 7, "https://github.com/o/r/pull/7")
+	for _, s := range []string{tasks.Preparing, tasks.Running, tasks.Pushing, tasks.PROpen} {
+		if _, err := svc.SetStatus(ctx, v.ID, s, ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tk, _ := st.GetTask(ctx, v.ID)
+	b := &Bot{API: api, Store: st, Tasks: svc, Hub: svc.Hub, OwnerID: owner}
+	b.init()
+	button := func(kb *telego.InlineKeyboardMarkup, prefix string) string {
+		for _, row := range kb.InlineKeyboard {
+			for _, bt := range row {
+				if strings.HasPrefix(bt.Text, prefix) {
+					return bt.CallbackData
+				}
+			}
+		}
+		t.Fatalf("no %q button in %+v", prefix, kb)
+		return ""
+	}
+	tap := func(data string) {
+		b.HandleUpdate(ctx, telego.Update{CallbackQuery: &telego.CallbackQuery{
+			ID: "cb", From: telego.User{ID: owner}, Data: data,
+			Message: &telego.Message{MessageID: 9, Chat: telego.Chat{ID: owner, Type: "private"}},
+		}})
+	}
+
+	tap(button(b.taskButtons(ctx, tk, true), "🔀 Merge"))
+	_, edits, _ := api.snapshot()
+	if len(merger.merged) != 0 || len(edits) != 1 {
+		t.Fatalf("merged %v before confirming; edits %+v", merger.merged, edits)
+	}
+	confirm := button(edits[0].markup.(*telego.InlineKeyboardMarkup), "✅ Squash-merge #7")
+	tap(button(edits[0].markup.(*telego.InlineKeyboardMarkup), "✖ Not now"))
+	if _, edits, _ = api.snapshot(); len(edits) != 2 || len(merger.merged) != 0 {
+		t.Fatalf("not now: edits %+v merged %v", edits, merger.merged)
+	}
+	button(edits[1].markup.(*telego.InlineKeyboardMarkup), "🔀 Merge")
+
+	tap(confirm)
+	_, _, answers := api.snapshot()
+	if len(merger.merged) != 1 || merger.merged[0] != 7 || answers[len(answers)-1] != "PR #7 merged" {
+		t.Fatalf("merged %v answers %v", merger.merged, answers)
+	}
+	if tk, _ = st.GetTask(ctx, v.ID); tk.Status != tasks.Completed {
+		t.Fatalf("status %s", tk.Status)
+	}
+}

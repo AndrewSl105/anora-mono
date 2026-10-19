@@ -566,6 +566,20 @@ paths:
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
 
+  /api/v1/tasks/{id}/merge:
+    post:
+      operationId: mergeTask
+      tags: [tasks]
+      summary: Squash-merge the PR of a pr_open task, delete its branch and complete the task
+      parameters:
+        - $ref: '#/components/parameters/TaskID'
+        - $ref: '#/components/parameters/XRequestedWith'
+      responses:
+        '200': { description: Merged; the task is completed, content: { application/json: { schema: { $ref: '#/components/schemas/TaskView' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { description: 'Not pr_open (`conflict`), or GitHub refused the merge (`not_mergeable`; the message says why)', content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '503': { $ref: '#/components/responses/Error' }
+
   /api/v1/stats:
     get:
       operationId: getStats

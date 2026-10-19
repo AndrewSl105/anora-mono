@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router'
-import { ArrowLeft, Ban, Copy, ExternalLink, GitPullRequest, MoreVertical, OctagonPause, RotateCcw } from 'lucide-react'
+import { ArrowLeft, Ban, Copy, ExternalLink, GitMerge, GitPullRequest, MoreVertical, OctagonPause, RotateCcw } from 'lucide-react'
 import type { TaskView } from '@/api/types'
 import { useTaskAction } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
@@ -36,6 +36,13 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
     if (await confirm(t.task.confirmCancel, t.task.actions.cancel)) action.mutate('cancel')
   }
 
+  const canMerge = can(task.status, 'merge') && task.pr_number != null
+
+  async function merge() {
+    if (task.pr_number == null) return
+    if (await confirm(t.task.confirmMerge(task.pr_number), t.task.actions.merge)) action.mutate('merge')
+  }
+
   function copyBranch() {
     if (task.branch) void copyText(task.branch)
   }
@@ -67,6 +74,11 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
             {can(task.status, 'interrupt') && !stopping && (
               <DropdownMenuItem className="h-10" onSelect={() => action.mutate('interrupt')}>
                 <OctagonPause /> {t.task.actions.interrupt}
+              </DropdownMenuItem>
+            )}
+            {canMerge && (
+              <DropdownMenuItem className="h-10" disabled={action.isPending} onSelect={merge}>
+                <GitMerge /> {t.task.actions.mergePr(task.pr_number!)}
               </DropdownMenuItem>
             )}
             {can(task.status, 'retry') && (
@@ -116,6 +128,17 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
             <GitPullRequest className="size-3.5" aria-hidden="true" />
             {t.task.actions.openPr(task.pr_number)}
           </a>
+        )}
+        {canMerge && (
+          <button
+            type="button"
+            onClick={merge}
+            disabled={action.isPending}
+            className="inline-flex h-7 items-center gap-1 rounded-full bg-violet-600 px-2.5 font-medium text-white disabled:opacity-50"
+          >
+            <GitMerge className="size-3.5" aria-hidden="true" />
+            {t.task.actions.merge}
+          </button>
         )}
       </div>
       {task.branch && <p className="mt-1.5 truncate font-mono text-xs text-muted-foreground">{task.branch}</p>}

@@ -42,7 +42,9 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 	case errors.Is(err, tasks.ErrNotRunning):
 		writeError(w, http.StatusConflict, "not_running", err.Error())
-	case errors.Is(err, errGitHubDisabled):
+	case errors.Is(err, tasks.ErrNotMergeable):
+		writeError(w, http.StatusConflict, "not_mergeable", err.Error())
+	case errors.Is(err, errGitHubDisabled), errors.Is(err, tasks.ErrGitHubDisabled):
 		writeError(w, http.StatusServiceUnavailable, "github_disabled", err.Error())
 	default:
 		slog.ErrorContext(r.Context(), "request failed", "method", r.Method, "path", r.URL.Path, "err", err)
