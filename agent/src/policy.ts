@@ -18,6 +18,7 @@ const READ_TOOLS = new Set(["Read", "Grep", "Glob", "NotebookRead"]);
 export function checkTool(toolName: string, input: unknown, workspace: string): PolicyDecision {
   const inp = (input ?? {}) as Record<string, unknown>;
   if (toolName === "Bash") return checkBash(String(inp.command ?? ""));
+  if (toolName === "WebFetch" && CLAUDE_SHARE.test(String(inp.url ?? ""))) return deny(claudeShareReason);
 
   const paths = ["file_path", "notebook_path", "path", "pattern"]
     .map((k) => inp[k])
@@ -37,7 +38,15 @@ export function checkTool(toolName: string, input: unknown, workspace: string): 
   return ALLOW;
 }
 
-const environReason = "Reading process environments (/proc/*/environ) is not allowed in this sandbox.";
+// Published claude.ai artifacts and shared chats render in the browser from
+// /api/published_artifacts/<id> (or /api/chat_snapshots/<id>), which sits
+// behind a Cloudflare bot challenge: WebFetch and curl only ever get an empty
+// app shell or "Just a moment...". Say so instead of letting Claude guess.
+export const CLAUDE_SHARE = /\bclaude\.ai\/(?:public\/artifacts|share|api\/published_artifacts|api\/chat_snapshots)\//i;
+const claudeShareReason =
+  "claude.ai artifact and share links cannot be read from this sandbox: the page is rendered by JavaScript and its API is behind a bot challenge. Do not retry with other tools. Ask the owner with AskUserQuestion to paste the artifact's content (or commit it to the repository) instead.";
+
+const environReason ="Reading process environments (/proc/*/environ) is not allowed in this sandbox.";
 const githubReason = (p: string) =>
   `Changes under .github/ are not allowed (${p}). CI configuration is managed by the repository owner; describe the change you would make in your summary instead.`;
 
@@ -139,6 +148,7 @@ function checkSegment(toks: string[]): PolicyDecision {
   }
   if (cmd === "eval") return checkBash(args.join(" "));
 
+  if ((cmd === "curl" || cmd === "wget") && args.some((a) => CLAUDE_SHARE.test(a))) return deny(claudeShareReason);
   if (isDocker(cmd)) {
     return deny("Docker is not available to the agent. Run the project's tests and tools directly instead.");
   }

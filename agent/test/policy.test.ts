@@ -103,6 +103,20 @@ test("Bash tool goes through checkBash", () => {
   assert.equal(checkTool("Bash", { command: "npm test" }, WS).allow, true);
 });
 
+test("claude.ai artifact and share links get an explained no", () => {
+  const id = "0b9e3f6a-1c2d-4e5f-8a9b-0c1d2e3f4a5b";
+  for (const url of [`https://claude.ai/public/artifacts/${id}`, `https://claude.ai/public/artifacts/${id}/embed`, `https://claude.ai/share/${id}`, `https://claude.ai/api/published_artifacts/${id}`]) {
+    const d = checkTool("WebFetch", { url, prompt: "content" }, WS);
+    assert.equal(d.allow, false, url);
+    if (!d.allow) assert.match(d.reason, /paste/);
+    assert.equal(checkBash(`curl -sL ${url}`).allow, false, url);
+    assert.equal(checkBash(`wget -qO- '${url}'`).allow, false, url);
+  }
+  assert.equal(checkTool("WebFetch", { url: "https://docs.claude.com/en/docs", prompt: "x" }, WS).allow, true);
+  assert.equal(checkTool("WebFetch", { url: "https://claude.ai/", prompt: "x" }, WS).allow, true);
+  assert.equal(checkBash("curl -s https://example.com/share/x").allow, true);
+});
+
 test("attachments are readable but read-only", () => {
   for (const p of ["/attachments/1.png", "../attachments/2.jpg", "/attachments"]) {
     for (const tool of ["Write", "Edit"]) {
