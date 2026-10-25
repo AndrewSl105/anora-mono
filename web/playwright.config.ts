@@ -13,7 +13,8 @@ const PORT = Number(process.env.E2E_PORT ?? (backend ? 5173 : 5175))
 
 export default defineConfig({
   testDir: backend ? 'e2e/real' : 'e2e',
-  testIgnore: backend ? undefined : 'real/**',
+  // e2e/screenshots runs only through playwright.screenshots.config.ts (npm run screenshots).
+  testIgnore: backend ? undefined : ['real/**', 'screenshots/**'],
   timeout: backend ? 120_000 : 30_000,
   // One worker: Vite's first-run dependency optimisation races parallel page loads,
   // and the real backend runs tasks with a concurrency limit.
