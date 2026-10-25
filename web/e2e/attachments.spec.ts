@@ -8,7 +8,7 @@ test.beforeEach(async ({ page }) => {
   await page.goto('/')
   await page.evaluate(() => localStorage.clear())
   await page.goto('/')
-  await page.getByLabel('Password').fill('anora')
+  await page.getByLabel('Password').fill('fleetpocket')
   await page.getByLabel('Authenticator code').fill('123456')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
 })

@@ -8,8 +8,8 @@ import type { Session, SessionOutcome } from "./session.ts";
 const HEARTBEAT_MS = 15_000;
 
 async function main(): Promise<number> {
-  const workspace = process.env.ANORA_WORKSPACE ?? "/workspace";
-  const fake = process.env.ANORA_RUNNER_FAKE === "1";
+  const workspace = process.env.FLEETPOCKET_WORKSPACE ?? "/workspace";
+  const fake = process.env.FLEETPOCKET_RUNNER_FAKE === "1";
   const emitter = new Emitter({ workspace });
   const control = new Control(process.stdin);
 

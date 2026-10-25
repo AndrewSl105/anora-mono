@@ -10,8 +10,8 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 var commandList = []telego.BotCommand{
@@ -23,10 +23,10 @@ var commandList = []telego.BotCommand{
 	{Command: "retry", Description: "Retry a failed task"},
 	{Command: "projects", Description: "List projects"},
 	{Command: "bind", Description: "Bind this topic"},
-	{Command: "app", Description: "Open Anora"},
+	{Command: "app", Description: "Open Fleetpocket"},
 }
 
-const help = `<b>Anora</b>
+const help = `<b>Fleetpocket</b>
 Send text, photos, an image file, or a voice message to draft a task.
 Reply to any task card or notification to talk to that task.
 
@@ -199,12 +199,12 @@ func (b *Bot) handleCommand(ctx context.Context, m *telego.Message, cmd, args st
 		_, err := b.reply(ctx, m, fmt.Sprintf("This topic is now <b>%s</b>.", esc(args)), nil)
 		return err
 	case "app":
-		btn, ok := b.appButton("📱 Open Anora", "/", m.Chat.Type == "private")
+		btn, ok := b.appButton("📱 Open Fleetpocket", "/", m.Chat.Type == "private")
 		if !ok {
 			_, err := b.reply(ctx, m, "WEB_APP_URL is not configured.", nil)
 			return err
 		}
-		_, err := b.reply(ctx, m, "Anora", tu.InlineKeyboard(tu.InlineKeyboardRow(btn)))
+		_, err := b.reply(ctx, m, "Fleetpocket", tu.InlineKeyboard(tu.InlineKeyboardRow(btn)))
 		return err
 	default:
 		_, err := b.reply(ctx, m, help, nil)

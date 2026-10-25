@@ -12,7 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 type Metrics struct {
@@ -27,18 +27,18 @@ func New(st *store.Store) *Metrics {
 	m := &Metrics{
 		reg: prometheus.NewRegistry(),
 		runDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "anora_run_duration_seconds",
+			Name:    "fleetpocket_run_duration_seconds",
 			Help:    "Wall time of runner containers.",
 			Buckets: []float64{30, 60, 120, 300, 600, 1200, 1800, 3600, 7200},
 		}, []string{"project"}),
 		runnerExits: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "anora_runner_exits_total", Help: "Runner exits by exit code.",
+			Name: "fleetpocket_runner_exits_total", Help: "Runner exits by exit code.",
 		}, []string{"code"}),
 		telegramErrs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "anora_telegram_api_errors_total", Help: "Failed Telegram API calls.",
+			Name: "fleetpocket_telegram_api_errors_total", Help: "Failed Telegram API calls.",
 		}, []string{"op"}),
 		githubErrs: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "anora_github_api_errors_total", Help: "Failed GitHub API calls.",
+			Name: "fleetpocket_github_api_errors_total", Help: "Failed GitHub API calls.",
 		}, []string{"op"}),
 	}
 	m.reg.MustRegister(m.runDuration, m.runnerExits, m.telegramErrs, m.githubErrs,
@@ -63,9 +63,9 @@ func (m *Metrics) GitHubError(op string)   { m.githubErrs.WithLabelValues(op).In
 type dbCollector struct{ st *store.Store }
 
 var (
-	tasksDesc = prometheus.NewDesc("anora_tasks", "Tasks by status.", []string{"status"}, nil)
-	queueDesc = prometheus.NewDesc("anora_queue_length", "Tasks waiting for a slot.", nil, nil)
-	costDesc  = prometheus.NewDesc("anora_cost_usd_total", "Total Claude cost by project.", []string{"project"}, nil)
+	tasksDesc = prometheus.NewDesc("fleetpocket_tasks", "Tasks by status.", []string{"status"}, nil)
+	queueDesc = prometheus.NewDesc("fleetpocket_queue_length", "Tasks waiting for a slot.", nil, nil)
+	costDesc  = prometheus.NewDesc("fleetpocket_cost_usd_total", "Total Claude cost by project.", []string{"project"}, nil)
 )
 
 func (c *dbCollector) Describe(ch chan<- *prometheus.Desc) {

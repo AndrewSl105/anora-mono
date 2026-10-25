@@ -14,12 +14,12 @@ import (
 
 	"github.com/mymmrac/telego"
 
-	"github.com/andrewsl105/anora/server/internal/attachments"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 // imageEnv is a bot whose Telegram files are served by a test server: the

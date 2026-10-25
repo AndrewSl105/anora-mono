@@ -4,8 +4,8 @@ import { GROUPS } from '@/lib/status'
 import { addAttachment, addEvent, db, makeTask, startRun, taskView } from './db'
 import { emitStatus, interruptRun, resumeAfterAnswer, setPush } from './simulator'
 
-const SESSION_KEY = 'anora.mock.session'
-const PASSWORD = 'anora'
+const SESSION_KEY = 'fleetpocket.mock.session'
+const PASSWORD = 'fleetpocket'
 let failures = 0
 
 function session(): string | null {
@@ -32,7 +32,7 @@ function authed() {
 }
 
 function csrf(request: Request) {
-  return request.headers.get('X-Requested-With') === 'anora' ? null : err(403, 'csrf', 'Missing X-Requested-With')
+  return request.headers.get('X-Requested-With') === 'fleetpocket' ? null : err(403, 'csrf', 'Missing X-Requested-With')
 }
 
 const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif']
@@ -275,7 +275,7 @@ export const handlers = [
     const denied = guard(request)
     if (denied) return denied
     await delay(300)
-    const names = ['vatary-server', 'vatary-web', 'anora-runner', 'anora-client', 'bioma', 'leadflow', 'streambox-nextjs']
+    const names = ['vatary-server', 'vatary-web', 'fleetpocket-runner', 'fleetpocket-client', 'bioma', 'leadflow', 'streambox-nextjs']
     return HttpResponse.json({
       items: names.map((n, i) => ({ full_name: `andrewsl105/${n}`, default_branch: i % 2 ? 'main' : 'dev', private: i % 3 !== 0, installation_id: 123 })),
     })

@@ -19,15 +19,15 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
-	"github.com/andrewsl105/anora/server/internal/api"
-	"github.com/andrewsl105/anora/server/internal/attachments"
-	"github.com/andrewsl105/anora/server/internal/auth"
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/api"
+	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/auth"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 func setupWithFiles(t *testing.T) (*client, *store.Store) {
@@ -77,7 +77,7 @@ func (c *client) multipart(path string, parts ...part) (int, map[string]any) {
 	_ = mw.Close()
 	req, _ := http.NewRequest("POST", c.base+path, &b)
 	req.Header.Set("Content-Type", mw.FormDataContentType())
-	req.Header.Set("X-Requested-With", "anora")
+	req.Header.Set("X-Requested-With", "fleetpocket")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.t.Fatal(err)

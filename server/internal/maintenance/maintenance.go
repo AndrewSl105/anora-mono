@@ -7,8 +7,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 // Docker is the part of the runner manager cleanup needs.

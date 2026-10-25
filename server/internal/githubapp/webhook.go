@@ -9,9 +9,9 @@ import (
 
 	"github.com/google/go-github/v92/github"
 
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 // CIFailure describes a failed check for the OnCIFailed hook.
@@ -80,7 +80,7 @@ func (h *Webhook) pullRequest(ctx context.Context, e *github.PullRequestEvent) e
 		return err
 	}
 	merged := pr.GetMerged()
-	// A merge from Anora (tasks.Service.Merge) has already recorded it.
+	// A merge from Fleetpocket (tasks.Service.Merge) has already recorded it.
 	if !h.closedRecorded(ctx, t.ID, pr.GetNumber()) {
 		h.event(ctx, t.ID, "pr_closed", map[string]any{"number": pr.GetNumber(), "merged": merged})
 	}

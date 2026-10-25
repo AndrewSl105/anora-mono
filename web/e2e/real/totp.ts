@@ -1,6 +1,6 @@
 import { createHmac } from 'node:crypto'
 
-/** RFC 6238 code (SHA-1, 30 s, 6 digits) for a base32 secret, as `anora totp-setup` creates. */
+/** RFC 6238 code (SHA-1, 30 s, 6 digits) for a base32 secret, as `fleetpocket totp-setup` creates. */
 export function totp(secret: string, now = Date.now()): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
   let bits = ''
