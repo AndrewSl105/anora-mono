@@ -9,15 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/runnermgr"
-	"github.com/andrewsl105/anora/server/internal/scheduler"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
-	"github.com/andrewsl105/anora/server/internal/workspace"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
+	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/workspace"
 )
 
 // TestEndToEndPR runs a fake-runner task through push and PR creation against
@@ -30,9 +30,9 @@ func TestEndToEndPR(t *testing.T) {
 		t.Skip(err)
 	}
 	docker := &runnermgr.Manager{Docker: dc, SidecarMemory: "256m"}
-	image := os.Getenv("ANORA_TEST_RUNNER_IMAGE")
+	image := os.Getenv("FLEETPOCKET_TEST_RUNNER_IMAGE")
 	if image == "" {
-		image = "anora-agent:dev"
+		image = "fleetpocket-agent:dev"
 	}
 	if docker.Ping(ctx) != nil || docker.HasImage(ctx, image) != nil {
 		t.Skip("docker or runner image unavailable")
@@ -89,7 +89,7 @@ func TestEndToEndPR(t *testing.T) {
 	if tk.PRNumber == nil || *tk.PRNumber != 5 || !strings.Contains(*tk.PRURL, "/pull/5") {
 		t.Fatalf("pr %v %v", tk.PRNumber, tk.PRURL)
 	}
-	if !strings.Contains(f.bodies["POST /repos/o/r/pulls"], "Wrote ANORA_FAKE.md") {
+	if !strings.Contains(f.bodies["POST /repos/o/r/pulls"], "Wrote FLEETPOCKET_FAKE.md") {
 		t.Fatalf("PR body lacks summary: %s", f.bodies["POST /repos/o/r/pulls"])
 	}
 

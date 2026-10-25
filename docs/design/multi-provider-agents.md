@@ -30,7 +30,7 @@ The SDK is a thin wrapper. It spawns the bundled `codex` binary as `codex exec -
 | Turn / budget limits | **No max-turns or budget option** in `ThreadOptions` or the documented config. The adapter has to enforce both. |
 | Usage / cost | `turn.completed.usage = {input_tokens, cached_input_tokens, cache_write_input_tokens, output_tokens, reasoning_output_tokens}` **(pkg)**. **No USD cost.** |
 | Cancel / interrupt | `TurnOptions.signal` (AbortSignal) kills the child **(pkg)**. There is no soft "interrupt the turn but keep running". The rollout up to that point stays resumable **(verify)**. |
-| Mid-run input | None: one `runStreamed` per turn. That is fine, because Anora already runs one prompt per run. |
+| Mid-run input | None: one `runStreamed` per turn. That is fine, because Fleetpocket already runs one prompt per run. |
 | Ask-the-user | `codex exec` has no built-in tool that asks the user a question. Questions are only possible through our MCP tool. |
 | Local state | `$CODEX_HOME` (default `~/.codex`): config, `auth.json`, session rollouts, `history.jsonl`, `log/`, `sqlite_home` **(docs; rollout path layout: verify)**. `--ephemeral` disables rollouts, which would also break resume. |
 | Binary | `@openai/codex` uses per-platform optional deps; `@openai/codex-linux-x64` is **430 MB unpacked** (pkg metadata). |
@@ -155,9 +155,9 @@ Unknown keys are `400 invalid`. `model` is a free string (≤ 100 chars, `[A-Za-
 - `credential_status` = `configured` when the variable(s) for that provider are non-empty at startup. The API never accepts or returns key values.
 - `POST /tasks` and `rerun` with an unconfigured provider → `503 credential_missing` ("Codex is not configured: set OPENAI_API_KEY or CODEX_API_KEY on the server"), matching the existing `503 github_disabled` style. If a key is removed later, the scheduler fails the run with `failed: credential_missing` before starting a container.
 - The runner env is built per provider by an explicit allow-list, so a Codex runner never sees the Claude token and vice versa. Project `env` reserves all of these names plus `*_BASE_URL`, `CODEX_HOME`, `GEMINI_CLI_HOME`, `GEMINI_CLI_SYSTEM_SETTINGS_PATH`, `GEMINI_SYSTEM_MD`.
-- Fake mode (`ANORA_RUNNER_FAKE=1`) treats every provider as configured.
+- Fake mode (`FLEETPOCKET_RUNNER_FAKE=1`) treats every provider as configured.
 
-**Credential-injecting egress proxy (design only, not built).** A small `anora-egress` container on each task network would be the only route to the three API hosts. Runners would get a dummy key and a base URL pointing at the proxy (`http://egress:8080/<provider>`). The proxy swaps in the real header (`x-api-key`/`Authorization: Bearer`/`x-goog-api-key`) and forwards over TLS. Keys would then never be in the runner's env, which closes the "`node -e process.env`" residual risk in DECISIONS. Per provider: Claude `ANTHROPIC_BASE_URL` works (the OAuth subscription token would need the proxy to set `Authorization: Bearer`; verify), Codex `openai_base_url`/SDK `baseUrl` works, Gemini `GOOGLE_GEMINI_BASE_URL` works. Prerequisites: an egress allow-list for the API hosts, and a per-task proxy secret so another task cannot use it. Web search and fetch tools that the provider hosts are unaffected.
+**Credential-injecting egress proxy (design only, not built).** A small `fleetpocket-egress` container on each task network would be the only route to the three API hosts. Runners would get a dummy key and a base URL pointing at the proxy (`http://egress:8080/<provider>`). The proxy swaps in the real header (`x-api-key`/`Authorization: Bearer`/`x-goog-api-key`) and forwards over TLS. Keys would then never be in the runner's env, which closes the "`node -e process.env`" residual risk in DECISIONS. Per provider: Claude `ANTHROPIC_BASE_URL` works (the OAuth subscription token would need the proxy to set `Authorization: Bearer`; verify), Codex `openai_base_url`/SDK `baseUrl` works, Gemini `GOOGLE_GEMINI_BASE_URL` works. Prerequisites: an egress allow-list for the API hosts, and a per-task proxy secret so another task cannot use it. Web search and fetch tools that the provider hosts are unaffected.
 
 ### 2.5 Agent
 
@@ -168,7 +168,7 @@ agent/src/
   adapters/codex.ts   // @openai/codex-sdk
   adapters/gemini.ts  // spawns gemini, parses stream-json
   ask/bridge.ts       // unix-socket server in the agent: question/answer
-  ask/mcp-server.ts   // stdio MCP server "anora" with tool ask_owner, spawned by the CLI
+  ask/mcp-server.ts   // stdio MCP server "fleetpocket" with tool ask_owner, spawned by the CLI
   hooks/pretool.ts    // CLI-agnostic policy hook entry point (reads JSON on stdin)
   usage.ts            // per-session usage ledger in the state dir + pricing
 ```
@@ -184,9 +184,9 @@ interface Adapter {
 }
 ```
 
-- **Questions**: `ask_owner({question, options?})`. For Codex and Gemini it is a stdio MCP server (`node /app/dist/ask/mcp-server.js`) that the CLI spawns. It forwards the call over a Unix socket (`$XDG_RUNTIME_DIR` or `/tmp/anora-ask-<pid>.sock`, mode 0600) to the agent, which emits `question`, waits for `answer`, and returns the text as the tool result. Claude gets the same tool in-process (`createSdkMcpServer`), and `AskUserQuestion` is removed from its tools, so all three behave the same. Timeouts: Codex `tool_timeout_sec`, Gemini `timeout`, Claude `MCP_TOOL_TIMEOUT`, each set to `question_timeout_sec + 60`. On the question timeout the agent returns "not answered", aborts the session and emits `paused` (exit 3) as today. A socket is a listener but not a network one (DECISIONS entry).
+- **Questions**: `ask_owner({question, options?})`. For Codex and Gemini it is a stdio MCP server (`node /app/dist/ask/mcp-server.js`) that the CLI spawns. It forwards the call over a Unix socket (`$XDG_RUNTIME_DIR` or `/tmp/fleetpocket-ask-<pid>.sock`, mode 0600) to the agent, which emits `question`, waits for `answer`, and returns the text as the tool result. Claude gets the same tool in-process (`createSdkMcpServer`), and `AskUserQuestion` is removed from its tools, so all three behave the same. Timeouts: Codex `tool_timeout_sec`, Gemini `timeout`, Claude `MCP_TOOL_TIMEOUT`, each set to `question_timeout_sec + 60`. On the question timeout the agent returns "not answered", aborts the session and emits `paused` (exit 3) as today. A socket is a listener but not a network one (DECISIONS entry).
 - **Policy**: `policy.ts` stays the single rule set. Claude keeps it in-process (`PreToolUse`). Codex and Gemini call `node /app/dist/hooks/pretool.js` from `PreToolUse` (Codex) or `BeforeTool` (Gemini). Their tool names are mapped onto the existing ones: Codex `Bash`/`apply_patch` and Gemini `run_shell_command`/`write_file`/`replace`. See F2/F3 for the caveats.
-- **Config isolation**: the agent writes each CLI's config into the state dir at run start (Codex: `--config` overrides via the SDK; Gemini: a system settings file at `GEMINI_CLI_SYSTEM_SETTINGS_PATH=/tmp/anora/gemini-system.json`) with our MCP server, hooks, trust and turn limit. Repo-level `.codex/`/`.gemini/` config still loads, like Claude's `settingSources: ["project"]`. See Q8.
+- **Config isolation**: the agent writes each CLI's config into the state dir at run start (Codex: `--config` overrides via the SDK; Gemini: a system settings file at `GEMINI_CLI_SYSTEM_SETTINGS_PATH=/tmp/fleetpocket/gemini-system.json`) with our MCP server, hooks, trust and turn limit. Repo-level `.codex/`/`.gemini/` config still loads, like Claude's `settingSources: ["project"]`. See Q8.
 - **Sandbox**: Codex `sandboxMode: "danger-full-access"`, `approvalPolicy: "never"`. Gemini `--approval-mode yolo`, `--skip-trust`. The container is the sandbox, as it is for Claude today (F4).
 - **Event mapping** (no new event types):
 
@@ -208,16 +208,16 @@ interface Adapter {
 ### 2.6 Usage and cost
 
 - The `usage` event gains optional `cached_input_tokens`. `cost_usd_total` becomes **nullable** (also in `done`).
-- **Session-cumulative semantics are kept for every provider**: the agent keeps a ledger `<state dir>/anora-usage/<session_id>.json` in the provider's state volume and adds each run's tokens to it, so the backend's existing "per-run = this total − previous total" logic is unchanged.
+- **Session-cumulative semantics are kept for every provider**: the agent keeps a ledger `<state dir>/fleetpocket-usage/<session_id>.json` in the provider's state volume and adds each run's tokens to it, so the backend's existing "per-run = this total − previous total" logic is unchanged.
 - **Cost**: Claude reports it. For Codex and Gemini the server sends `run.pricing{input_usd_per_mtok, cached_input_usd_per_mtok, output_usd_per_mtok}` from its price table, the agent computes the cost, and the agent enforces `max_budget_usd` with it. Without a price entry `cost_usd_total` is `null`, the budget limit is not enforced (the server writes one `status`-style warning to the timeline; Q3), and `runs.cost_known=false`. This deviates slightly from "the server computes it": the agent must compute it to enforce the budget mid-run, and both use the server's one table.
 - Price table: `AGENT_PRICING` env (JSON), `{"codex:gpt-5.5":{"input":…,"cached_input":…,"output":…},"gemini:*":{…}}`, where `<provider>:*` is a fallback. A default file is not shipped, because prices change and invented numbers would be wrong.
-- Metrics: `anora_cost_usd_total{project, provider}`, `anora_tokens_total{provider, kind=input|output}`, a `provider` label on `anora_run_duration_seconds` and `anora_runner_exits_total`.
+- Metrics: `fleetpocket_cost_usd_total{project, provider}`, `fleetpocket_tokens_total{provider, kind=input|output}`, a `provider` label on `fleetpocket_run_duration_seconds` and `fleetpocket_runner_exits_total`.
 
 ### 2.7 Images and volumes
 
 **One image with all three adapters (recommended).** Size: Claude 265 MB, Codex 430 MB, Gemini 99 MB unpacked on top of a ~2 GB Playwright base, so about +0.5 GB (+25 %). Build time: one `npm ci`, cached, with no extra build stages. Attack surface: the extra binaries only run when selected and get no extra privilege or key, because the key is per provider and per run. One image keeps `RUNNER_IMAGE`, `projects.runner_image`, the release pull and the reconciler unchanged; three images would triple pull and deploy work and complicate project image overrides. The alternative (one image per provider) only pays off if size becomes a problem. It can be added later as `RUNNER_IMAGE_<PROVIDER>` without a protocol change.
 
-State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-claude-<task>`), label `anora.kind=agent-state` (cleanup also matches the legacy `claude-state`). Mounts: claude `/home/runner/.claude`, codex `/home/runner/.codex` with `CODEX_HOME` set, gemini `/home/runner/.gemini`. Retention removes them by label.
+State volumes: `fleetpocket-<provider>-<task>` (Claude keeps its current name `fleetpocket-claude-<task>`), label `fleetpocket.kind=agent-state` (cleanup also matches the legacy `claude-state`). Mounts: claude `/home/runner/.claude`, codex `/home/runner/.codex` with `CODEX_HOME` set, gemini `/home/runner/.gemini`. Retention removes them by label.
 
 ---
 
@@ -227,10 +227,10 @@ State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-c
 
 ```diff
 @@ section 3, Containers
--| `anora` (Go) | permanent | … | GitHub App key, Claude token, Telegram token |
-+| `anora` (Go) | permanent | … | GitHub App key, agent provider keys (Claude, OpenAI, Gemini), Telegram token |
--| `anora-agent-<task>` | one run | `anora-task-<task>` | Claude auth only |
-+| `anora-agent-<task>` | one run | `anora-task-<task>` | the key of the task's provider only |
+-| `fleetpocket` (Go) | permanent | … | GitHub App key, Claude token, Telegram token |
++| `fleetpocket` (Go) | permanent | … | GitHub App key, agent provider keys (Claude, OpenAI, Gemini), Telegram token |
+-| `fleetpocket-agent-<task>` | one run | `fleetpocket-task-<task>` | Claude auth only |
++| `fleetpocket-agent-<task>` | one run | `fleetpocket-task-<task>` | the key of the task's provider only |
 @@ Key rules
 -… It has internet egress (Anthropic API, npm, Go proxy, PyPI).
 +… It has internet egress (the provider API, npm, Go proxy, PyPI).
@@ -268,8 +268,8 @@ State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-c
 -| `DEFAULT_MODEL` | empty (SDK default) |  |
 +| `DEFAULT_MODEL` | empty | seeds the model of the default Claude profile once; profiles own models afterwards |
 @@ Runner manager
--- Create volume `anora-claude-<id>` mounted at `/home/runner/.claude` …
-+- Create volume `anora-<provider>-<id>` (label `anora.kind=agent-state`) mounted at the provider's state dir …
+-- Create volume `fleetpocket-claude-<id>` mounted at `/home/runner/.claude` …
++- Create volume `fleetpocket-<provider>-<id>` (label `fleetpocket.kind=agent-state`) mounted at the provider's state dir …
 -… project env plus auth env.
 +… project env plus the auth env of the task's provider only.
 @@ Workspace cleanup
@@ -341,8 +341,8 @@ State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-c
 +| `CODEX_API_KEY` | Codex auth |
 +| `GEMINI_API_KEY` | Gemini auth |
 +| `CODEX_HOME` | set by the backend to `/home/runner/.codex` (state volume) |
--| `ANORA_RUNNER_FAKE=1` | scripted session, no Claude: …
-+| `ANORA_RUNNER_FAKE=1` | scripted session for any `provider`, no API calls: …
+-| `FLEETPOCKET_RUNNER_FAKE=1` | scripted session, no Claude: …
++| `FLEETPOCKET_RUNNER_FAKE=1` | scripted session for any `provider`, no API calls: …
 ```
 
 ### 3.4 `docs/API.md`
@@ -412,7 +412,7 @@ State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-c
 - `503 credential_missing` follows the existing `503 github_disabled` pattern for "the server lacks configuration".
 - Codex key: `CODEX_API_KEY`, falling back to `OPENAI_API_KEY`, because `OPENAI_API_KEY` already serves STT and the owner may want separate keys or one key.
 - Cost for providers without USD reporting comes from `AGENT_PRICING`, sent to the runner as `run.pricing`, so the runner can enforce the budget mid-run; without an entry, cost is `null` and the budget is not enforced (turns and duration still are).
-- Metrics gain a `provider` label; `anora_cost_usd_total` counts only known costs.
+- Metrics gain a `provider` label; `fleetpocket_cost_usd_total` counts only known costs.
 
 **Agent**
 - One image with all three adapters: about +0.5 GB on a ~2 GB base, one build and pull, and unused CLIs gain no privilege or key; per-provider images can come later via `RUNNER_IMAGE_<PROVIDER>`.
@@ -422,7 +422,7 @@ State volumes: `anora-<provider>-<task>` (Claude keeps its current name `anora-c
 - Codex and Gemini have no soft interrupt; `interrupt` stops the CLI process and the run ends as `done` ("Interrupted by the user."), the same observable result as Claude.
 - Usage stays session-cumulative for all providers through a per-session ledger in the state volume, so the backend's per-run cost arithmetic is unchanged.
 - Gemini gets the extra system prompt through the global `GEMINI.md` in its state dir, because `GEMINI_SYSTEM_MD` replaces the whole system prompt; `effort` is rejected for Gemini (no CLI setting).
-- State volumes are `anora-<provider>-<task>` with label `anora.kind=agent-state`; Claude keeps its old name so existing paused tasks still resume.
+- State volumes are `fleetpocket-<provider>-<task>` with label `fleetpocket.kind=agent-state`; Claude keeps its old name so existing paused tasks still resume.
 
 **Web**
 - Provider badges are text plus a monochrome glyph, not vendor logos (bundle size, trademark use).

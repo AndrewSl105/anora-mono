@@ -1,4 +1,4 @@
-// JSON Lines protocol between Anora Runner (Go) and the runner.
+// JSON Lines protocol between Fleetpocket Runner (Go) and the runner.
 // Mirrored in internal/runnermgr/protocol.go; documented in docs/PROTOCOL.md.
 import { z } from "zod";
 

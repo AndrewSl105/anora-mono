@@ -17,9 +17,9 @@ import (
 	"github.com/mymmrac/telego"
 	tu "github.com/mymmrac/telego/telegoutil"
 
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 type API interface {
@@ -82,7 +82,7 @@ func (b *Bot) Run(ctx context.Context, tg *telego.Bot) error {
 	b.fail("set_commands", tg.SetMyCommands(ctx, &telego.SetMyCommandsParams{Commands: commandList}))
 	if b.WebAppURL != "" {
 		b.fail("set_menu", tg.SetChatMenuButton(ctx, &telego.SetChatMenuButtonParams{MenuButton: &telego.MenuButtonWebApp{
-			Type: telego.ButtonTypeWebApp, Text: "Open Anora", WebApp: telego.WebAppInfo{URL: b.WebAppURL},
+			Type: telego.ButtonTypeWebApp, Text: "Open Fleetpocket", WebApp: telego.WebAppInfo{URL: b.WebAppURL},
 		}}))
 	}
 	go b.follow(ctx)

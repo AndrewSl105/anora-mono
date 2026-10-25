@@ -9,9 +9,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/runnermgr"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 // Reconcile brings the database and Docker back in line after a restart:
@@ -112,10 +112,10 @@ func (s *Scheduler) reconcileRunner(ctx context.Context, c runnermgr.ContainerIn
 	s.finishRun(ctx, t.ID, run, c.ExitCode, out, time.Now())
 }
 
-// replayFile persists events from <workspace>/.anora/events.jsonl that are
+// replayFile persists events from <workspace>/.fleetpocket/events.jsonl that are
 // newer than what the database has, and fills out from the run's events.
 func (s *Scheduler) replayFile(ctx context.Context, t *store.Task, runID int64, out *runOutcome) {
-	f, err := os.Open(filepath.Join(s.Workspace.Path(t.ID), ".anora", "events.jsonl"))
+	f, err := os.Open(filepath.Join(s.Workspace.Path(t.ID), ".fleetpocket", "events.jsonl"))
 	if err != nil {
 		return
 	}

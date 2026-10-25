@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/attachments"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 func exists(t *testing.T, p string) bool {

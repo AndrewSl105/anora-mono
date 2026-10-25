@@ -54,7 +54,7 @@ describe('uploadForm', () => {
     const form = new FormData()
     await expect(uploadForm('/api/v1/tasks', form, (f) => progress.push(f))).resolves.toEqual({ id: 1 })
     expect(sent[0]).toMatchObject({ url: '/api/v1/tasks', credentials: true, body: form })
-    expect(sent[0].headers).toEqual({ 'X-Requested-With': 'anora', Authorization: 'Bearer tok' })
+    expect(sent[0].headers).toEqual({ 'X-Requested-With': 'fleetpocket', Authorization: 'Bearer tok' })
     expect(progress).toEqual([0.5])
   })
 

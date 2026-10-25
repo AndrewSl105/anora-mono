@@ -7,30 +7,30 @@
 #
 # Run from the repository root: workspaces live in ./.dev/workspaces and must
 # have the same absolute path on the host and in the container.
-name: anora-dev
+name: fleetpocket-dev
 
 services:
   server:
     build: { context: ../server }
-    image: anora-server:dev
+    image: fleetpocket-server:dev
     restart: unless-stopped
     env_file:
       # ADMIN_PASSWORD_HASH, ADMIN_TOTP_SECRET (and optionally anything else).
       - path: .env.dev
         required: false
     environment:
-      DATABASE_URL: postgres://anora:anora@postgres:5432/anora?sslmode=disable
+      DATABASE_URL: postgres://fleetpocket:fleetpocket@postgres:5432/fleetpocket?sslmode=disable
       DOCKER_HOST: tcp://docker-proxy:2375
-      WORKSPACES_DIR: ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
-      ATTACHMENTS_DIR: ${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
-      RUNNER_IMAGE: anora-agent:dev
-      ANORA_RUNNER_FAKE: "true"
+      WORKSPACES_DIR: ${FLEETPOCKET_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+      ATTACHMENTS_DIR: ${FLEETPOCKET_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
+      RUNNER_IMAGE: fleetpocket-agent:dev
+      FLEETPOCKET_RUNNER_FAKE: "true"
       COOKIE_INSECURE: "true"
       SECRETS_SCAN: "off"
       # The Vite dev server; its WebSocket proxy keeps the browser's Origin.
-      CORS_ORIGINS: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
-      PUBLIC_BASE_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
-      WEB_APP_URL: ${ANORA_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      CORS_ORIGINS: ${FLEETPOCKET_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      PUBLIC_BASE_URL: ${FLEETPOCKET_DEV_CLIENT_ORIGIN:-http://localhost:5173}
+      WEB_APP_URL: ${FLEETPOCKET_DEV_CLIENT_ORIGIN:-http://localhost:5173}
       SESSION_SECRET: dev-only-not-a-secret
       # Docker Desktop's file sharing (macOS) can report another owner for the
       # bind-mounted workspaces now and then, and git then refuses them
@@ -40,10 +40,10 @@ services:
       GIT_CONFIG_VALUE_0: "*"
       QUESTION_TIMEOUT: 20m
     ports:
-      - "127.0.0.1:${ANORA_DEV_PORT:-8080}:8080"
+      - "127.0.0.1:${FLEETPOCKET_DEV_PORT:-8080}:8080"
     volumes:
-      - ${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}:${ANORA_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
-      - ${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}:${ANORA_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
+      - ${FLEETPOCKET_DEV_WORKSPACES:-${PWD}/.dev/workspaces}:${FLEETPOCKET_DEV_WORKSPACES:-${PWD}/.dev/workspaces}
+      - ${FLEETPOCKET_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}:${FLEETPOCKET_DEV_ATTACHMENTS:-${PWD}/.dev/attachments}
     networks: [default, internal]
     depends_on:
       postgres:
@@ -57,14 +57,14 @@ services:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: anora
-      POSTGRES_PASSWORD: anora
-      POSTGRES_DB: anora
+      POSTGRES_USER: fleetpocket
+      POSTGRES_PASSWORD: fleetpocket
+      POSTGRES_DB: fleetpocket
     volumes:
       - pgdata:/var/lib/postgresql/data
     networks: [internal]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U anora -d anora"]
+      test: ["CMD-SHELL", "pg_isready -U fleetpocket -d fleetpocket"]
       interval: 2s
       retries: 30
 
@@ -86,12 +86,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     networks: [internal]
 
-  # Builds the agent image anora-agent:dev (the server never pulls or builds
+  # Builds the agent image fleetpocket-agent:dev (the server never pulls or builds
   # it); the container only prints a line and exits.
   agent:
     build: { context: ../agent }
-    image: anora-agent:dev
-    entrypoint: ["node", "-e", "console.log('anora-agent:dev built')"]
+    image: fleetpocket-agent:dev
+    entrypoint: ["node", "-e", "console.log('fleetpocket-agent:dev built')"]
     network_mode: none
 
 volumes:

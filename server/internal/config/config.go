@@ -1,4 +1,4 @@
-// Package config reads Anora Runner settings from the environment.
+// Package config reads Fleetpocket Runner settings from the environment.
 package config
 
 import (
@@ -69,7 +69,7 @@ type Config struct {
 	// SecretsScan is "gitleaks" (default) or "off" (local development only).
 	SecretsScan string
 
-	// RunnerFake starts runners with ANORA_RUNNER_FAKE=1 (tests and local dev).
+	// RunnerFake starts runners with FLEETPOCKET_RUNNER_FAKE=1 (tests and local dev).
 	RunnerFake bool
 }
 
@@ -83,9 +83,9 @@ func Load() (*Config, error) {
 		PublicBaseURL:  strings.TrimRight(e.str("PUBLIC_BASE_URL", ""), "/"),
 		DatabaseURL:    e.str("DATABASE_URL", ""),
 		DockerHost:     e.str("DOCKER_HOST", "tcp://docker-proxy:2375"),
-		WorkspacesDir:  e.str("WORKSPACES_DIR", "/srv/anora/workspaces"),
-		AttachmentsDir: e.str("ATTACHMENTS_DIR", "/srv/anora/attachments"),
-		RunnerImage:    e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/anora-agent:latest"),
+		WorkspacesDir:  e.str("WORKSPACES_DIR", "/srv/fleetpocket/workspaces"),
+		AttachmentsDir: e.str("ATTACHMENTS_DIR", "/srv/fleetpocket/attachments"),
+		RunnerImage:    e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/fleetpocket-agent:latest"),
 
 		ClaudeOAuthToken: e.str("CLAUDE_CODE_OAUTH_TOKEN", ""),
 		AnthropicAPIKey:  e.str("ANTHROPIC_API_KEY", ""),
@@ -125,7 +125,7 @@ func Load() (*Config, error) {
 		WorkspaceRetention:  e.dur("WORKSPACE_RETENTION", 7*24*time.Hour),
 
 		SecretsScan: e.str("SECRETS_SCAN", "gitleaks"),
-		RunnerFake:  e.bool("ANORA_RUNNER_FAKE", false),
+		RunnerFake:  e.bool("FLEETPOCKET_RUNNER_FAKE", false),
 	}
 	if c.MaxConcurrentTasks < 1 {
 		errs = append(errs, errors.New("MAX_CONCURRENT_TASKS must be >= 1"))
@@ -147,7 +147,7 @@ func (c *Config) Validate() error {
 	req("ADMIN_TOTP_SECRET", c.AdminTOTPSecret)
 	req("SESSION_SECRET", c.SessionSecret)
 	if !strings.HasPrefix(c.AdminPasswordHash, "$2") && c.AdminPasswordHash != "" {
-		errs = append(errs, errors.New("ADMIN_PASSWORD_HASH must be a bcrypt hash (use `anora hash-password`)"))
+		errs = append(errs, errors.New("ADMIN_PASSWORD_HASH must be a bcrypt hash (use `fleetpocket hash-password`)"))
 	}
 	if c.GitHubEnabled() && c.GitHubWebhookSecret == "" {
 		errs = append(errs, errors.New("GITHUB_WEBHOOK_SECRET is required with GITHUB_APP_ID"))

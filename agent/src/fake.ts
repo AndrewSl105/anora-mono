@@ -5,9 +5,9 @@ import { Cancelled, QuestionTimeout } from "./control.ts";
 import type { Emitter } from "./emitter.ts";
 import type { Session } from "./session.ts";
 
-export const FAKE_FILE = "ANORA_FAKE.md";
+export const FAKE_FILE = "FLEETPOCKET_FAKE.md";
 
-// fakeSession is a scripted session used by tests (ANORA_RUNNER_FAKE=1):
+// fakeSession is a scripted session used by tests (FLEETPOCKET_RUNNER_FAKE=1):
 // started, a few tool events, one question, wait for the answer, write a file.
 // The caller commits and emits done.
 export const fakeSession: Session = async ({ cmd, workspace, emitter, control }) => {

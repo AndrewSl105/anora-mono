@@ -1,5 +1,5 @@
 {
-  "name": "anora-client",
+  "name": "fleetpocket-client",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -15,7 +15,7 @@
     "e2e": "playwright test",
     "e2e:real": "E2E_BACKEND=${E2E_BACKEND:-http://localhost:8080} playwright test",
     "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/api/schema.ts",
-    "check:api": "openapi-typescript ../docs/openapi.yaml -o /tmp/anora-schema.ts && diff -q src/api/schema.ts /tmp/anora-schema.ts",
+    "check:api": "openapi-typescript ../docs/openapi.yaml -o /tmp/fleetpocket-schema.ts && diff -q src/api/schema.ts /tmp/fleetpocket-schema.ts",
     "check:size": "node scripts/check-size.mjs"
   },
   "overrides": {

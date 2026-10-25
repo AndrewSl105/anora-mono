@@ -1,6 +1,6 @@
 import { cn } from '@/lib/utils'
 
-// Source: docs/brand/anora-icon.svg (viewBox shifted to centre the glyph vertically).
+// Source: docs/brand/fleetpocket-icon.svg (viewBox shifted to centre the glyph vertically).
 export function Logo({ className }: { className?: string }) {
   return (
     <svg viewBox="0 -23.5 512 512" className={cn('text-[#4167F5]', className)} aria-hidden="true">

@@ -18,8 +18,8 @@ import { haptic } from '@/telegram/haptics'
 import { storage } from '@/lib/storage'
 import { t } from '@/i18n/en'
 
-const LAST_PROJECT = 'anora.lastProject'
-const draftKey = (project: string) => `anora.draft.${project}`
+const LAST_PROJECT = 'fleetpocket.lastProject'
+const draftKey = (project: string) => `fleetpocket.draft.${project}`
 
 const schema = z.object({
   project_id: z.string().min(1, t.newTask.projectRequired),

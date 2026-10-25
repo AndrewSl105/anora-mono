@@ -15,8 +15,8 @@ import (
 	"github.com/bradleyfalzon/ghinstallation/v2"
 	"github.com/google/go-github/v92/github"
 
-	"github.com/andrewsl105/anora/server/internal/api"
-	"github.com/andrewsl105/anora/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/api"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 type App struct {

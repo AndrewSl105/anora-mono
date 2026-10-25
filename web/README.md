@@ -1,6 +1,6 @@
-# Anora Client
+# Fleetpocket Client
 
-Web frontend of [Anora](../README.md): a Telegram Mini App on the phone and a normal website on desktop. Static SPA (React, TypeScript, Vite, Tailwind, shadcn/ui); all data goes through the Anora Runner REST API and WebSocket on the same domain.
+Web frontend of [Fleetpocket](../README.md): a Telegram Mini App on the phone and a normal website on desktop. Static SPA (React, TypeScript, Vite, Tailwind, shadcn/ui); all data goes through the Fleetpocket Runner REST API and WebSocket on the same domain.
 
 - Spec: [`docs/SPEC-web.md`](../docs/SPEC-web.md) · API contract: [`docs/openapi.yaml`](../docs/openapi.yaml), [`docs/API.md`](../docs/API.md) · decisions: [`docs/DECISIONS.md`](../docs/DECISIONS.md) (section Web)
 
@@ -8,7 +8,7 @@ Web frontend of [Anora](../README.md): a Telegram Mini App on the phone and a no
 
 ```sh
 npm ci
-cp .env.example .env.local   # set ANORA_BACKEND_URL
+cp .env.example .env.local   # set FLEETPOCKET_BACKEND_URL
 npm run dev                  # http://localhost:5173, proxies /api, /api/v1/ws, /healthz
 ```
 
@@ -18,7 +18,7 @@ npm run dev                  # http://localhost:5173, proxies /api, /api/v1/ws, 
 npm run dev:mock
 ```
 
-MSW serves the whole API from memory and a fake WebSocket streams events for the running task. Sign in with password `anora` and any 6-digit code except `000000`. Add `?tg=1` (and `&dark=1`) to the URL to fake the Telegram WebApp; Telegram's native buttons are not drawn in that mode.
+MSW serves the whole API from memory and a fake WebSocket streams events for the running task. Sign in with password `fleetpocket` and any 6-digit code except `000000`. Add `?tg=1` (and `&dark=1`) to the URL to fake the Telegram WebApp; Telegram's native buttons are not drawn in that mode.
 
 ### Scripts
 
@@ -28,14 +28,14 @@ MSW serves the whole API from memory and a fake WebSocket streams events for the
 | `npm run check:api` | fail if `schema.ts` is stale |
 | `npm run typecheck` / `lint` / `test` | tsc, ESLint, Vitest |
 | `npm run e2e` | Playwright smoke tests against mock mode |
-| `npm run e2e:real` | Playwright against a running Anora Runner (see below) |
+| `npm run e2e:real` | Playwright against a running Fleetpocket Runner (see below) |
 | `npm run build` then `npm run check:size` | production build, then bundle budgets (initial JS ≤ 180 KB, CSS ≤ 30 KB gzipped) |
 
 Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) and `VITE_DEBUG=1` (Telegram debug panel). There is no API URL: everything is same-origin.
 
 ### Against the real backend
 
-Start the dev stack (`make dev` at the repository root: server with the fake agent, no GitHub App, no Telegram); `npm run dev` proxies `/api` and `/api/v1/ws` to `http://localhost:8080` (`ANORA_BACKEND_URL` in `.env.local` changes it). Log in with the password and a code for the TOTP secret you put in its `deploy/.env.dev`.
+Start the dev stack (`make dev` at the repository root: server with the fake agent, no GitHub App, no Telegram); `npm run dev` proxies `/api` and `/api/v1/ws` to `http://localhost:8080` (`FLEETPOCKET_BACKEND_URL` in `.env.local` changes it). Log in with the password and a code for the TOTP secret you put in its `deploy/.env.dev`.
 
 ```sh
 E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
@@ -58,4 +58,4 @@ E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
 
 ## Deployment
 
-The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [server setup](../README.md#server-setup). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
+The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/fleetpocket-web`), behind Caddy on the same domain as the server; see the [server setup](../README.md#server-setup). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.

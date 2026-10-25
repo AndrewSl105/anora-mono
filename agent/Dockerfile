@@ -18,7 +18,7 @@ RUN apt-get update \
 RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | tar -C /usr/local -xz
 ENV PATH=/usr/local/go/bin:/home/runner/go/bin:$PATH
 
-# The runner user must be uid 1000 so workspaces are shared with Anora Runner.
+# The runner user must be uid 1000 so workspaces are shared with Fleetpocket Runner.
 RUN if getent passwd 1000 >/dev/null; then userdel -r "$(getent passwd 1000 | cut -d: -f1)"; fi \
  && useradd -m -u 1000 -s /bin/bash runner \
  && mkdir -p /home/runner/.claude /workspace \

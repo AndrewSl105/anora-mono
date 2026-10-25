@@ -10,7 +10,7 @@ import (
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 const wsPingInterval = 30 * time.Second

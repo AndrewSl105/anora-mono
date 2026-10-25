@@ -1,25 +1,25 @@
-# Anora Runner — build prompt for Claude Code
+# Fleetpocket Runner — build prompt for Claude Code
 
 2026-10-14 ·
 
 ## 1. Context and goal
 
-Build **Anora Runner**: a small, self-hosted Go service that runs Claude Code sessions in isolated Docker containers against my GitHub repositories and turns the result into a pull request. It is a personal tool with exactly one user (me), and it must work for any repository, not one specific project.
+Build **Fleetpocket Runner**: a small, self-hosted Go service that runs Claude Code sessions in isolated Docker containers against my GitHub repositories and turns the result into a pull request. It is a personal tool with exactly one user (me), and it must work for any repository, not one specific project.
 
-**How to use this document.** Put it in the new repo as `docs/SPEC.md` and tell Claude Code: "Read docs/SPEC.md and implement Anora Runner phase by phase as described in section 10. Stop after each phase and report." Everything below is written as instructions to the implementing agent.
+**How to use this document.** Put it in the new repo as `docs/SPEC.md` and tell Claude Code: "Read docs/SPEC.md and implement Fleetpocket Runner phase by phase as described in section 10. Stop after each phase and report." Everything below is written as instructions to the implementing agent.
 
-**Who calls Anora Runner.**
+**Who calls Fleetpocket Runner.**
 
 - A Telegram bot that lives inside this Go service.
-- A separate web frontend that also runs as a Telegram Mini App. It lives in another repo and only talks to this service's REST API and WebSocket. Anora Runner serves no HTML.
+- A separate web frontend that also runs as a Telegram Mini App. It lives in another repo and only talks to this service's REST API and WebSocket. Fleetpocket Runner serves no HTML.
 
-**What a task looks like from my side.** I write "Add CSV export to Tables" for project `vatary`. Anora Runner clones the repo, starts an isolated Claude Code session, streams progress to Telegram and the web, lets me answer Claude's questions, and opens a PR into `dev`. I review and merge it myself.
+**What a task looks like from my side.** I write "Add CSV export to Tables" for project `vatary`. Fleetpocket Runner clones the repo, starts an isolated Claude Code session, streams progress to Telegram and the web, lets me answer Claude's questions, and opens a PR into `dev`. I review and merge it myself.
 
 **Target server.** A dedicated VPS (Contabo, 4 vCPU, 8 GB RAM, 100 GB SSD, Ubuntu 24.04, Docker 29). Nothing else runs on it. It sits behind the provider's firewall with only ports 22, 80 and 443 open.
 
 ## 2. Scope, non-goals and repo layout
 
-One repo, `anora-runner`, holds the Go backend and the TypeScript runner, because the stdin/stdout protocol ties them together and they change together.
+One repo, `fleetpocket-runner`, holds the Go backend and the TypeScript runner, because the stdin/stdout protocol ties them together and they change together.
 
 **In scope for v1**
 
@@ -43,8 +43,8 @@ One repo, `anora-runner`, holds the Go backend and the TypeScript runner, becaus
 **Repo layout**
 
 ```
-anora-runner/
-├── cmd/anora/            # main.go: wires everything, starts HTTP + bot + scheduler
+fleetpocket-runner/
+├── cmd/fleetpocket/            # main.go: wires everything, starts HTTP + bot + scheduler
 ├── internal/
 │   ├── config/             # env parsing and defaults
 │   ├── store/              # pgx queries, migrations (embedded)
@@ -70,15 +70,15 @@ anora-runner/
 The backend owns every credential and every side effect; the runner only sees a folder and a prompt. This split is the core security property: a compromised or confused Claude session cannot push code, read other repos, or touch Docker.
 
 ```
-Only Anora Runner touches GitHub and Docker; the runner sees a folder
+Only Fleetpocket Runner touches GitHub and Docker; the runner sees a folder
 
  ┌──────────────┐      ┌─────────────────────────────┐  tokens   ┌──────────────────────────┐
- │ Telegram bot │─────▶│      Anora Runner (Go)      │──────────▶│ GitHub                   │
+ │ Telegram bot │─────▶│      Fleetpocket Runner (Go)      │──────────▶│ GitHub                   │
  │ (owner only) │      │ REST, WebSocket, TG bot     │           │ clone, push, PR, webhooks│
  └──────────────┘      │ Scheduler, state machine    │           └──────────────────────────┘
  ┌──────────────┐      │ GitHub App key, Claude token│  stdin / stdout
  │Web / Mini App│─────▶│ Events: persist, fan-out    │◀─────────────────────┐
- │ (separate)   │      └──────┬───────────────┬──────┘   ┌ Network anora-task-N ┐
+ │ (separate)   │      └──────┬───────────────┬──────┘   ┌ Network fleetpocket-task-N ┐
  └──────────────┘             ▼               ▼          │ ┌──────────────────┐ │
                         ┌──────────┐   ┌──────────────┐  │ │ Runner           │ │
                         │ Postgres │   │ docker-proxy │──┼▶│ Claude Code,     │ │
@@ -91,25 +91,25 @@ Only Anora Runner touches GitHub and Docker; the runner sees a folder
                                                          └──────────────────────┘
 ```
 
-Clients reach only Anora Runner; Anora Runner alone holds credentials and starts containers through the filtered Docker proxy; each runner lives in its own task network with its sidecars.
+Clients reach only Fleetpocket Runner; Fleetpocket Runner alone holds credentials and starts containers through the filtered Docker proxy; each runner lives in its own task network with its sidecars.
 
 **Containers**
 
 | Container | Lifetime | Networks | Holds |
 |---|---|---|---|
-| `anora` (Go) | permanent | `proxy` (public via reverse proxy), `internal` | GitHub App key, Claude token, Telegram token |
-| `anora-postgres` | permanent | `internal` | Anora Runner state |
+| `fleetpocket` (Go) | permanent | `proxy` (public via reverse proxy), `internal` | GitHub App key, Claude token, Telegram token |
+| `fleetpocket-postgres` | permanent | `internal` | Fleetpocket Runner state |
 | `docker-proxy` | permanent | `internal` | read-only `docker.sock`, filtered API |
-| `anora-agent-<task>` | one run | `anora-task-<task>` | Claude auth only |
-| `anora-svc-<task>-<name>` | one task | `anora-task-<task>` | throwaway Postgres/Redis |
+| `fleetpocket-agent-<task>` | one run | `fleetpocket-task-<task>` | Claude auth only |
+| `fleetpocket-svc-<task>-<name>` | one task | `fleetpocket-task-<task>` | throwaway Postgres/Redis |
 
 **Key rules**
 
-- Anora Runner talks to Docker only through `docker-socket-proxy` (`DOCKER_HOST=tcp://docker-proxy:2375`).
+- Fleetpocket Runner talks to Docker only through `docker-socket-proxy` (`DOCKER_HOST=tcp://docker-proxy:2375`).
 - Each task gets its own bridge network. Runner and its sidecars share it; nothing else is on it. It has internet egress (Anthropic API, npm, Go proxy, PyPI).
 - Runners never join `internal` or `proxy`.
 - Communication with the runner is only via its attached stdin/stdout. No ports.
-- Workspaces live on the host at `WORKSPACES_DIR` (default `/srv/anora/workspaces`), bind-mounted into Anora Runner at the **same path**, so the path Anora Runner uses is also valid for Docker bind mounts.
+- Workspaces live on the host at `WORKSPACES_DIR` (default `/srv/fleetpocket/workspaces`), bind-mounted into Fleetpocket Runner at the **same path**, so the path Fleetpocket Runner uses is also valid for Docker bind mounts.
 
 **Task lifecycle**
 
@@ -173,12 +173,12 @@ Exit codes: `0` done, `1` error, `2` cancelled, `3` paused, `4` limit exceeded (
 6. Limits: stop with exit 4 when turns, cost or wall time exceed the limits. Use an SDK budget option if one exists; otherwise enforce from the reported cost.
 7. Map every SDK message to the events above. Keep `summary` strings short; never dump file contents into events.
 8. At the end, if the tree changed: `git add -A`, commit with the given message and author, emit `committed`. Do not push. Then emit `done`.
-9. Also append every event to `/workspace/.anora/events.jsonl`, and add `.anora/` to `.git/info/exclude`, so Anora Runner can replay events it missed.
+9. Also append every event to `/workspace/.fleetpocket/events.jsonl`, and add `.fleetpocket/` to `.git/info/exclude`, so Fleetpocket Runner can replay events it missed.
 10. Handle SIGTERM like `cancel`.
 
 **Important:** SDK option and message names change between versions. Read the installed package's type definitions and current docs before coding; do not rely on memory.
 
-**Fake mode.** With `ANORA_RUNNER_FAKE=1`, do not call Claude: emit a scripted sequence (started, a few tool events, one question, wait for the answer, write a file, commit, done). The backend's integration tests use it.
+**Fake mode.** With `FLEETPOCKET_RUNNER_FAKE=1`, do not call Claude: emit a scripted sequence (started, a few tool events, one question, wait for the answer, write a file, commit, done). The backend's integration tests use it.
 
 **Dockerfile**
 
@@ -186,7 +186,7 @@ Exit codes: `0` done, `1` error, `2` cancelled, `3` paused, `4` limit exceeded (
 - Add: git, Go (latest stable), Python 3 with pip and venv, build-essential, ripgrep, jq.
 - Non-root user `runner` (uid 1000). Claude state in `/home/runner/.claude` (mounted per task by the backend).
 - `ENTRYPOINT ["node", "/app/dist/main.js"]`.
-- Tag `ghcr.io/andrewsl105/anora-agent:<git sha>` and `:latest`.
+- Tag `ghcr.io/andrewsl105/fleetpocket-agent:<git sha>` and `:latest`.
 
 ## 5. Backend (Go)
 
@@ -212,11 +212,11 @@ A single Go binary: REST + WebSocket API, Telegram bot, scheduler, Docker orches
 | Variable | Default | Notes |
 |---|---|---|
 | `HTTP_ADDR` | `:8080` |  |
-| `PUBLIC_BASE_URL` | — | e.g. `https://anora.example.com`, used in links and PR bodies |
+| `PUBLIC_BASE_URL` | — | e.g. `https://fleetpocket.example.com`, used in links and PR bodies |
 | `DATABASE_URL` | — |  |
 | `DOCKER_HOST` | `tcp://docker-proxy:2375` |  |
-| `WORKSPACES_DIR` | `/srv/anora/workspaces` | same path on host and in container |
-| `RUNNER_IMAGE` | `ghcr.io/andrewsl105/anora-agent:latest` | must already be pulled locally |
+| `WORKSPACES_DIR` | `/srv/fleetpocket/workspaces` | same path on host and in container |
+| `RUNNER_IMAGE` | `ghcr.io/andrewsl105/fleetpocket-agent:latest` | must already be pulled locally |
 | `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | — | passed to runners only |
 | `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY_PATH`, `GITHUB_WEBHOOK_SECRET` | — |  |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID` | — | bot ignores everyone else |
@@ -238,21 +238,21 @@ Project-level settings override defaults (section 6).
 
 **Runner manager (Docker)**
 
-- Create network `anora-task-<id>` (bridge, labelled).
+- Create network `fleetpocket-task-<id>` (bridge, labelled).
 - Start sidecars from the project's `services` list. Supported: `postgres` (image `postgres:17-alpine`, random password) and `redis` (`redis:7-alpine`). Wait for health. Expose them to the runner as `DATABASE_URL` and `REDIS_URL`.
-- Create volume `anora-claude-<id>` mounted at `/home/runner/.claude` so sessions can resume in a new container.
+- Create volume `fleetpocket-claude-<id>` mounted at `/home/runner/.claude` so sessions can resume in a new container.
 - Start the runner with `OpenStdin`, `AttachStdin/Stdout/Stderr`, `StdinOnce=false`, memory and CPU limits, `PidsLimit` 1024, `no-new-privileges`, all capabilities dropped, bind mount `WORKSPACES_DIR/<id>` to `/workspace`, project env plus auth env.
-- Labels on everything: `anora.task_id`, `anora.project`, `anora.run_id`, `anora.kind` (`runner` or `sidecar`). Cleanup and reconciliation select by label.
+- Labels on everything: `fleetpocket.task_id`, `fleetpocket.project`, `fleetpocket.run_id`, `fleetpocket.kind` (`runner` or `sidecar`). Cleanup and reconciliation select by label.
 - Read stdout line by line, validate, assign to the run, persist, publish. Stderr goes to logs. On exit, read the code and map it to the state machine.
 
-**Reconciliation on startup.** List containers with `anora.kind=runner`. Running ones: re-attach, replay `events.jsonl` from the last persisted `seq`, continue. Exited ones: replay, then apply the exit code. Tasks in `running` with no container: replay what exists, then mark `failed{reason:"lost"}`. Remove orphaned networks and sidecars.
+**Reconciliation on startup.** List containers with `fleetpocket.kind=runner`. Running ones: re-attach, replay `events.jsonl` from the last persisted `seq`, continue. Exited ones: replay, then apply the exit code. Tasks in `running` with no container: replay what exists, then mark `failed{reason:"lost"}`. Remove orphaned networks and sidecars.
 
 **GitHub App and workspace**
 
 - One private App on my personal account. Permissions: Contents RW, Pull requests RW, Metadata R, Checks R, Actions R. Events: `pull_request`, `check_suite`, `workflow_run`.
 - Mint an installation token per operation, scoped to the single repository. Never write tokens to disk or `.git/config`; pass them via a credential helper or an `http.extraHeader` for that one command only.
-- Clone with `--filter=blob:none`, base branch from the repository record, branch `agent/<id>-<slug>` (slug from the title, ASCII, max 40 chars). Commits are authored as `anora[bot]`.
-- Before push, validate the diff against the base: reject changes under `.github/`; reject files over 5 MB; reject total diff over 20 000 changed lines; run a secrets scan (e.g. `gitleaks` binary in the Anora Runner image) and reject on findings. A rejection sets the task to `failed` with the reason and keeps the workspace for inspection.
+- Clone with `--filter=blob:none`, base branch from the repository record, branch `agent/<id>-<slug>` (slug from the title, ASCII, max 40 chars). Commits are authored as `fleetpocket[bot]`.
+- Before push, validate the diff against the base: reject changes under `.github/`; reject files over 5 MB; reject total diff over 20 000 changed lines; run a secrets scan (e.g. `gitleaks` binary in the Fleetpocket Runner image) and reject on findings. A rejection sets the task to `failed` with the reason and keeps the workspace for inspection.
 - PR: title from the task, body with the task prompt, Claude's summary, files changed, cost, turns, and a link to the task. Create it once; later runs push to the same branch and add a PR comment with the new summary.
 - Webhooks at `POST /webhooks/github`: verify `X-Hub-Signature-256`, store CI conclusions on the task, notify via Telegram, mark the task `completed` when its PR is merged or closed. Leave a clearly marked hook (`OnCIFailed`) for future auto-fixing.
 
@@ -399,10 +399,10 @@ The web client is built later from `docs/API.md` and `docs/openapi.yaml` alone, 
 - One owner. Web login needs the password (bcrypt) **and** a TOTP code. Rate limit: 5 failed attempts per IP per 15 minutes, then `429`.
 - Session = random id in an `HttpOnly`, `Secure`, `SameSite=Lax` cookie, 30-day sliding expiry, stored in `auth_sessions`.
 - Mini App: verify `init_data` with the bot token per Telegram's documented HMAC algorithm, reject if `auth_date` is older than 1 hour, and require the user id to equal `TELEGRAM_ALLOWED_USER_ID`.
-- State-changing requests require the `X-Requested-With: anora` header (cheap CSRF guard alongside SameSite).
-- Add a CLI helper: `anora hash-password` and `anora totp-setup` (prints the secret and an `otpauth://` URI).
+- State-changing requests require the `X-Requested-With: fleetpocket` header (cheap CSRF guard alongside SameSite).
+- Add a CLI helper: `fleetpocket hash-password` and `fleetpocket totp-setup` (prints the secret and an `otpauth://` URI).
 
-**Same origin.** The reverse proxy serves the web client at `/` and routes `/api`, `/webhooks`, `/healthz` to Anora Runner on the same domain, so no CORS is needed. Keep `CORS_ORIGINS` for local development.
+**Same origin.** The reverse proxy serves the web client at `/` and routes `/api`, `/webhooks`, `/healthz` to Fleetpocket Runner on the same domain, so no CORS is needed. Keep `CORS_ORIGINS` for local development.
 
 ## 8. Telegram bot
 
@@ -435,34 +435,34 @@ The bot runs as a goroutine in the same process, uses long polling (no public we
 
 ## 9. Deployment, CI/CD and observability
 
-Deployment follows the pattern I already use: GitHub Actions builds images, pushes them to GHCR, and the server only holds `/srv/anora/docker-compose.deploy.yml` and `.env`. No source code lives on the server.
+Deployment follows the pattern I already use: GitHub Actions builds images, pushes them to GHCR, and the server only holds `/srv/fleetpocket/docker-compose.deploy.yml` and `.env`. No source code lives on the server.
 
-**Anora Runner image.** Multi-stage build, final stage Debian slim or Alpine with `git`, `ca-certificates` and `gitleaks`; runs as a non-root user that can write to `WORKSPACES_DIR`. Tag `ghcr.io/andrewsl105/anora-runner:<sha>` and `:latest`.
+**Fleetpocket Runner image.** Multi-stage build, final stage Debian slim or Alpine with `git`, `ca-certificates` and `gitleaks`; runs as a non-root user that can write to `WORKSPACES_DIR`. Tag `ghcr.io/andrewsl105/fleetpocket-runner:<sha>` and `:latest`.
 
 **`deploy/docker-compose.deploy.yml`** (adapt names, keep the structure)
 
 ```yaml
 services:
-  anora:
-    image: ghcr.io/andrewsl105/anora-runner:${ANORA_TAG:-latest}
+  fleetpocket:
+    image: ghcr.io/andrewsl105/fleetpocket-runner:${FLEETPOCKET_TAG:-latest}
     restart: unless-stopped
     env_file: .env
     environment:
       DOCKER_HOST: tcp://docker-proxy:2375
-      WORKSPACES_DIR: /srv/anora/workspaces
+      WORKSPACES_DIR: /srv/fleetpocket/workspaces
     volumes:
-      - /srv/anora/workspaces:/srv/anora/workspaces
-      - /srv/anora/secrets/github-app.pem:/secrets/github-app.pem:ro
+      - /srv/fleetpocket/workspaces:/srv/fleetpocket/workspaces
+      - /srv/fleetpocket/secrets/github-app.pem:/secrets/github-app.pem:ro
     networks: [proxy, internal]
-    depends_on: [anora-postgres, docker-proxy]
+    depends_on: [fleetpocket-postgres, docker-proxy]
 
-  anora-postgres:
+  fleetpocket-postgres:
     image: postgres:17-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: anora
+      POSTGRES_USER: fleetpocket
       POSTGRES_PASSWORD: ${PG_PASSWORD}
-      POSTGRES_DB: anora
+      POSTGRES_DB: fleetpocket
     volumes: [pgdata:/var/lib/postgresql/data]
     networks: [internal]
 
@@ -492,15 +492,15 @@ No service publishes ports. The reverse proxy (Caddy or Nginx Proxy Manager on t
 **Workflows**
 
 - `ci.yml` on pull requests: `go vet`, `go test ./...` (with a Postgres service), `golangci-lint`, runner `npm ci && npm run typecheck && npm test`.
-- `release.yml` on push to `main`: build and push both images, then SSH to the server (secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`), run `docker pull` for **both** the Anora Runner and runner images (Anora Runner starts runners from the local image and does not pull), then `docker compose -f docker-compose.deploy.yml up -d`.
-- Migrations run automatically on Anora Runner startup.
+- `release.yml` on push to `main`: build and push both images, then SSH to the server (secrets `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`), run `docker pull` for **both** the Fleetpocket Runner and runner images (Fleetpocket Runner starts runners from the local image and does not pull), then `docker compose -f docker-compose.deploy.yml up -d`.
+- Migrations run automatically on Fleetpocket Runner startup.
 
 **Observability**
 
 - `slog` JSON logs with `task_id`, `run_id`, `project` on every task-related line.
 - `/metrics`: tasks by status, queue length, run duration histogram, cost total per project, runner exits by code, Telegram and GitHub API errors.
 - `/healthz`: DB reachable and Docker reachable.
-- Back up `anora-postgres` daily with `pg_dump` (document the cron line in the README; no need to implement it in Go).
+- Back up `fleetpocket-postgres` daily with `pg_dump` (document the cron line in the README; no need to implement it in Go).
 
 ## 10. Implementation phases and working rules
 
@@ -521,7 +521,7 @@ Build in eight phases. Each phase ends with working, tested code, updated docs, 
 - When the spec is ambiguous or seems wrong, ask me instead of guessing. Record every decision that deviates from this spec in `docs/DECISIONS.md` with one line of reasoning.
 - Keep it small: no frameworks, ORMs or abstractions beyond what a section asks for. Prefer clear code over clever code.
 - Security properties in sections 3 and 5 are requirements, not suggestions: the runner gets no GitHub token, no Docker access, no host network; tokens never touch disk.
-- File ownership: Anora Runner and the runner both run as uid 1000 so workspaces written by one are writable by the other; document that `/srv/anora/workspaces` must be owned by uid 1000.
+- File ownership: Fleetpocket Runner and the runner both run as uid 1000 so workspaces written by one are writable by the other; document that `/srv/fleetpocket/workspaces` must be owned by uid 1000.
 - Tests: unit tests for the state machine, protocol parsing, diff validation, `initData` and webhook signature checks; integration tests with the fake runner against a real Docker daemon, skipped when Docker is unavailable.
 - Small, focused commits with clear messages. Keep `docs/PROTOCOL.md`, `docs/API.md` and `docs/openapi.yaml` updated in the same commit as the code they describe: the web client will be built from them.
 

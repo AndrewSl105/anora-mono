@@ -7,7 +7,7 @@ test.beforeEach(async ({ page }) => {
 })
 
 async function login(page: import('@playwright/test').Page) {
-  await page.getByLabel('Password').fill('anora')
+  await page.getByLabel('Password').fill('fleetpocket')
   await page.getByLabel('Authenticator code').fill('123456')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
 }

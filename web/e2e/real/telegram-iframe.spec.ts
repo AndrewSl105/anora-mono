@@ -72,14 +72,14 @@ test('the Mini App in a cross-site iframe works without the cookie', async ({ pa
     // WebSocket: opened with a single-use ticket, and it receives pushes.
     await expect.poll(() => sockets.some((u) => u.includes('/api/v1/ws?ticket='))).toBe(true)
     const res = await page.request.post(`${appOrigin}/api/v1/auth/telegram`, {
-      headers: { 'X-Requested-With': 'anora' },
+      headers: { 'X-Requested-With': 'fleetpocket' },
       data: { init_data: initData() },
     })
     const { token } = (await res.json()) as { token: string }
     const projects = await page.request.get(`${appOrigin}/api/v1/projects`, { headers: { Authorization: `Bearer ${token}` } })
     const project = ((await projects.json()) as { items: { id: string }[] }).items[0]
     test.skip(!project, 'needs a project with a repository (run flow.spec.ts first)')
-    const auth = { 'X-Requested-With': 'anora', Authorization: `Bearer ${token}` }
+    const auth = { 'X-Requested-With': 'fleetpocket', Authorization: `Bearer ${token}` }
     const task = (await (
       await page.request.post(`${appOrigin}/api/v1/tasks`, {
         headers: auth,

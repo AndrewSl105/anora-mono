@@ -3,7 +3,7 @@ import { storage } from './storage'
 import { useRuntime } from '@/telegram/runtime'
 
 export type ThemeChoice = 'system' | 'light' | 'dark'
-const KEY = 'anora.theme'
+const KEY = 'fleetpocket.theme'
 
 type ThemeState = { choice: ThemeChoice; resolved: 'light' | 'dark'; setChoice: (c: ThemeChoice) => void }
 
