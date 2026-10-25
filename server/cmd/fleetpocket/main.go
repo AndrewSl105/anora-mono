@@ -1,4 +1,4 @@
-// Command anora is the Anora Runner service and its CLI helpers.
+// Command fleetpocket is the Fleetpocket service and its CLI helpers.
 package main
 
 import (
@@ -13,12 +13,12 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/andrewsl105/anora/server/internal/auth"
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/auth"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
-const usage = `usage: anora <command>
+const usage = `usage: fleetpocket <command>
 
 commands:
   serve           run the service (default)

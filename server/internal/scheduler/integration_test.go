@@ -14,16 +14,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/attachments"
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/runnermgr"
-	"github.com/andrewsl105/anora/server/internal/scheduler"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
-	"github.com/andrewsl105/anora/server/internal/workspace"
+	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
+	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/workspace"
 )
 
 // env is a running scheduler against real Docker with the fake runner.
@@ -41,10 +41,10 @@ type env struct {
 }
 
 func runnerImage() string {
-	if img := os.Getenv("ANORA_TEST_RUNNER_IMAGE"); img != "" {
+	if img := os.Getenv("FLEETPOCKET_TEST_RUNNER_IMAGE"); img != "" {
 		return img
 	}
-	return "anora-agent:dev"
+	return "fleetpocket-agent:dev"
 }
 
 func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env {
@@ -169,10 +169,10 @@ func TestFakeRunQueuedToCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(out), "anora[bot]|Say hello|") || !strings.Contains(string(out), fmt.Sprintf("agent/%d-say-hello", v.ID)) {
+	if !strings.HasPrefix(string(out), "fleetpocket[bot]|Say hello|") || !strings.Contains(string(out), fmt.Sprintf("agent/%d-say-hello", v.ID)) {
 		t.Fatalf("commit: %s", out)
 	}
-	if b, _ := os.ReadFile(filepath.Join(wsDir, "ANORA_FAKE.md")); !strings.HasPrefix(string(b), "# hello") {
+	if b, _ := os.ReadFile(filepath.Join(wsDir, "FLEETPOCKET_FAKE.md")); !strings.HasPrefix(string(b), "# hello") {
 		t.Fatalf("file: %q", b)
 	}
 
@@ -199,7 +199,7 @@ func TestFakeRunQueuedToCommit(t *testing.T) {
 	// Runner, sidecar and network are gone; the state volume stays until cleanup.
 	ids, _ := e.docker.TaskIDsWithResources(ctx)
 	if ids[v.ID] {
-		out, _ := exec.Command("sh", "-c", "docker ps -a --filter label=anora.task_id --format '{{.Names}} {{.Status}}'; docker network ls --filter label=anora.task_id --format '{{.Name}}'").CombinedOutput()
+		out, _ := exec.Command("sh", "-c", "docker ps -a --filter label=fleetpocket.task_id --format '{{.Names}} {{.Status}}'; docker network ls --filter label=fleetpocket.task_id --format '{{.Name}}'").CombinedOutput()
 		t.Fatalf("task resources left behind:\n%s", out)
 	}
 }
@@ -224,7 +224,7 @@ func TestFakeRunPauseAndResume(t *testing.T) {
 	if run.Kind != tasks.RunResume || !strings.Contains(run.Input, "hi") {
 		t.Fatalf("resume run: %+v", run)
 	}
-	b, _ := os.ReadFile(filepath.Join(e.ws.Path(v.ID), "ANORA_FAKE.md"))
+	b, _ := os.ReadFile(filepath.Join(e.ws.Path(v.ID), "FLEETPOCKET_FAKE.md"))
 	if !strings.HasPrefix(string(b), "# hi") {
 		t.Fatalf("file %q", b)
 	}
@@ -449,7 +449,7 @@ func TestReconcile(t *testing.T) {
 	_, _ = e.docker.EnsureVolume(ctx, done.ID, "demo")
 	_ = e.st.MarkRunStarting(ctx, dr.ID)
 	r, err := e.docker.StartRunner(ctx, runnermgr.RunnerSpec{TaskID: done.ID, RunID: dr.ID, Project: "demo", Image: runnerImage(),
-		Workspace: e.ws.Path(done.ID), Env: map[string]string{"ANORA_RUNNER_FAKE": "1"}, Memory: "512m", CPUs: 1,
+		Workspace: e.ws.Path(done.ID), Env: map[string]string{"FLEETPOCKET_RUNNER_FAKE": "1"}, Memory: "512m", CPUs: 1,
 		User: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())})
 	if err != nil {
 		t.Fatal(err)
@@ -460,7 +460,7 @@ func TestReconcile(t *testing.T) {
 	}
 	_ = r.Send(runnermgr.NewRun(runnermgr.RunCommand{TaskID: fmt.Sprint(done.ID), Prompt: "Say hello",
 		Limits: runnermgr.Limits{MaxTurns: 5, MaxBudgetUSD: 1, MaxDurationSec: 60, QuestionTimeoutSec: 30},
-		Commit: runnermgr.CommitInfo{Message: "Say hello", AuthorName: "anora[bot]", AuthorEmail: "a@b"}}))
+		Commit: runnermgr.CommitInfo{Message: "Say hello", AuthorName: "fleetpocket[bot]", AuthorEmail: "a@b"}}))
 	_ = r.Send(runnermgr.NewAnswer("q1", "hello"))
 	if code, _ := e.docker.Wait(ctx, r.ContainerID); code != 0 {
 		t.Fatalf("runner exit %d", code)

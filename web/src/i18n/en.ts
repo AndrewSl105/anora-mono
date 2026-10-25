@@ -1,6 +1,6 @@
 // All UI strings. Add a uk.ts with the same shape to translate.
 export const en = {
-  app: { name: 'Anora' },
+  app: { name: 'Fleetpocket' },
   nav: { tasks: 'Tasks', new: 'New', projects: 'Projects', settings: 'Settings' },
   common: {
     cancel: 'Cancel',
@@ -32,14 +32,14 @@ export const en = {
   },
   auth: {
     signingIn: 'Signing in…',
-    title: 'Sign in to Anora',
+    title: 'Sign in to Fleetpocket',
     password: 'Password',
     code: 'Authenticator code',
     signIn: 'Sign in',
     badCredentials: 'Wrong password or code.',
     tooMany: (minutes: number) => `Too many attempts, try again in ${minutes} min.`,
     deniedTitle: 'Access denied',
-    deniedBody: 'This Telegram account is not allowed to use Anora.',
+    deniedBody: 'This Telegram account is not allowed to use Fleetpocket.',
     deniedUser: (name: string, id: number | string) => `${name} · id ${id}`,
     expiredTitle: 'Session expired',
     expiredBody: 'Close and reopen the Mini App to sign in again.',

@@ -20,13 +20,13 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/scheduler"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
-	"github.com/andrewsl105/anora/server/internal/workspace"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/workspace"
 )
 
 // fakeGitHub records requests and answers the few endpoints we use.
@@ -189,7 +189,7 @@ func TestPublisherCreatesThenComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	commit(t, ws.Path(7), "a.txt", "a\n")
-	p := &Publisher{App: app, Workspace: ws, TaskURL: func(id int64) string { return "https://anora.example.com/tasks/7" }}
+	p := &Publisher{App: app, Workspace: ws, TaskURL: func(id int64) string { return "https://fleetpocket.example.com/tasks/7" }}
 	task := &store.Task{ID: 7, Title: "Do X", Prompt: "Do X\nplease"}
 	res, err := p.Publish(ctx, scheduler.PublishInput{Task: task, Repo: repo, Branch: "agent/7-x", Summary: "Did X", CostUSD: 0.5, Turns: 3})
 	if err != nil {

@@ -10,11 +10,11 @@ import (
 
 	"github.com/mymmrac/telego"
 
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 type sent struct {
@@ -137,7 +137,7 @@ func TestBotFlow(t *testing.T) {
 	}
 
 	// /bind in a topic, then plain text there creates a durable draft.
-	b.HandleUpdate(ctx, msg(-100, 5, "/bind@anora_bot demo"))
+	b.HandleUpdate(ctx, msg(-100, 5, "/bind@fleetpocket_bot demo"))
 	b.HandleUpdate(ctx, msg(-100, 5, "Add CSV export <b>now</b>"))
 	var draftID int64
 	eventually(t, "draft card", func() bool {
@@ -264,7 +264,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 func TestParseCommand(t *testing.T) {
 	cases := []struct{ in, cmd, args string }{
 		{"/new vatary Add export", "new", "vatary Add export"},
-		{"/tasks@anora_bot", "tasks", ""},
+		{"/tasks@fleetpocket_bot", "tasks", ""},
 		{"/MSG 12 hi there", "msg", "12 hi there"},
 		{"/new\nmulti line", "new", "multi line"},
 	}

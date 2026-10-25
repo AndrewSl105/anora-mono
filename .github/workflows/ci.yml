@@ -54,17 +54,17 @@ jobs:
       postgres:
         image: postgres:17-alpine
         env:
-          POSTGRES_USER: anora
-          POSTGRES_PASSWORD: anora
-          POSTGRES_DB: anora
+          POSTGRES_USER: fleetpocket
+          POSTGRES_PASSWORD: fleetpocket
+          POSTGRES_DB: fleetpocket
         ports: ["5432:5432"]
         options: >-
-          --health-cmd "pg_isready -U anora"
+          --health-cmd "pg_isready -U fleetpocket"
           --health-interval 2s
           --health-retries 30
     env:
-      ANORA_TEST_DATABASE_URL: postgres://anora:anora@localhost:5432/anora?sslmode=disable
-      ANORA_TEST_RUNNER_IMAGE: anora-agent:ci
+      FLEETPOCKET_TEST_DATABASE_URL: postgres://fleetpocket:fleetpocket@localhost:5432/fleetpocket?sslmode=disable
+      FLEETPOCKET_TEST_RUNNER_IMAGE: fleetpocket-agent:ci
       GITLEAKS_VERSION: 8.30.1
     steps:
       - uses: actions/checkout@v7
@@ -82,7 +82,7 @@ jobs:
         with:
           context: agent
           load: true
-          tags: anora-agent:ci
+          tags: fleetpocket-agent:ci
           cache-from: type=gha,scope=agent
           cache-to: type=gha,mode=max,scope=agent
       - run: go vet ./...
@@ -152,6 +152,6 @@ jobs:
           docker compose -f deploy/docker-compose.dev.yml config -q
       - name: Caddyfile is valid
         run: >-
-          docker run --rm -e ANORA_DOMAIN=anora.example.com
+          docker run --rm -e FLEETPOCKET_DOMAIN=fleetpocket.example.com
           -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
           caddy:2.11.7-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile

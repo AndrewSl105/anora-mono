@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 var ErrInvalid = errors.New("invalid input")
@@ -22,7 +22,7 @@ var (
 	Services    = map[string]bool{"postgres": true, "redis": true}
 	reservedEnv = map[string]bool{
 		"CLAUDE_CODE_OAUTH_TOKEN": true, "ANTHROPIC_API_KEY": true, "DATABASE_URL": true, "REDIS_URL": true,
-		"ANORA_RUNNER_FAKE": true, "ANORA_WORKSPACE": true, "HOME": true, "PATH": true,
+		"FLEETPOCKET_RUNNER_FAKE": true, "FLEETPOCKET_WORKSPACE": true, "HOME": true, "PATH": true,
 	}
 )
 

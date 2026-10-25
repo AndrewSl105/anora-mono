@@ -211,7 +211,7 @@ export function seed() {
       [repo(1, 'vatary', 'andrewsl105/vatary-server', true), repo(2, 'vatary', 'andrewsl105/vatary-web', false)],
       { services: ['postgres', 'redis'], env: { NODE_ENV: 'test' }, instructions: 'Use pnpm. Run the tests before committing.', max_turns: 80 },
     ),
-    project('anora', 'Anora Runner', [repo(3, 'anora', 'andrewsl105/anora-runner', true, 'main')], { model: 'claude-opus-5-5' }),
+    project('fleetpocket', 'Fleetpocket', [repo(3, 'fleetpocket', 'andrewsl105/fleetpocket-server', true, 'main')], { model: 'claude-opus-5-5' }),
     project('bioma', 'Bioma', [repo(4, 'bioma', 'andrewsl105/bioma', true)]),
   ]
 
@@ -240,11 +240,11 @@ export function seed() {
   startRun(t2.id, 'initial', t2.prompt, ago(60 * 26))
   addEvent(t2.id, 'error', { code: 'limit_exceeded', message: 'Reached max_turns (80).' }, true, ago(60 * 25))
   addEvent(t2.id, 'run_finished', { run_id: 2, exit_code: 4 }, false, ago(60 * 25))
-  makeTask({ project_id: 'anora', title: 'Document the runner protocol', status: 'completed', created_at: ago(60 * 50), updated_at: ago(60 * 48), finished_at: ago(60 * 48), cost_usd_total: 0.62, pr_number: 7, pr_url: 'https://github.com/andrewsl105/anora-runner/pull/7' })
+  makeTask({ project_id: 'fleetpocket', title: 'Document the runner protocol', status: 'completed', created_at: ago(60 * 50), updated_at: ago(60 * 48), finished_at: ago(60 * 48), cost_usd_total: 0.62, pr_number: 7, pr_url: 'https://github.com/andrewsl105/fleetpocket-server/pull/7' })
   makeTask({ project_id: 'vatary', title: 'Remove the legacy importer', status: 'cancelled', created_at: ago(60 * 72), updated_at: ago(60 * 71), cost_usd_total: 0.2 })
 
   // A task waiting for an answer.
-  const t5 = makeTask({ project_id: 'anora', title: 'Retry webhook deliveries with backoff', status: 'queued', created_at: ago(25), source: 'telegram' })
+  const t5 = makeTask({ project_id: 'fleetpocket', title: 'Retry webhook deliveries with backoff', status: 'queued', created_at: ago(25), source: 'telegram' })
   addEvent(t5.id, 'created', { attachments: [addAttachment(t5.id, 'retry-flow.png', 'image/png', DEMO_PNG, 160, 100)] }, false, ago(25))
   const r5 = startRun(t5.id, 'initial', t5.prompt, ago(24))
   addEvent(t5.id, 'assistant_text', { text: 'Webhook deliveries currently fail hard on the first 5xx. I can add retries in `internal/webhooks`.' }, true, ago(23))

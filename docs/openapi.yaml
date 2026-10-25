@@ -1,14 +1,14 @@
 openapi: 3.1.0
 info:
-  title: Anora Runner API
+  title: Fleetpocket API
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
   version: 0.1.0
   description: |
-    REST API of Anora Runner. See docs/API.md for behaviour, the task state
+    REST API of Fleetpocket. See docs/API.md for behaviour, the task state
     machine, timeline event types and the WebSocket protocol.
-    Every non-GET request must send `X-Requested-With: anora`.
+    Every non-GET request must send `X-Requested-With: fleetpocket`.
 servers:
   - url: /
 security:
@@ -41,7 +41,7 @@ paths:
                 totp: { type: string, description: Current 6-digit code }
       responses:
         '200':
-          description: Logged in; sets the anora_session cookie
+          description: Logged in; sets the fleetpocket_session cookie
           headers:
             Set-Cookie: { schema: { type: string } }
           content: { application/json: { schema: { $ref: '#/components/schemas/SessionInfo' } } }
@@ -69,7 +69,7 @@ paths:
       responses:
         '200':
           description: |
-            Logged in; sets the anora_session cookie and also returns the session as `token`.
+            Logged in; sets the fleetpocket_session cookie and also returns the session as `token`.
             Telegram Web embeds the Mini App in a cross-site iframe where the SameSite=Lax cookie
             is not sent: keep `token` in memory (never in storage) and send it as
             `Authorization: Bearer <token>`; open the WebSocket with a ticket (`POST /api/v1/ws/ticket`).
@@ -660,7 +660,7 @@ components:
     session:
       type: apiKey
       in: cookie
-      name: anora_session
+      name: fleetpocket_session
     telegramBearer:
       type: http
       scheme: bearer
@@ -671,7 +671,7 @@ components:
       name: X-Requested-With
       in: header
       required: true
-      schema: { type: string, enum: [anora] }
+      schema: { type: string, enum: [fleetpocket] }
     Limit:
       name: limit
       in: query

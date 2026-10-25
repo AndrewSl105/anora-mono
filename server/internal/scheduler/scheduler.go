@@ -14,20 +14,20 @@ import (
 	"sync"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/attachments"
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/runnermgr"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/workspace"
+	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/workspace"
 )
 
 const (
 	pollInterval = 5 * time.Second
 	cancelGrace  = 15 * time.Second
-	commitAuthor = "anora[bot]"
-	commitEmail  = "anora[bot]@users.noreply.github.com"
+	commitAuthor = "fleetpocket[bot]"
+	commitEmail  = "fleetpocket[bot]@users.noreply.github.com"
 )
 
 // ErrRejected marks a diff validation failure: the task fails and the
@@ -265,7 +265,7 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		env["ANTHROPIC_API_KEY"] = s.Cfg.AnthropicAPIKey
 	}
 	if s.Cfg.RunnerFake {
-		env["ANORA_RUNNER_FAKE"] = "1"
+		env["FLEETPOCKET_RUNNER_FAKE"] = "1"
 	}
 
 	cmd := s.runCommand(t, run, project, repo, branch)
@@ -374,7 +374,7 @@ func (s *Scheduler) runCommand(t *store.Task, run *store.Run, p *store.Project, 
 			QuestionTimeoutSec: int(s.Cfg.QuestionTimeout.Seconds()),
 		},
 		Commit: runnermgr.CommitInfo{
-			Message:     fmt.Sprintf("%s\n\nAnora task #%d", msg, t.ID),
+			Message:     fmt.Sprintf("%s\n\nFleetpocket task #%d", msg, t.ID),
 			AuthorName:  commitAuthor,
 			AuthorEmail: commitEmail,
 		},
@@ -428,9 +428,9 @@ func AttachmentBlock(cur, earlier []*store.Attachment) string {
 // SystemPrompt is appended to Claude Code's default system prompt.
 func SystemPrompt(t *store.Task, repo *store.Repository, branch, projectInstructions string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are running unattended inside Anora Runner on task #%d.\n", t.ID)
+	fmt.Fprintf(&b, "You are running unattended inside Fleetpocket on task #%d.\n", t.ID)
 	fmt.Fprintf(&b, "Repository %s is checked out in /workspace on branch %s (base %s).\n", repo.FullName, branch, repo.BaseBranch)
-	b.WriteString("Do not push, change git remotes or touch .github/: Anora Runner commits your changes and opens the pull request.\n")
+	b.WriteString("Do not push, change git remotes or touch .github/: Fleetpocket commits your changes and opens the pull request.\n")
 	b.WriteString("If a decision needs the owner, ask with the AskUserQuestion tool and keep options short.\n")
 	b.WriteString("Finish with a short summary of what you changed and anything the reviewer should check.\n")
 	if strings.TrimSpace(projectInstructions) != "" {

@@ -9,7 +9,7 @@ export interface EmitterOptions {
 }
 
 // Emitter writes every event to stdout as one JSON line and appends it to
-// <workspace>/.anora/events.jsonl so the backend can replay what it missed.
+// <workspace>/.fleetpocket/events.jsonl so the backend can replay what it missed.
 export class Emitter {
   private seq: number;
   private readonly logPath: string | null;
@@ -40,7 +40,7 @@ export class Emitter {
 
 function prepareLog(workspace: string): string | null {
   try {
-    const dir = join(workspace, ".anora");
+    const dir = join(workspace, ".fleetpocket");
     mkdirSync(dir, { recursive: true });
     excludeFromGit(workspace);
     return join(dir, "events.jsonl");
@@ -55,8 +55,8 @@ function excludeFromGit(workspace: string): void {
   mkdirSync(infoDir, { recursive: true });
   const file = join(infoDir, "exclude");
   const current = existsSync(file) ? readFileSync(file, "utf8") : "";
-  if (current.split("\n").some((l) => l.trim() === ".anora/")) return;
-  writeFileSync(file, current + (current === "" || current.endsWith("\n") ? "" : "\n") + ".anora/\n");
+  if (current.split("\n").some((l) => l.trim() === ".fleetpocket/")) return;
+  writeFileSync(file, current + (current === "" || current.endsWith("\n") ? "" : "\n") + ".fleetpocket/\n");
 }
 
 // Seq continues across runs of the same task so (run, seq) stays monotonic in the log file.

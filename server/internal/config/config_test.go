@@ -11,8 +11,8 @@ func validConfig() *Config {
 		AdminPasswordHash: "$2a$12$test",
 		AdminTOTPSecret:   "totp",
 		SessionSecret:     "session",
-		WorkspacesDir:     "/srv/anora/workspaces",
-		AttachmentsDir:    "/srv/anora/attachments",
+		WorkspacesDir:     "/srv/fleetpocket/workspaces",
+		AttachmentsDir:    "/srv/fleetpocket/attachments",
 		SecretsScan:       "off",
 		STTProvider:       "off",
 	}

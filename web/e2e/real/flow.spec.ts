@@ -1,7 +1,7 @@
 import { expect, test, type Page } from '@playwright/test'
 import { totp } from './totp'
 
-// Runs against a real Anora Runner with the fake runner (ANORA_RUNNER_FAKE): every
+// Runs against a real Fleetpocket with the fake runner (FLEETPOCKET_RUNNER_FAKE): every
 // run asks "Which greeting should I write?" (hello / hi), commits and finishes.
 // Without a GitHub App the task ends "completed" (committed locally).
 
@@ -60,7 +60,7 @@ async function createProject(page: Page): Promise<string> {
   await page.getByRole('button', { name: 'New project' }).click()
   await expect(page.getByText('Project created')).toBeVisible()
   const res = await page.request.post(`/api/v1/projects/${id}/repositories`, {
-    headers: { 'X-Requested-With': 'anora' },
+    headers: { 'X-Requested-With': 'fleetpocket' },
     data: { full_name: repo, installation_id: 1, base_branch: branch },
   })
   expect(res.status(), await res.text()).toBe(201)
@@ -71,7 +71,7 @@ async function createProject(page: Page): Promise<string> {
 const created: number[] = []
 test.afterEach(async ({ page }) => {
   for (const id of created.splice(0)) {
-    await page.request.post(`/api/v1/tasks/${id}/cancel`, { headers: { 'X-Requested-With': 'anora' } })
+    await page.request.post(`/api/v1/tasks/${id}/cancel`, { headers: { 'X-Requested-With': 'fleetpocket' } })
   }
 })
 

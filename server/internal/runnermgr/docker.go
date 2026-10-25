@@ -22,23 +22,23 @@ import (
 	"github.com/moby/moby/client"
 )
 
-// Labels on every object Anora Runner creates.
+// Labels on every object Fleetpocket creates.
 const (
-	LabelTaskID  = "anora.task_id"
-	LabelProject = "anora.project"
-	LabelRunID   = "anora.run_id"
-	LabelKind    = "anora.kind"
+	LabelTaskID  = "fleetpocket.task_id"
+	LabelProject = "fleetpocket.project"
+	LabelRunID   = "fleetpocket.run_id"
+	LabelKind    = "fleetpocket.kind"
 	KindRunner   = "runner"
 	KindSidecar  = "sidecar"
 	KindNetwork  = "network"
 	KindVolume   = "claude-state"
 )
 
-func NetworkName(taskID int64) string { return fmt.Sprintf("anora-task-%d", taskID) }
-func VolumeName(taskID int64) string  { return fmt.Sprintf("anora-claude-%d", taskID) }
-func RunnerName(taskID int64) string  { return fmt.Sprintf("anora-agent-%d", taskID) }
+func NetworkName(taskID int64) string { return fmt.Sprintf("fleetpocket-task-%d", taskID) }
+func VolumeName(taskID int64) string  { return fmt.Sprintf("fleetpocket-claude-%d", taskID) }
+func RunnerName(taskID int64) string  { return fmt.Sprintf("fleetpocket-agent-%d", taskID) }
 func SidecarName(taskID int64, svc string) string {
-	return fmt.Sprintf("anora-svc-%d-%s", taskID, svc)
+	return fmt.Sprintf("fleetpocket-svc-%d-%s", taskID, svc)
 }
 
 type Manager struct {
@@ -237,7 +237,7 @@ type RunnerSpec struct {
 	Env         map[string]string
 	Memory      string
 	CPUs        float64
-	// User is "uid:gid"; default 1000:1000 (shared with Anora Runner).
+	// User is "uid:gid"; default 1000:1000 (shared with Fleetpocket).
 	User string
 }
 

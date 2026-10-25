@@ -84,7 +84,7 @@ describe('AuthGate in a browser', () => {
     await user.type(screen.getByLabelText('Authenticator code'), '12a3456')
     expect(await screen.findByText('app ready (web)')).toBeInTheDocument()
     expect(body).toEqual({ password: 'secret', totp: '123456' })
-    expect(csrf).toBe('anora')
+    expect(csrf).toBe('fleetpocket')
   })
 
   it('shows one generic message on bad credentials', async () => {

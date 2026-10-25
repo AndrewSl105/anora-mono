@@ -7,7 +7,7 @@ import { msw } from 'msw/vite'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const backend = env.ANORA_BACKEND_URL || 'http://localhost:8080'
+  const backend = env.FLEETPOCKET_BACKEND_URL || 'http://localhost:8080'
   return {
     // msw only serves its worker script in dev; mock mode is never part of a production build.
     plugins: [react(), tailwindcss(), ...(mode === 'production' ? [] : [msw({ mode: 'worker-only' })])],

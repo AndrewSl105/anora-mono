@@ -19,14 +19,14 @@ import (
 
 	"github.com/pquerna/otp/totp"
 
-	"github.com/andrewsl105/anora/server/internal/api"
-	"github.com/andrewsl105/anora/server/internal/auth"
-	"github.com/andrewsl105/anora/server/internal/config"
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/projects"
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/tasks"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/api"
+	"github.com/andrewsl105/fleetpocket/server/internal/auth"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/projects"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 type client struct {
@@ -44,7 +44,7 @@ func (c *client) do(method, path string, body any) (int, map[string]any) {
 	}
 	req, _ := http.NewRequest(method, c.base+path, r)
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Requested-With", "anora")
+	req.Header.Set("X-Requested-With", "fleetpocket")
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.t.Fatal(err)
@@ -225,7 +225,7 @@ func TestTelegramBearerAndTicket(t *testing.T) {
 	noCookies := &http.Client{}
 	req := func(method, path, bearer string) *http.Response {
 		r, _ := http.NewRequest(method, c.base+path, nil)
-		r.Header.Set("X-Requested-With", "anora")
+		r.Header.Set("X-Requested-With", "fleetpocket")
 		if bearer != "" {
 			r.Header.Set("Authorization", "Bearer "+bearer)
 		}

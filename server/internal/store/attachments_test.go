@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/andrewsl105/anora/server/internal/store"
-	"github.com/andrewsl105/anora/server/internal/testutil"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/testutil"
 )
 
 func upload(names ...string) *store.Upload {

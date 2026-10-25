@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/andrewsl105/anora/server/internal/scheduler"
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 func TestAttachmentBlock(t *testing.T) {

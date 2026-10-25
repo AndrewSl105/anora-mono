@@ -145,8 +145,8 @@ function checkSegment(toks: string[]): PolicyDecision {
   if (isGit(cmd)) {
     const g = gitSubcommand(toks, cmdIdx);
     if (!g) return ALLOW;
-    if (g.sub === "push") return deny("git push is not allowed. Commit locally; Anora Runner pushes the branch and opens the PR after the session.");
-    if (g.sub === "remote") return deny("git remote is not allowed. The repository remote is managed by Anora Runner.");
+    if (g.sub === "push") return deny("git push is not allowed. Commit locally; Fleetpocket pushes the branch and opens the PR after the session.");
+    if (g.sub === "remote") return deny("git remote is not allowed. The repository remote is managed by Fleetpocket.");
     if (g.sub === "credential" || g.sub.startsWith("credential-")) return deny("git credential commands are not allowed.");
     if (g.sub === "config" && g.rest.some((r) => r === "--global" || r === "--system")) {
       return deny("git config --global/--system is not allowed. Use repository-local settings if needed.");

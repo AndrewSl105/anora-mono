@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 type ctxKey int
@@ -70,14 +70,14 @@ func (s *Server) cors(next http.Handler) http.Handler {
 	})
 }
 
-// csrf requires X-Requested-With: anora on state-changing requests.
+// csrf requires X-Requested-With: fleetpocket on state-changing requests.
 func csrf(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet, http.MethodHead, http.MethodOptions:
 		default:
-			if r.Header.Get("X-Requested-With") != "anora" {
-				writeError(w, http.StatusForbidden, "csrf", "missing X-Requested-With: anora header")
+			if r.Header.Get("X-Requested-With") != "fleetpocket" {
+				writeError(w, http.StatusForbidden, "csrf", "missing X-Requested-With: fleetpocket header")
 				return
 			}
 		}

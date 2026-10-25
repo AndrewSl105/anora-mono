@@ -1,12 +1,12 @@
-# Anora Runner API
+# Fleetpocket API
 
 Everything a client (the web app / Telegram Mini App) needs. The machine-readable contract is [`openapi.yaml`](openapi.yaml); this file explains behaviour.
 
 ## Conventions
 
 - Base path `/api/v1`. JSON request and response bodies (`Content-Type: application/json`). Unknown request fields are rejected. `POST /tasks` and `POST /tasks/{id}/message` also accept `multipart/form-data` to attach images (see [Attachments](#attachments)).
-- **Auth**: a session cookie `anora_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`. **Telegram sessions** may instead send `Authorization: Bearer <token>` (the `token` from `auth/telegram`), because Telegram Web embeds the Mini App in a cross-site iframe where a `SameSite=Lax` cookie is never sent. Browser (`web`) sessions are cookie-only.
-- **CSRF**: every non-GET request must send `X-Requested-With: anora`, otherwise `403 csrf`.
+- **Auth**: a session cookie `fleetpocket_session` (`HttpOnly`, `Secure`, `SameSite=Lax`, 30-day sliding expiry). Every endpoint except `auth/login`, `auth/telegram` and `auth/logout` requires it; without it you get `401 unauthorized`. **Telegram sessions** may instead send `Authorization: Bearer <token>` (the `token` from `auth/telegram`), because Telegram Web embeds the Mini App in a cross-site iframe where a `SameSite=Lax` cookie is never sent. Browser (`web`) sessions are cookie-only.
+- **CSRF**: every non-GET request must send `X-Requested-With: fleetpocket`, otherwise `403 csrf`.
 - **Errors**: `{"error": {"code": "<machine code>", "message": "<human text>"}}`.
 
   | HTTP | code | when |

@@ -3,7 +3,7 @@ import type { paths } from './schema'
 import { toApiError } from './errors'
 
 /** The backend rejects state-changing calls without this header (403 csrf). */
-export const CSRF = { 'X-Requested-With': 'anora' } as const
+export const CSRF = { 'X-Requested-With': 'fleetpocket' } as const
 
 /**
  * Telegram sessions: the session token from POST /auth/telegram, kept in
@@ -57,7 +57,7 @@ export const api = createClient<paths>({
 
 api.use({
   onRequest({ request }) {
-    if (request.method !== 'GET' && request.method !== 'HEAD') request.headers.set('X-Requested-With', 'anora')
+    if (request.method !== 'GET' && request.method !== 'HEAD') request.headers.set('X-Requested-With', 'fleetpocket')
     if (bearer) request.headers.set('Authorization', `Bearer ${bearer}`)
     return request
   },
@@ -100,7 +100,7 @@ function sendForm(path: string, form: FormData, onProgress?: UploadProgress): Pr
     const xhr = new XMLHttpRequest()
     xhr.open('POST', path)
     xhr.withCredentials = true
-    xhr.setRequestHeader('X-Requested-With', 'anora')
+    xhr.setRequestHeader('X-Requested-With', 'fleetpocket')
     if (bearer) xhr.setRequestHeader('Authorization', `Bearer ${bearer}`)
     if (onProgress) {
       xhr.upload.onprogress = (e) => {

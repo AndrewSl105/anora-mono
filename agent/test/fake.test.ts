@@ -9,7 +9,7 @@ import { createInterface } from "node:readline";
 const MAIN = new URL("../src/main.ts", import.meta.url).pathname;
 
 function repo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "anora-runner-"));
+  const dir = mkdtempSync(join(tmpdir(), "fleetpocket-server-"));
   const git = (...a: string[]) => execFileSync("git", a, { cwd: dir });
   git("init", "-q", "-b", "main");
   writeFileSync(join(dir, "README.md"), "# test\n");
@@ -20,7 +20,7 @@ function repo(): string {
 
 function start(workspace: string) {
   const child = spawn(process.execPath, ["--experimental-strip-types", "--no-warnings", MAIN], {
-    env: { ...process.env, ANORA_RUNNER_FAKE: "1", ANORA_WORKSPACE: workspace },
+    env: { ...process.env, FLEETPOCKET_RUNNER_FAKE: "1", FLEETPOCKET_WORKSPACE: workspace },
     stdio: ["pipe", "pipe", "inherit"],
   });
   const events: any[] = [];
@@ -46,7 +46,7 @@ const run = (timeout = 30) => ({
   task_id: 7,
   prompt: "Say hello",
   limits: { max_turns: 10, max_budget_usd: 1, max_duration_sec: 60, question_timeout_sec: timeout },
-  commit: { message: "agent: say hello", author_name: "anora[bot]", author_email: "anora@example.com" },
+  commit: { message: "agent: say hello", author_name: "fleetpocket[bot]", author_email: "fleetpocket@example.com" },
 });
 
 test("fake session: question, answer, commit, done", async () => {
@@ -67,12 +67,12 @@ test("fake session: question, answer, commit, done", async () => {
   assert.deepEqual(seqs, seqs.map((_, i) => i + 1));
   const done = r.events.at(-1);
   assert.equal(done.no_changes, false);
-  assert.match(readFileSync(join(ws, "ANORA_FAKE.md"), "utf8"), /# hello/);
+  assert.match(readFileSync(join(ws, "FLEETPOCKET_FAKE.md"), "utf8"), /# hello/);
   const log = execFileSync("git", ["log", "-1", "--format=%an|%s"], { cwd: ws, encoding: "utf8" }).trim();
-  assert.equal(log, "anora[bot]|agent: say hello");
+  assert.equal(log, "fleetpocket[bot]|agent: say hello");
   const status = execFileSync("git", ["status", "--porcelain"], { cwd: ws, encoding: "utf8" });
-  assert.equal(status, "", ".anora/ must be excluded from git");
-  const jsonl = readFileSync(join(ws, ".anora/events.jsonl"), "utf8").trim().split("\n");
+  assert.equal(status, "", ".fleetpocket/ must be excluded from git");
+  const jsonl = readFileSync(join(ws, ".fleetpocket/events.jsonl"), "utf8").trim().split("\n");
   assert.equal(jsonl.length, r.events.length);
 });
 

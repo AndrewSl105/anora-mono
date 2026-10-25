@@ -9,7 +9,7 @@ import (
 
 	"github.com/mymmrac/telego"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 // Telegram delivers an album (media group) as one message per photo, with

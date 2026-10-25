@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/andrewsl105/anora/server/internal/events"
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 // AgentDir is where a task's attachment folder is mounted, read-only, in its

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/andrewsl105/anora/server/internal/scheduler"
-	"github.com/andrewsl105/anora/server/internal/workspace"
+	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
+	"github.com/andrewsl105/fleetpocket/server/internal/workspace"
 )
 
 // Publisher implements scheduler.Publisher: validate, push, open or update the PR.
@@ -78,7 +78,7 @@ func (p *Publisher) body(in scheduler.PublishInput, stat string) string {
 			fmt.Fprintf(&b, " · [Task #%d](%s)", in.Task.ID, u)
 		}
 	}
-	b.WriteString("\n\n<sub>Opened by Anora Runner.</sub>\n")
+	b.WriteString("\n\n<sub>Opened by Fleetpocket.</sub>\n")
 	return b.String()
 }
 

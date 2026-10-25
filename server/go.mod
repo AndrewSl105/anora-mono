@@ -1,4 +1,4 @@
-module github.com/andrewsl105/anora/server
+module github.com/andrewsl105/fleetpocket/server
 
 go 1.27.2
 

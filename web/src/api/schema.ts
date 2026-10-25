@@ -1198,7 +1198,7 @@ export interface components {
         };
     };
     parameters: {
-        XRequestedWith: "anora";
+        XRequestedWith: "fleetpocket";
         Limit: number;
         TaskID: number;
     };
@@ -1227,7 +1227,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Logged in; sets the anora_session cookie */
+            /** @description Logged in; sets the fleetpocket_session cookie */
             200: {
                 headers: {
                     "Set-Cookie"?: string;
@@ -1261,7 +1261,7 @@ export interface operations {
         };
         responses: {
             /**
-             * @description Logged in; sets the anora_session cookie and also returns the session as `token`.
+             * @description Logged in; sets the fleetpocket_session cookie and also returns the session as `token`.
              *     Telegram Web embeds the Mini App in a cross-site iframe where the SameSite=Lax cookie
              *     is not sent: keep `token` in memory (never in storage) and send it as
              *     `Authorization: Bearer <token>`; open the WebSocket with a ticket (`POST /api/v1/ws/ticket`).

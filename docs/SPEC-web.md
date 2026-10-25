@@ -1,14 +1,14 @@
-# Anora Client — build prompt for Claude Code
+# Fleetpocket web — build prompt for Claude Code
 
 2026-10-14 · Andrii Sllipchenko
 
 ## 1. Context and goal
 
-Build **Anora Client**: the web frontend for Anora Runner, used both as a **Telegram Mini App** (primary, on a phone) and as a normal website in a desktop browser. It is a single-page app served as static files; all data and actions go through the Anora Runner REST API and WebSocket.
+Build **Fleetpocket web**: the web frontend for Fleetpocket, used both as a **Telegram Mini App** (primary, on a phone) and as a normal website in a desktop browser. It is a single-page app served as static files; all data and actions go through the Fleetpocket REST API and WebSocket.
 
-**How to use this document.** Put it in the new repo `anora-client` as `docs/SPEC.md`, copy `docs/API.md` and `docs/openapi.yaml` from the `anora-runner` repo into `docs/backend/`, and tell Claude Code: "Read docs/SPEC.md and implement Anora Client phase by phase as described in section 9. Stop after each phase and report."
+**How to use this document.** Put it in the new repo `fleetpocket-web` as `docs/SPEC.md`, copy `docs/API.md` and `docs/openapi.yaml` from the `fleetpocket-server` repo into `docs/backend/`, and tell Claude Code: "Read docs/SPEC.md and implement Fleetpocket web phase by phase as described in section 9. Stop after each phase and report."
 
-**What Anora Runner is.** A single-user Go service that runs Claude Code sessions in isolated containers against my GitHub repos and opens PRs. A task moves through `queued → preparing → running ⇄ waiting_input → (paused) → pushing → pr_open → completed`, or ends `failed` / `cancelled`. While it runs, it emits a stream of events (Claude's text, tool use, questions, cost, commits). The backend spec is the source of truth for every endpoint, field and state name; this client must not invent any.
+**What Fleetpocket is.** A single-user Go service that runs Claude Code sessions in isolated containers against my GitHub repos and opens PRs. A task moves through `queued → preparing → running ⇄ waiting_input → (paused) → pushing → pr_open → completed`, or ends `failed` / `cancelled`. While it runs, it emits a stream of events (Claude's text, tool use, questions, cost, commits). The backend spec is the source of truth for every endpoint, field and state name; this client must not invent any.
 
 **What I do with the client**
 
@@ -67,7 +67,7 @@ The same build runs in both modes; it detects the mode at startup. Inside Telegr
 
 **Both modes**
 
-- Session is an `HttpOnly` cookie set by the backend; the client never stores tokens in `localStorage`. All requests use `credentials: 'include'` and send `X-Requested-With: anora` on state-changing calls (the backend requires it).
+- Session is an `HttpOnly` cookie set by the backend; the client never stores tokens in `localStorage`. All requests use `credentials: 'include'` and send `X-Requested-With: fleetpocket` on state-changing calls (the backend requires it).
 - One `AuthGate` component wraps the router and renders splash, login, denied, or the app.
 - The client is served on the same domain as the API (`/` → client, `/api` → backend), so no CORS configuration is needed in production. For local development, Vite proxies `/api` and `/api/v1/ws` to a backend URL from `.env.local`.
 
@@ -122,7 +122,7 @@ REST loads state; one WebSocket keeps it live; TanStack Query is the single cach
 **API client (****`src/api/`****)**
 
 - `npm run gen:api` runs `openapi-typescript` on `docs/backend/openapi.yaml` → `src/api/schema.ts`. Commit the generated file; CI fails if it is stale.
-- One `openapi-fetch` client with `baseUrl: '/'`, `credentials: 'include'`, the `X-Requested-With: anora` header, and a middleware that turns `{error:{code,message}}` into a typed `ApiError` and triggers re-auth on `401` (section 3).
+- One `openapi-fetch` client with `baseUrl: '/'`, `credentials: 'include'`, the `X-Requested-With: fleetpocket` header, and a middleware that turns `{error:{code,message}}` into a typed `ApiError` and triggers re-auth on `401` (section 3).
 - One hook per use case in `src/api/hooks.ts`: `useTasks(filter)`, `useTask(id)`, `useTaskEvents(id)` (infinite, `after_id` cursor), `useCreateTask()`, `useAnswer()`, `useSendMessage()`, `useProjects()`, and so on. Query keys live in one `keys.ts`.
 - Mutations: answer and message are optimistic (show immediately, roll back on error with a toast).
 
@@ -199,12 +199,12 @@ Code-split by route; lazy-load the diff viewer, markdown highlighting and the pr
 
 ## 8. Repo layout, Docker, deployment
 
-The client ships as a small Nginx image with static files, deployed next to Anora Runner on the same server and domain, the same way as my other projects: GitHub Actions builds the image, pushes it to GHCR, and deploys over SSH.
+The client ships as a small Nginx image with static files, deployed next to Fleetpocket on the same server and domain, the same way as my other projects: GitHub Actions builds the image, pushes it to GHCR, and deploys over SSH.
 
 **Repo layout**
 
 ```
-anora-client/
+fleetpocket-web/
 ├── src/
 │   ├── api/            # generated schema, client, hooks, query keys
 │   ├── realtime/       # WebSocket connection and subscriptions
@@ -220,7 +220,7 @@ anora-client/
 └── .github/workflows/  # ci.yml, release.yml
 ```
 
-**Dockerfile.** Multi-stage: `node` stage runs `npm ci && npm run build`; final stage `nginx:alpine` copies `dist/` and `nginx/default.conf`. Image `ghcr.io/andrewsl105/anora-client:<sha>` and `:latest`.
+**Dockerfile.** Multi-stage: `node` stage runs `npm ci && npm run build`; final stage `nginx:alpine` copies `dist/` and `nginx/default.conf`. Image `ghcr.io/andrewsl105/fleetpocket-web:<sha>` and `:latest`.
 
 **Nginx config**
 
@@ -229,11 +229,11 @@ anora-client/
 - gzip and brotli (if available) for JS, CSS, SVG.
 - Security headers. Do **not** send `X-Frame-Options: DENY`: Telegram Web and Telegram Desktop load Mini Apps in an iframe. Use `Content-Security-Policy` with `frame-ancestors 'self' https://web.telegram.org https://*.telegram.org` (verify the current Telegram domains), `script-src 'self' https://telegram.org`, `connect-src 'self' wss:`, plus `Referrer-Policy` and `X-Content-Type-Options`.
 
-**Routing on the server.** The reverse proxy on the domain sends `/api/*`, `/webhooks/*` and `/healthz` to the `anora` container and everything else to `anora-client`, with WebSocket upgrade enabled for `/api/v1/ws`. Add the client service to the same compose file and `proxy` network as Anora Runner:
+**Routing on the server.** The reverse proxy on the domain sends `/api/*`, `/webhooks/*` and `/healthz` to the `fleetpocket` container and everything else to `fleetpocket-web`, with WebSocket upgrade enabled for `/api/v1/ws`. Add the client service to the same compose file and `proxy` network as Fleetpocket:
 
 ```yaml
-  anora-client:
-    image: ghcr.io/andrewsl105/anora-client:${CLIENT_TAG:-latest}
+  fleetpocket-web:
+    image: ghcr.io/andrewsl105/fleetpocket-web:${CLIENT_TAG:-latest}
     restart: unless-stopped
     networks: [proxy]
 ```
@@ -241,13 +241,13 @@ anora-client/
 **Workflows**
 
 - `ci.yml` on pull requests: typecheck, lint, unit tests, check that `src/api/schema.ts` matches the OpenAPI file, build, bundle-size check against section 7.
-- `release.yml` on push to `main`: build and push the image, SSH to the server, `docker compose pull anora-client && docker compose up -d anora-client`.
+- `release.yml` on push to `main`: build and push the image, SSH to the server, `docker compose pull fleetpocket-web && docker compose up -d fleetpocket-web`.
 
 **Config.** Build-time variables only: `VITE_APP_VERSION` (git sha) and `VITE_DEBUG`. No API URL is needed in production because everything is same-origin.
 
 ## 9. Implementation phases and working rules
 
-Build in six phases. Each phase ends with a working build, tests, and a short report; stop and wait for my go-ahead before the next one. Until Anora Runner is deployed, develop against a mock API (MSW handlers generated from the OpenAPI examples) so no phase is blocked by the backend.
+Build in six phases. Each phase ends with a working build, tests, and a short report; stop and wait for my go-ahead before the next one. Until Fleetpocket is deployed, develop against a mock API (MSW handlers generated from the OpenAPI examples) so no phase is blocked by the backend.
 
 1. **Foundation.** Vite + TS + Tailwind + shadcn setup, routing, generated API client, MSW mock mode (`VITE_MOCK=1`), `useRuntime()`, theme system, app shell with bottom tabs and desktop sidebar, error boundary.
 2. **Auth.** AuthGate, Telegram auto-login, browser login with TOTP, denied screen, re-auth on `401`, logout. Test both modes (Telegram mode with a fake WebApp object in tests).

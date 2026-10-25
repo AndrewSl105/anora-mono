@@ -21,9 +21,9 @@ concurrency:
 
 env:
   REGISTRY: ghcr.io
-  SERVER_IMAGE: ghcr.io/andrewsl105/anora-server
-  AGENT_IMAGE: ghcr.io/andrewsl105/anora-agent
-  WEB_IMAGE: ghcr.io/andrewsl105/anora-web
+  SERVER_IMAGE: ghcr.io/andrewsl105/fleetpocket-server
+  AGENT_IMAGE: ghcr.io/andrewsl105/fleetpocket-agent
+  WEB_IMAGE: ghcr.io/andrewsl105/fleetpocket-web
 
 jobs:
   changes:
@@ -121,7 +121,7 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           source: deploy/docker-compose.deploy.yml,deploy/Caddyfile
-          target: /srv/anora
+          target: /srv/fleetpocket
           strip_components: 1
       - name: Pull and start
         uses: appleboy/ssh-action@v1.2.5
@@ -136,10 +136,10 @@ jobs:
           # ssh-action v1.2.5 removed script_stop; `set -e` stops on the first failure.
           script: |
             set -e
-            cd /srv/anora
+            cd /srv/fleetpocket
             compose="docker compose -f docker-compose.deploy.yml"
             # The server starts agents from the local image and never pulls it.
-            docker pull ghcr.io/andrewsl105/anora-agent:latest
+            docker pull ghcr.io/andrewsl105/fleetpocket-agent:latest
             if [ "$PULL_SERVER" = true ]; then $compose pull server; fi
             if [ "$PULL_WEB" = true ]; then $compose pull web; fi
             $compose up -d

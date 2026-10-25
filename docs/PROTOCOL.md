@@ -1,6 +1,6 @@
 # Runner protocol
 
-Anora Runner (Go) and the runner (`runner/`, Node) talk over the runner container's attached stdin/stdout using JSON Lines: one JSON object per line, UTF-8, `\n`-terminated. There are no ports. Stderr is free-form diagnostics and is only logged.
+The Fleetpocket server (Go) and the runner (`runner/`, Node) talk over the runner container's attached stdin/stdout using JSON Lines: one JSON object per line, UTF-8, `\n`-terminated. There are no ports. Stderr is free-form diagnostics and is only logged.
 
 Source of truth: `runner/src/protocol.ts`. Go mirror: `internal/runnermgr/protocol.go`.
 
@@ -17,7 +17,7 @@ Source of truth: `runner/src/protocol.ts`. Go mirror: `internal/runnermgr/protoc
 |---|---|---|
 | `run` | `task_id` (string or number), `prompt`, `append_system_prompt?`, `resume_session_id?`, `model?`, `limits{max_turns, max_budget_usd, max_duration_sec, question_timeout_sec}`, `commit{message, author_name, author_email}` | first line, starts the session |
 | `answer` | `question_id`, `text` | reply to a pending question. An answer that arrives before its question is kept and used when the question is asked. |
-| `message` | `text` | extra user message injected into the running session. A run handles one prompt: input closes after the first turn's result, so a message that arrives after that is dropped. **Anora Runner does not send it**: it queues messages and starts them as the next run (API.md). |
+| `message` | `text` | extra user message injected into the running session. A run handles one prompt: input closes after the first turn's result, so a message that arrives after that is dropped. **Fleetpocket does not send it**: it queues messages and starts them as the next run (API.md). |
 | `interrupt` | — | stop the current turn, keep the session. The run then ends as `done` (summary "Interrupted by the user.") with whatever was committed; send a follow-up as a new run with `resume_session_id`. |
 | `cancel` | — | end the session, exit code `2` |
 
@@ -27,7 +27,7 @@ An invalid line produces an `error` event with `code: "bad_command"`; the runner
 
 Every event has `type`, `ts` (RFC 3339, UTC, milliseconds) and `seq` (monotonic integer).
 
-`seq` continues across runs of the same task: a new runner process reads `/workspace/.anora/events.jsonl` and continues after its last `seq`. The backend can therefore replay the file by selecting `seq > last persisted seq`.
+`seq` continues across runs of the same task: a new runner process reads `/workspace/.fleetpocket/events.jsonl` and continues after its last `seq`. The backend can therefore replay the file by selecting `seq > last persisted seq`.
 
 | type | fields |
 |---|---|
@@ -68,7 +68,7 @@ On exit `4` the runner still commits work in progress so a follow-up run can con
 
 ## Attachments
 
-When the task has images attached (API.md, "Attachments"), Anora Runner bind-mounts the task's attachment folder **read-only** at `/attachments`: `/attachments/<id>.<ext>` (PNG, JPEG, WebP or GIF, metadata removed), plus thumbnails in `/attachments/.thumbs/`. Without attachments nothing is mounted and `/attachments` does not exist. There is no stdin command for attachments: the `run` command's `prompt` ends with a block that lists them:
+When the task has images attached (API.md, "Attachments"), Fleetpocket bind-mounts the task's attachment folder **read-only** at `/attachments`: `/attachments/<id>.<ext>` (PNG, JPEG, WebP or GIF, metadata removed), plus thumbnails in `/attachments/.thumbs/`. Without attachments nothing is mounted and `/attachments` does not exist. There is no stdin command for attachments: the `run` command's `prompt` ends with a block that lists them:
 
 ```
 Attached images (open each with the Read tool before you start):
@@ -83,21 +83,21 @@ The folder /attachments is read-only; copy an image into the repository only if 
 
 ## Event log
 
-Every event is also appended to `/workspace/.anora/events.jsonl`. The runner adds `.anora/` to `.git/info/exclude` so the log is never committed.
+Every event is also appended to `/workspace/.fleetpocket/events.jsonl`. The runner adds `.fleetpocket/` to `.git/info/exclude` so the log is never committed.
 
 ## Environment
 
 | variable | meaning |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | Claude auth; the OAuth token wins. Missing both → `error{code:"no_auth"}`, exit `1`. |
-| `ANORA_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `ANORA_FAKE.md`, commits, `done`. An `interrupt` while it waits ends the run as `done` ("Interrupted by the user.", no changes), like a real session. |
-| `ANORA_WORKSPACE` | workspace path, default `/workspace` (tests only). |
-| `ANORA_ATTACHMENTS` | attachment folder, default `/attachments` (tests only). In fake mode, when it exists, the runner reads every file in it (a `tool_use` "Read /attachments/<file> (<n> bytes)" each) and tries to write `.write-probe` there (`tool_result` `ok: false`, "EROFS: … read-only" on the read-only mount) before asking its question. |
+| `FLEETPOCKET_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `FLEETPOCKET_FAKE.md`, commits, `done`. An `interrupt` while it waits ends the run as `done` ("Interrupted by the user.", no changes), like a real session. |
+| `FLEETPOCKET_WORKSPACE` | workspace path, default `/workspace` (tests only). |
+| `FLEETPOCKET_ATTACHMENTS` | attachment folder, default `/attachments` (tests only). In fake mode, when it exists, the runner reads every file in it (a `tool_use` "Read /attachments/<file> (<n> bytes)" each) and tries to write `.write-probe` there (`tool_result` `ok: false`, "EROFS: … read-only" on the read-only mount) before asking its question. |
 
 ## Example
 
 ```
-→ {"type":"run","task_id":1,"prompt":"Say hello","limits":{"max_turns":10,"max_budget_usd":1,"max_duration_sec":60,"question_timeout_sec":30},"commit":{"message":"agent: say hello","author_name":"anora[bot]","author_email":"anora@example.com"}}
+→ {"type":"run","task_id":1,"prompt":"Say hello","limits":{"max_turns":10,"max_budget_usd":1,"max_duration_sec":60,"question_timeout_sec":30},"commit":{"message":"agent: say hello","author_name":"fleetpocket[bot]","author_email":"fleetpocket@example.com"}}
 ← {"type":"ready","runner_version":"0.1.0","ts":"…","seq":1}
 ← {"type":"started","session_id":"…","model":"…","ts":"…","seq":2}
 ← {"type":"question","question_id":"q1","text":"Which greeting should I write?","options":["hello","hi"],"ts":"…","seq":8}

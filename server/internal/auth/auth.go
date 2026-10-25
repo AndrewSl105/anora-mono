@@ -17,11 +17,11 @@ import (
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
-	"github.com/andrewsl105/anora/server/internal/store"
+	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
 const (
-	CookieName = "anora_session"
+	CookieName = "fleetpocket_session"
 	SessionTTL = 30 * 24 * time.Hour
 )
 
@@ -175,7 +175,7 @@ func HashPassword(pw string) (string, error) {
 
 // NewTOTP returns a fresh base32 secret and its otpauth:// URI.
 func NewTOTP(account string) (secret, uri string, err error) {
-	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Anora", AccountName: account})
+	key, err := totp.Generate(totp.GenerateOpts{Issuer: "Fleetpocket", AccountName: account})
 	if err != nil {
 		return "", "", err
 	}
