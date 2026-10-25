@@ -196,41 +196,60 @@ Restore with `docker compose -f docker-compose.deploy.yml exec -T postgres pg_re
 
 ### 11. Migrating from Anora
 
-An install from before the rename keeps everything under the old name: `/srv/anora`, the compose project `anora` (volumes `anora_pgdata`, `anora_caddy_data`, `anora_caddy_config`), the Postgres role and database `anora`, `ANORA_DOMAIN` in `.env`, and `anora.*` labels on agent containers. Migrate once, **before** pushing the rename to `main`, because the release workflow deploys to `/srv/fleetpocket`. The web app logs you out (new cookie name) and forgets the theme and new-task drafts (new localStorage keys).
+An install from before the rename keeps everything under the old name: `/srv/anora`, the compose project `anora` (volumes `anora_pgdata`, `anora_caddy_data`, `anora_caddy_config`), the Postgres role and database `anora`, `ANORA_DOMAIN` in `.env`, and `anora.*` labels and `anora-*` names on agent containers, networks and Claude session volumes. Migrate once, **before** pushing the rename to `main`: every push deploys to `/srv/fleetpocket`. Let running tasks finish or pause first (step 1 stops their containers; paused tasks resume later from their copied session volumes). The web app logs you out (new cookie name) and forgets the theme and new-task drafts (new localStorage keys).
 
 ```sh
-# 1. Back up and stop the old stack, and remove leftover agent containers, networks and volumes.
+set -e
+
+# 1. Back up and stop the old stack; remove agent containers and networks (they are recreated per run).
 cd /srv/anora
-docker compose -f docker-compose.deploy.yml exec -T postgres pg_dump -U anora -Fc anora > backups/pre-rename.dump
+docker compose -f docker-compose.deploy.yml exec -T postgres pg_dump -U anora -Fc anora | sudo tee backups/pre-rename.dump >/dev/null
 docker compose -f docker-compose.deploy.yml down
 docker ps -aq --filter label=anora.task_id | xargs -r docker rm -f
 docker network ls -q --filter label=anora.task_id | xargs -r docker network rm
-docker volume ls -q --filter label=anora.task_id | xargs -r docker volume rm
 
-# 2. Move the directory; rename the variable, paths and per-workspace event logs.
+# 2. Copy each task's Claude session volume (anora-claude-N) to its new name, labels included.
+for v in $(docker volume ls -q --filter label=anora.task_id); do
+  n="fleetpocket-${v#anora-}"
+  labels=$(docker volume inspect -f '{{range $k, $val := .Labels}}--label {{$k}}={{$val}} {{end}}' "$v" | sed 's/--label anora\./--label fleetpocket./g')
+  docker volume create $labels "$n" >/dev/null
+  docker run --rm -v "$v:/from:ro" -v "$n:/to" alpine cp -a /from/. /to/
+  docker volume rm "$v" >/dev/null
+done
+
+# 3. Move the directory (drop a /srv/fleetpocket a release run may already have created);
+#    rename the variable, paths and per-workspace event logs.
+[ -e /srv/fleetpocket ] && sudo rm -rf /srv/fleetpocket
 sudo mv /srv/anora /srv/fleetpocket
 cd /srv/fleetpocket
 sed -i 's/^ANORA_/FLEETPOCKET_/; s|/srv/anora/|/srv/fleetpocket/|g' .env
-for d in workspaces/*/; do [ -d "$d.anora" ] && sudo mv "$d.anora" "$d.fleetpocket"; done
+for d in workspaces/*/; do if [ -d "$d.anora" ]; then sudo mv "$d.anora" "$d.fleetpocket"; fi; done
 
-# 3. Copy the volumes to the new project's names.
+# 4. Copy the stack's volumes to the new project's names.
 for v in pgdata caddy_data caddy_config; do
-  docker volume create "fleetpocket_$v"
+  docker volume create "fleetpocket_$v" >/dev/null
   docker run --rm -v "anora_$v:/from:ro" -v "fleetpocket_$v:/to" alpine cp -a /from/. /to/
 done
+```
 
-# 4. Rename the Postgres role and database (POSTGRES_USER/POSTGRES_DB apply only to an empty volume).
-#    First copy the new deploy files from your machine:
-#    scp deploy/docker-compose.deploy.yml deploy/Caddyfile <user>@<server>:/srv/fleetpocket/
+5. From your machine, copy the new deploy files: `scp deploy/docker-compose.deploy.yml deploy/Caddyfile <user>@<server>:/srv/fleetpocket/`.
+
+6. Rename the Postgres role and database (`POSTGRES_USER`/`POSTGRES_DB` apply only to an empty volume):
+
+```sh
+cd /srv/fleetpocket
 compose="docker compose -f docker-compose.deploy.yml"
 $compose up -d postgres
+sleep 5
 $compose exec -T postgres psql -U anora -d postgres -c 'CREATE ROLE rename_tmp SUPERUSER LOGIN'
 $compose exec -T postgres psql -U rename_tmp -d postgres -c 'ALTER ROLE anora RENAME TO fleetpocket' -c 'ALTER DATABASE anora RENAME TO fleetpocket'
 $compose exec -T postgres psql -U fleetpocket -d postgres -c 'DROP ROLE rename_tmp'
 $compose down
 ```
 
-Then push to `main` (the release workflow builds the `fleetpocket-*` images, copies the deploy files and starts the stack), or run it by hand. Once it is up, remove the old volumes (`docker volume rm anora_pgdata anora_caddy_data anora_caddy_config`) and images. Outside the server: rename the bot, Mini App and its short name in @BotFather and the GitHub App if you want the new name there too; change the domain only if you also update DNS, `.env` and the GitHub App URLs.
+7. Push to `main` (the release workflow builds the `fleetpocket-*` images, copies the deploy files and starts the stack), or run it by hand. Once it is up, remove the old volumes (`docker volume rm anora_pgdata anora_caddy_data anora_caddy_config`), the old images and the old GHCR packages.
+
+Outside the server: rename the bot, the Mini App and its short name in @BotFather, and the GitHub App (commits are authored as `fleetpocket[bot]`). Change the domain only if you also update DNS, `.env` and the GitHub App URLs.
 
 ## CI/CD
 
