@@ -58,4 +58,4 @@ E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
 
 ## Deployment
 
-The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [server setup](../README.md#server-setup). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
+The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [deployment guide](../docs/DEPLOY.md). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
