@@ -13,6 +13,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "screenshots": "SCREENSHOTS=1 playwright test -c playwright.screenshots.config.ts && sh scripts/demo-gif.sh",
     "e2e:real": "E2E_BACKEND=${E2E_BACKEND:-http://localhost:8080} playwright test",
     "gen:api": "openapi-typescript ../docs/openapi.yaml -o src/api/schema.ts",
     "check:api": "openapi-typescript ../docs/openapi.yaml -o /tmp/anora-schema.ts && diff -q src/api/schema.ts /tmp/anora-schema.ts",

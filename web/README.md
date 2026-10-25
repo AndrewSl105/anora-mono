@@ -29,6 +29,7 @@ MSW serves the whole API from memory and a fake WebSocket streams events for the
 | `npm run typecheck` / `lint` / `test` | tsc, ESLint, Vitest |
 | `npm run e2e` | Playwright smoke tests against mock mode |
 | `npm run e2e:real` | Playwright against a running Anora Runner (see below) |
+| `npm run screenshots` | README screenshots and `demo.gif` in `../docs/screenshots` (mock mode, `SCREENSHOTS=1`, `playwright.screenshots.config.ts`; the GIF needs `ffmpeg` or `FFMPEG=<path>`) |
 | `npm run build` then `npm run check:size` | production build, then bundle budgets (initial JS ≤ 180 KB, CSS ≤ 30 KB gzipped) |
 
 Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) and `VITE_DEBUG=1` (Telegram debug panel). There is no API URL: everything is same-origin.

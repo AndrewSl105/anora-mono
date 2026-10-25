@@ -31,5 +31,6 @@ Open `http://localhost:5173` and log in with the password and a code from your a
 | `make gen-api` | regenerate `web/src/api/schema.ts` from `docs/openapi.yaml` |
 | `make e2e` | Playwright smoke tests in mock mode (no backend) |
 | `make e2e-real` | Playwright against the running dev stack (`E2E_PASSWORD`, `E2E_TOTP_SECRET`) |
+| `make screenshots` | README screenshots and `demo.gif` in `docs/screenshots` (mock mode; the GIF needs `ffmpeg`) |
 
 Every API change goes into `docs/openapi.yaml` and `docs/API.md` in the same commit as the code, with `make gen-api`.

@@ -8,6 +8,7 @@
 #   make gen-api     regenerate web/src/api/schema.ts from docs/openapi.yaml
 #   make e2e         Playwright smoke tests (mock mode)
 #   make e2e-real    Playwright against the running dev stack (E2E_PASSWORD, E2E_TOTP_SECRET)
+#   make screenshots README screenshots and demo.gif in docs/screenshots (mock mode; ffmpeg for the GIF)
 
 COMPOSE_DEV := docker compose -f deploy/docker-compose.dev.yml
 
@@ -24,7 +25,7 @@ TEST_DB_PORT ?= 55432
 ANORA_TEST_DATABASE_URL ?= postgres://anora:anora@localhost:$(TEST_DB_PORT)/anora?sslmode=disable
 
 .PHONY: dev dev-setup dev-down dev-logs test test-db test-server test-agent test-web \
-	lint build gen-api e2e e2e-real deps
+	lint build gen-api e2e e2e-real screenshots deps
 
 deps:
 	cd agent && npm ci
@@ -74,6 +75,9 @@ e2e:
 
 e2e-real:
 	cd web && E2E_BACKEND=http://localhost:$(ANORA_DEV_PORT) E2E_PORT=$(WEB_PORT) npx playwright test
+
+screenshots:
+	cd web && npm run screenshots
 
 # ---- lint, build, codegen ----
 
