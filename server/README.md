@@ -3,7 +3,7 @@
 The Go service of [Anora](../README.md): REST + WebSocket API, Telegram bot, scheduler, Docker orchestration through the socket proxy, and the GitHub App. CLI: `anora serve`, `migrate`, `hash-password`, `totp-setup`.
 
 - Spec: [docs/SPEC-server.md](../docs/SPEC-server.md) · API: [docs/API.md](../docs/API.md), [docs/openapi.yaml](../docs/openapi.yaml) · agent protocol: [docs/PROTOCOL.md](../docs/PROTOCOL.md) · decisions: [docs/DECISIONS.md](../docs/DECISIONS.md)
-- Deployment and server setup: [README.md](../README.md#server-setup)
+- Deployment and server setup: [docs/DEPLOY.md](../docs/DEPLOY.md) · operations (metrics, logs, retention, restart safety): [docs/OPERATIONS.md](../docs/OPERATIONS.md)
 
 ## Packages
 

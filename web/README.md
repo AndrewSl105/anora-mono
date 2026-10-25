@@ -29,6 +29,7 @@ MSW serves the whole API from memory and a fake WebSocket streams events for the
 | `npm run typecheck` / `lint` / `test` | tsc, ESLint, Vitest |
 | `npm run e2e` | Playwright smoke tests against mock mode |
 | `npm run e2e:real` | Playwright against a running Anora Runner (see below) |
+| `npm run screenshots` | README screenshots and `demo.gif` in `../docs/screenshots` (mock mode, `SCREENSHOTS=1`, `playwright.screenshots.config.ts`; the GIF needs `ffmpeg` or `FFMPEG=<path>`) |
 | `npm run build` then `npm run check:size` | production build, then bundle budgets (initial JS ≤ 180 KB, CSS ≤ 30 KB gzipped) |
 
 Build-time variables: `VITE_APP_VERSION` (git sha, set by the release workflow) and `VITE_DEBUG=1` (Telegram debug panel). There is no API URL: everything is same-origin.
@@ -58,4 +59,4 @@ E2E_PASSWORD=… E2E_TOTP_SECRET=… npm run e2e:real
 
 ## Deployment
 
-The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [server setup](../README.md#server-setup). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
+The `web` service of `deploy/docker-compose.deploy.yml` (image `ghcr.io/andrewsl105/anora-web`), behind Caddy on the same domain as the server; see the [deployment guide](../docs/DEPLOY.md). The image is Nginx serving `dist/` with an SPA fallback, `no-cache` for `index.html`, one-year immutable caching for hashed assets, gzip, and security headers (CSP with `connect-src 'self' wss://<host>` and `frame-ancestors` for the Telegram Web origins, no `X-Frame-Options`). See `nginx/`.
