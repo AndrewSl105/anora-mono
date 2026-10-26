@@ -15,7 +15,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
   | 401 | `unauthorized`, `bad_credentials` | no session; wrong login |
   | 403 | `csrf`, `forbidden` | missing header; `/metrics` from outside |
   | 404 | `not_found` | unknown id or endpoint |
-  | 409 | `conflict`, `already_answered`, `in_use`, `not_running`, `no_workspace` | action not allowed in the current state |
+  | 409 | `conflict`, `already_answered`, `in_use`, `not_running`, `no_workspace`, `not_mergeable` | action not allowed in the current state |
   | 410 | `gone` | the attachment was removed |
   | 429 | `rate_limited` | 5 failed logins per IP per 15 minutes |
   | 503 | `github_disabled`, `telegram_disabled` | integration not configured |
@@ -100,7 +100,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `waiting_input` | Claude asked a question (`open_question`) | answer, message (queued), interrupt, cancel |
 | `paused` | question not answered in time; containers removed | answer (resumes), message (resumes), cancel |
 | `pushing` | validating diff, pushing, opening the PR | message (queued), cancel |
-| `pr_open` | PR exists; `ci_status` follows CI | message (new run on the same branch), cancel |
+| `pr_open` | PR exists; `ci_status` follows CI | merge, message (new run on the same branch), cancel |
 | `completed` | PR merged/closed, or finished with no changes | message (new run) |
 | `failed` | see `status_reason` | retry |
 | `cancelled` | | retry |
@@ -121,6 +121,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 | `POST /tasks/{id}/interrupt` | `running`/`waiting_input`: stops Claude and **ends the run** ("Interrupted by the user."); what it committed is pushed as for any finished run, and the session is kept. A queued message then starts the next run; otherwise send a follow-up message |
 | `POST /tasks/{id}/cancel` | ends the task (`cancelled`), stops the runner |
 | `POST /tasks/{id}/retry` | `failed`/`cancelled` only: queues the original prompt again on the same branch |
+| `POST /tasks/{id}/merge` | `pr_open` only: squash-merges the PR (commit title `<task title> (#<number>)`), deletes its branch, records `pr_closed {merged: true}` and completes the task ("PR merged"). `409 not_mergeable` with GitHub's reason when GitHub refuses (conflicts, required checks or reviews); `503 github_disabled` without the GitHub App |
 | `GET /tasks/{id}/attachments/{attachmentId}` | the image (`?thumb=1`: JPEG, longest side ≤ 480 px); `410 gone` once removed |
 | `GET /stats` | `{running, queued, waiting_input, cost_usd_today, cost_usd_month}` (server-local days) |
 

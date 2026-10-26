@@ -17,7 +17,17 @@ var (
 	ErrConflict   = store.ErrConflict
 	ErrInvalid    = errors.New("invalid input")
 	ErrNotRunning = errors.New("task has no live runner")
+	// ErrNotMergeable is GitHub refusing a merge (conflicts, required
+	// checks or reviews, head moved); the message says why.
+	ErrNotMergeable   = errors.New("pull request is not mergeable")
+	ErrGitHubDisabled = errors.New("GitHub App is not configured")
 )
+
+// Merger merges a task's PR on GitHub (githubapp.App). Nil when the GitHub
+// App is not configured.
+type Merger interface {
+	MergePR(ctx context.Context, fullName string, installationID int64, number int, branch, title string) error
+}
 
 // Executor is the execution side (scheduler + runner manager). It is
 // optional so the API works before execution is wired in.
@@ -37,6 +47,8 @@ type Service struct {
 	Executor Executor
 	// Files stores attachments; nil rejects uploads.
 	Files *attachments.Files
+	// GitHub merges PRs; nil rejects Merge with ErrGitHubDisabled.
+	GitHub Merger
 }
 
 // View is a task with its latest run, open question and PR info.
@@ -327,6 +339,45 @@ func (s *Service) Retry(ctx context.Context, taskID int64) (*View, error) {
 	}
 	s.publishTask(nt)
 	s.wake()
+	return s.Get(ctx, taskID)
+}
+
+// Merge squash-merges the PR of a pr_open task, deletes its branch and
+// completes the task. The pull_request webhook that follows finds the task
+// already completed and records nothing twice.
+func (s *Service) Merge(ctx context.Context, taskID int64) (*View, error) {
+	t, err := s.Store.GetTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	if t.Status != PROpen || t.PRNumber == nil {
+		return nil, fmt.Errorf("%w: only a task with an open PR can be merged (task is %s)", ErrConflict, t.Status)
+	}
+	if s.GitHub == nil {
+		return nil, ErrGitHubDisabled
+	}
+	repo, err := s.Store.GetRepository(ctx, t.RepositoryID)
+	if err != nil {
+		return nil, err
+	}
+	branch := ""
+	if t.Branch != nil {
+		branch = *t.Branch
+	}
+	if err := s.GitHub.MergePR(ctx, repo.FullName, repo.InstallationID, *t.PRNumber, branch, t.Title); err != nil {
+		return nil, err
+	}
+	ev, _ := s.Store.AddBackendEvent(ctx, taskID, nil, "pr_closed", map[string]any{"number": *t.PRNumber, "merged": true})
+	s.publishEvent(ev)
+	// Only from pr_open: a follow-up started meanwhile keeps running.
+	if nt, err := s.Store.SetStatus(ctx, taskID, []string{PROpen}, Completed, "PR merged", true); err == nil {
+		s.publishTask(nt)
+		if s.Executor != nil {
+			_ = s.Executor.Cancel(ctx, taskID) // removes idle sidecars
+		}
+	} else if !errors.Is(err, ErrConflict) {
+		return nil, err
+	}
 	return s.Get(ctx, taskID)
 }
 

@@ -73,6 +73,7 @@ func runServe() error {
 			return err
 		}
 		gh.OnError = met.GitHubError
+		taskSvc.GitHub = gh
 		ws.Auth = gh.Token
 		var scanner workspace.SecretsScanner
 		if cfg.SecretsScan == "gitleaks" {

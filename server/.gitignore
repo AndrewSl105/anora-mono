@@ -1,6 +1,7 @@
 # Go
 /bin/
 /dist/
+/anora
 *.test
 *.out
 coverage.*

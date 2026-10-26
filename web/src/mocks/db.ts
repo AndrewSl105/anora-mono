@@ -281,6 +281,18 @@ export function seed() {
   addEvent(t6.id, 'tool_use', { tool: 'Read', summary: 'Read src/audit/routes.ts' }, true, ago(3))
   addEvent(t6.id, 'tool_result', { tool: 'Read', ok: true }, true, ago(3))
   Object.assign(t6, { status: 'running', cost_usd_total: 0.12, updated_at: ago(2) })
+
+  // A paused task: its question was not answered in time.
+  const t8 = makeTask({ project_id: 'vatary', title: 'Rate-limit the public search endpoint', status: 'queued', created_at: ago(60 * 5), source: 'telegram' })
+  const r8 = startRun(t8.id, 'initial', t8.prompt, ago(60 * 5))
+  addEvent(t8.id, 'started', { session_id: 's-8', model: 'claude-opus-5-5' }, true, ago(60 * 5))
+  addEvent(t8.id, 'tool_use', { tool: 'Read', summary: 'Read src/search/routes.ts' }, true, ago(60 * 5 - 1))
+  addEvent(t8.id, 'tool_result', { tool: 'Read', ok: true }, true, ago(60 * 5 - 1))
+  addEvent(t8.id, 'usage', { cost_usd_total: 0.27, input_tokens: 30500, output_tokens: 1400, turns: 4 }, true, ago(60 * 5 - 2))
+  addEvent(t8.id, 'question', { question_id: 'q1', text: 'Should the limit apply per IP address or per API key?', options: ['Per IP address', 'Per API key'] }, true, ago(60 * 5 - 2))
+  db.questions.set(t8.id, [{ id: `${r8.id}-q1`, task_id: t8.id, run_id: r8.id, text: 'Should the limit apply per IP address or per API key?', options: ['Per IP address', 'Per API key'], answer: null, answered_via: null, created_at: ago(60 * 5 - 2), answered_at: null }])
+  setStatus(t8, 'paused', 'no answer within the question timeout')
+  Object.assign(t8, { cost_usd_total: 0.27, paused_at: ago(60 * 2), updated_at: ago(60 * 2), last_activity_at: ago(60 * 2) })
 }
 
 seed()

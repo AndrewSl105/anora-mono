@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/google/go-github/v92/github"
 
 	"github.com/andrewsl105/fleetpocket/server/internal/api"
+	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
 type App struct {
@@ -182,6 +184,37 @@ func (a *App) Comment(ctx context.Context, fullName string, installationID int64
 	}
 	_, _, err = c.Issues.CreateComment(ctx, owner, name, number, github.IssueCommentRequest{Body: body})
 	return a.fail("comment", err)
+}
+
+// MergePR squash-merges PR number with the commit title "<title> (#number)",
+// then deletes its head branch. GitHub's refusals (not mergeable, head moved,
+// checks required) come back as tasks.ErrNotMergeable with GitHub's message.
+// A failed branch deletion is only logged: the PR is merged either way.
+func (a *App) MergePR(ctx context.Context, fullName string, installationID int64, number int, branch, title string) error {
+	c, owner, name, err := a.repoClient(ctx, fullName, installationID)
+	if err != nil {
+		return err
+	}
+	_, _, err = c.PullRequests.Merge(ctx, owner, name, number, "", &github.PullRequestOptions{
+		CommitTitle: fmt.Sprintf("%s (#%d)", title, number), MergeMethod: "squash",
+	})
+	var ge *github.ErrorResponse
+	if errors.As(err, &ge) && ge.Response != nil {
+		switch ge.Response.StatusCode {
+		case http.StatusMethodNotAllowed, http.StatusConflict, http.StatusUnprocessableEntity:
+			return fmt.Errorf("%w: %s", tasks.ErrNotMergeable, ge.Message)
+		}
+	}
+	if err != nil {
+		return a.fail("merge_pr", fmt.Errorf("merge PR #%d: %w", number, err))
+	}
+	if branch != "" {
+		if _, err := c.Git.DeleteRef(ctx, owner, name, "heads/"+branch); err != nil {
+			_ = a.fail("delete_branch", err)
+			slog.Warn("delete merged branch", "repo", fullName, "branch", branch, "err", err)
+		}
+	}
+	return nil
 }
 
 var ErrNotConfigured = errors.New("GitHub App is not configured")

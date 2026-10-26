@@ -11,10 +11,11 @@ import { useRuntime } from '@/telegram/runtime'
 import { t } from '@/i18n/en'
 
 const s = t.settings
+const version = import.meta.env.VITE_APP_VERSION || 'dev'
 
-function Stat({ label, value }: { label: string; value: ReactNode }) {
+function Stat({ label, value, className }: { label: string; value: ReactNode; className?: string }) {
   return (
-    <div className="rounded-xl border bg-card px-3.5 py-3">
+    <div className={cn('rounded-xl border bg-card px-3.5 py-3', className)}>
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className="mt-0.5 text-xl font-semibold tabular-nums">{value}</div>
     </div>
@@ -41,18 +42,19 @@ export default function SettingsPage() {
 
         <section>
           <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">{s.stats}</h2>
+          {/* Counts in a row of three, costs in a row of two: five cards never leave one stranded. */}
           {stats.data ? (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              <Stat label={s.running} value={stats.data.running} />
-              <Stat label={s.queued} value={stats.data.queued} />
-              <Stat label={s.waiting} value={stats.data.waiting_input} />
-              <Stat label={s.costToday} value={usd(stats.data.cost_usd_today)} />
-              <Stat label={s.costMonth} value={usd(stats.data.cost_usd_month)} />
+            <div className="grid grid-cols-6 gap-2">
+              <Stat className="col-span-2" label={s.running} value={stats.data.running} />
+              <Stat className="col-span-2" label={s.queued} value={stats.data.queued} />
+              <Stat className="col-span-2" label={s.waiting} value={stats.data.waiting_input} />
+              <Stat className="col-span-3" label={s.costToday} value={usd(stats.data.cost_usd_today)} />
+              <Stat className="col-span-3" label={s.costMonth} value={usd(stats.data.cost_usd_month)} />
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-              {[0, 1, 2, 3, 4].map((i) => (
-                <Skeleton key={i} className="h-[68px] rounded-xl" />
+            <div className="grid grid-cols-6 gap-2">
+              {[2, 2, 2, 3, 3].map((span, i) => (
+                <Skeleton key={i} className={cn('h-[68px] rounded-xl', span === 2 ? 'col-span-2' : 'col-span-3')} />
               ))}
             </div>
           )}
@@ -84,9 +86,11 @@ export default function SettingsPage() {
         <section>
           <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">{s.about}</h2>
           <dl className="divide-y rounded-xl border px-3.5 text-sm">
-            <div className="flex justify-between py-2.5">
-              <dt className="text-muted-foreground">{s.version}</dt>
-              <dd className="font-mono">{import.meta.env.VITE_APP_VERSION || 'dev'}</dd>
+            <div className="flex justify-between gap-4 py-2.5">
+              <dt className="shrink-0 text-muted-foreground">{s.version}</dt>
+              <dd className="min-w-0 truncate font-mono" title={version}>
+                {/^[0-9a-f]{40}$/.test(version) ? version.slice(0, 7) : version}
+              </dd>
             </div>
             <div className="flex justify-between gap-4 py-2.5">
               <dt className="text-muted-foreground">{s.backend}</dt>
@@ -105,8 +109,8 @@ export default function SettingsPage() {
                 )}
               </dd>
             </div>
-            <div className="flex justify-between py-2.5">
-              <dt className="text-muted-foreground">Session</dt>
+            <div className="flex justify-between gap-4 py-2.5">
+              <dt className="text-muted-foreground">{s.session}</dt>
               <dd>{session.session}</dd>
             </div>
           </dl>

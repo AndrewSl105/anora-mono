@@ -35,6 +35,7 @@ type env struct {
 	docker *runnermgr.Manager
 	ws     *workspace.Manager
 	files  *attachments.Files
+	hub    *events.Hub
 	bare   string
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -88,7 +89,7 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
-	e := &env{t: t, st: st, svc: svc, sched: sched, docker: docker, ws: ws, files: files, bare: bare, cancel: cancel, done: make(chan struct{})}
+	e := &env{t: t, st: st, svc: svc, sched: sched, docker: docker, ws: ws, files: files, hub: hub, bare: bare, cancel: cancel, done: make(chan struct{})}
 	go func() { _ = sched.Run(runCtx); close(e.done) }()
 	t.Cleanup(func() {
 		cancel()
@@ -142,11 +143,37 @@ func (e *env) eventTypes(id int64) []string {
 func TestFakeRunQueuedToCommit(t *testing.T) {
 	e := newEnv(t, time.Minute, []string{"redis"})
 	ctx := context.Background()
+	// Subscribers (the Telegram bot) look the question up when its event
+	// arrives, so the row must exist by then.
+	msgs, unsub := e.hub.Subscribe(1024)
+	defer unsub()
+	questionStored := make(chan error, 1)
+	go func() {
+		for m := range msgs {
+			if m.Event != nil && m.Event.Type == "question" && m.Event.RunID != nil {
+				var p struct {
+					QuestionID string `json:"question_id"`
+				}
+				_ = json.Unmarshal(m.Event.Payload, &p)
+				_, err := e.st.GetQuestion(ctx, tasks.QuestionID(*m.Event.RunID, p.QuestionID))
+				questionStored <- err
+				return
+			}
+		}
+	}()
 	v, err := e.svc.Create(ctx, tasks.CreateInput{ProjectID: "demo", Prompt: "Say hello", Source: "api"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	e.waitStatus(v.ID, tasks.WaitingInput, 2*time.Minute)
+	select {
+	case err := <-questionStored:
+		if err != nil {
+			t.Fatalf("question not stored when its event was published: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("no question event published")
+	}
 
 	view, _ := e.svc.Get(ctx, v.ID)
 	if view.OpenQuestion == nil || len(view.OpenQuestion.Options) != 2 {
