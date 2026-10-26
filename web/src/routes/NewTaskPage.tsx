@@ -4,7 +4,8 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { errorMessage, useCreateTask, useProjects } from '@/api/hooks'
+import { errorMessage, useAgents, useCreateTask, useProjects } from '@/api/hooks'
+import type { Agent } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -19,6 +20,7 @@ import { storage } from '@/lib/storage'
 import { t } from '@/i18n/en'
 
 const LAST_PROJECT = 'fleetpocket.lastProject'
+const PROJECT_AGENT = 'project' // Radix Select items cannot have an empty value
 const draftKey = (project: string) => `fleetpocket.draft.${project}`
 
 const schema = z.object({
@@ -26,6 +28,8 @@ const schema = z.object({
   repository_id: z.string().optional(),
   title: z.string().max(200).optional(),
   prompt: z.string().trim().min(1, t.newTask.promptRequired),
+  // '' runs with the project's agent.
+  agent: z.enum(['', 'claude', 'codex', 'cursor']),
 })
 type Values = z.infer<typeof schema>
 
@@ -36,6 +40,7 @@ export function toCreateBody(v: Values) {
     prompt: v.prompt.trim(),
     ...(v.repository_id ? { repository_id: Number(v.repository_id) } : {}),
     ...(v.title?.trim() ? { title: v.title.trim() } : {}),
+    ...(v.agent ? { agent: v.agent } : {}),
   }
 }
 
@@ -46,11 +51,15 @@ export default function NewTaskPage() {
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { project_id: '', repository_id: '', title: '', prompt: '' },
+    defaultValues: { project_id: '', repository_id: '', title: '', prompt: '', agent: '' },
   })
   const projectId = form.watch('project_id')
   const prompt = form.watch('prompt')
   const project = useMemo(() => projects.data?.find((p) => p.id === projectId), [projects.data, projectId])
+  const agents = useAgents()
+  const agent = form.watch('agent')
+  const projectAgent: Agent = project?.agent ?? agents.data?.defaultAgent ?? 'claude'
+  const agentName = t.agents[agent || projectAgent]
   const picker = useImagePicker()
   const [progress, setProgress] = useState<number | null>(null)
   useClosingConfirmation(prompt.trim().length > 0 || picker.picked.length > 0)
@@ -69,6 +78,7 @@ export default function NewTaskPage() {
     form.setValue('prompt', storage.get(draftKey(projectId)) ?? '')
     const def = project?.repositories.find((r) => r.is_default) ?? project?.repositories[0]
     form.setValue('repository_id', def ? String(def.id) : '')
+    form.setValue('agent', '')
   }, [projectId, project, form])
 
   useEffect(() => {
@@ -176,14 +186,42 @@ export default function NewTaskPage() {
               />
             </div>
           )}
+
+          {/* Only worth a choice when the server has keys for more than one agent. */}
+          {(agents.data?.agents.length ?? 0) > 1 && (
+            <div className="space-y-2">
+              <Label htmlFor="agent">{t.newTask.agent}</Label>
+              <Controller
+                control={form.control}
+                name="agent"
+                render={({ field }) => (
+                  <Select value={field.value || PROJECT_AGENT} onValueChange={(v) => field.onChange(v === PROJECT_AGENT ? '' : v)}>
+                    <SelectTrigger id="agent" className="h-11 w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value={PROJECT_AGENT} className="h-10">
+                        {t.newTask.projectAgent(t.agents[projectAgent])}
+                      </SelectItem>
+                      {agents.data?.agents.map((a) => (
+                        <SelectItem key={a} value={a} className="h-10">
+                          {t.agents[a]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              />
+            </div>
+          )}
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="prompt">{t.newTask.prompt}</Label>
+          <Label htmlFor="prompt">{t.newTask.prompt(agentName)}</Label>
           <Textarea
             id="prompt"
             {...form.register('prompt')}
-            placeholder={t.newTask.promptPlaceholder}
+            placeholder={t.newTask.promptPlaceholder(agentName)}
             className="min-h-40 field-sizing-content"
             aria-invalid={!!errors.prompt}
             onPaste={picker.onPaste}

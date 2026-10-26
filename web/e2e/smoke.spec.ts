@@ -30,6 +30,20 @@ test('login, create a task, answer a question', async ({ page }) => {
   await expect(page.getByText('Answered via web')).toBeVisible()
 })
 
+test('pick another agent for a new task', async ({ page }) => {
+  await login(page)
+  await page.getByRole('link', { name: 'New' }).click()
+  // Mock mode has keys for Claude and Codex only.
+  await page.getByLabel('Agent').click()
+  await expect(page.getByRole('option', { name: 'Cursor' })).toHaveCount(0)
+  await page.getByRole('option', { name: 'Codex' }).click()
+  await page.getByLabel('What should Codex do?').fill('Rename the config loader')
+  await page.getByRole('button', { name: 'Start task' }).click()
+  await expect(page.getByRole('heading', { name: 'Rename the config loader' })).toBeVisible()
+  await page.getByRole('tab', { name: 'Info' }).click()
+  await expect(page.getByText('Codex', { exact: true })).toBeVisible()
+})
+
 test('wrong credentials show one generic message', async ({ page }) => {
   await page.getByLabel('Password').fill('nope')
   await page.getByLabel('Authenticator code').fill('123456')

@@ -161,6 +161,7 @@ One line each. "Backend ask" marks something Fleetpocket should add.
 
 ### Client choices
 
+- 2026-10-26 — The new-task form shows an Agent picker only when the server has keys for more than one agent (`GET /me`); its default is the project's agent. The project form lists every agent and marks those without a key, because a key may be added later.
 - **TypeScript 6.0, not 7.** typescript-eslint supports `<6.1`; openapi-typescript and msw peer ranges are overridden in package.json.
 - **React Router** (not TanStack Router): simpler data-less routes; typed params are only `/tasks/:id` and `/projects/:id`.
 - **Official `telegram-web-app.js` + `@types/telegram-web-app`**, wrapped in `src/telegram/`, not `@telegram-apps/sdk-react`: the spec's CSP already allows `https://telegram.org`, and it avoids a large SDK in the bundle.

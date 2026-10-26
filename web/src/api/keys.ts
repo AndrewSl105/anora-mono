@@ -19,6 +19,7 @@ export const keys = {
     detail: (id: string) => ['projects', 'detail', id] as const,
   },
   githubRepos: ['github', 'repositories'] as const,
+  me: ['me'] as const,
   stats: ['stats'] as const,
   health: ['health'] as const,
 }

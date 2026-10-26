@@ -9,6 +9,7 @@ const project: Project = {
   services: ['postgres'],
   env: { NODE_ENV: 'test' },
   runner_image: null,
+  agent: null,
   model: 'claude-opus-5-5',
   max_turns: 80,
   max_budget_usd: null,
@@ -35,6 +36,15 @@ describe('patchBody', () => {
   it('sends the whole env map when a variable changes', () => {
     const v = { ...toFormValues(project), env: [{ key: 'NODE_ENV', value: 'test' }, { key: 'LOG', value: '1' }] }
     expect(patchBody(v, project)).toEqual({ env: { NODE_ENV: 'test', LOG: '1' } })
+  })
+})
+
+describe('agent', () => {
+  it('sends a picked agent and resets it to the server default with ""', () => {
+    expect(patchBody({ ...toFormValues(project), agent: 'codex' }, project)).toEqual({ agent: 'codex' })
+    const codex = { ...project, agent: 'codex' as const }
+    expect(patchBody({ ...toFormValues(codex), agent: '' }, codex)).toEqual({ agent: '' })
+    expect(createBody({ ...toFormValues(), id: 'n', name: 'N', agent: 'cursor' })).toMatchObject({ agent: 'cursor' })
   })
 })
 

@@ -31,6 +31,7 @@ export function InfoTab({ task }: { task: TaskView }) {
         {task.paused_at && <Row label={ti.paused}>{dateTime(task.paused_at)}</Row>}
         {task.status_reason && <Row label={ti.reason}>{task.status_reason}</Row>}
         <Row label={ti.source}>{task.source}</Row>
+        <Row label={ti.agent}>{t.agents[task.agent]}</Row>
         {task.ci_status && <Row label={ti.ci}>{task.ci_status}</Row>}
         {task.branch && (
           <Row label="Branch">

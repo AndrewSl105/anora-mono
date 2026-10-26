@@ -378,6 +378,16 @@ export function useGitHubRepos(enabled: boolean) {
 
 // ---- System ----
 
+/** The agents tasks may use (those with credentials on the server) and the default. */
+export function useAgents() {
+  return useQuery({
+    queryKey: keys.me,
+    queryFn: ({ signal }) => call(api.GET('/api/v1/me', { signal })),
+    staleTime: 5 * 60_000,
+    select: (s) => ({ agents: s.agents, defaultAgent: s.default_agent }),
+  })
+}
+
 export function useStats() {
   return useQuery({
     queryKey: keys.stats,

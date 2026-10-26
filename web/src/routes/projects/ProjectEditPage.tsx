@@ -9,6 +9,7 @@ import {
   useAddRepository,
   useArchiveProject,
   useCreateProject,
+  useAgents,
   useGitHubRepos,
   useProject,
   useRemoveRepository,
@@ -16,7 +17,8 @@ import {
   useUpdateRepository,
 } from '@/api/hooks'
 import { isApiError } from '@/api/errors'
-import type { Project, Repository } from '@/api/types'
+import type { Agent, Project, Repository } from '@/api/types'
+import { AGENTS } from '@/lib/agents'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -41,6 +43,33 @@ function Field({ id, label, hint, error, children }: { id: string; label: string
       {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
+  )
+}
+
+const DEFAULT = 'default' // Radix Select items cannot have an empty value
+
+/** Project agent: one of the agents, or the server default. Agents without a key stay selectable (the key may come later). */
+function AgentSelect({ value, onChange }: { value: ProjectFormValues['agent']; onChange: (v: ProjectFormValues['agent']) => void }) {
+  const info = useAgents()
+  const enabled = info.data?.agents ?? []
+  const label = (a: Agent) => t.agents[a] + (info.data && !enabled.includes(a) ? ` (${f.agentNoKey})` : '')
+  return (
+    <Select value={value || DEFAULT} onValueChange={(v) => onChange(v === DEFAULT ? '' : (v as Agent))}>
+      <SelectTrigger id="agent" className="h-11 w-full">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={DEFAULT} className="h-10">
+          {t.common.serverDefault}
+          {info.data ? ` (${t.agents[info.data.defaultAgent]})` : ''}
+        </SelectItem>
+        {AGENTS.map((a) => (
+          <SelectItem key={a} value={a} className="h-10">
+            {label(a)}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
 
@@ -126,7 +155,10 @@ function ProjectForm({ project }: { project?: Project }) {
           <Field id="instructions" label={f.instructions} hint={f.instructionsHint}>
             <Textarea id="instructions" className="min-h-28 field-sizing-content" {...form.register('instructions')} />
           </Field>
-          <Field id="model" label={f.model}>
+          <Field id="agent" label={f.agent} hint={f.agentHint}>
+            <Controller control={form.control} name="agent" render={({ field }) => <AgentSelect value={field.value} onChange={field.onChange} />} />
+          </Field>
+          <Field id="model" label={f.model} hint={f.modelHint}>
             <Input id="model" placeholder={t.common.serverDefault} className="h-11 font-mono" {...form.register('model')} />
           </Field>
         </Section>
