@@ -12,6 +12,27 @@ Web/Mini App ─┼─► server (Go) ─────────┤
 
 The server owns every credential and side effect. An agent sees only its workspace folder and a prompt: it gets no GitHub token, no Docker access and no host network.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/tasks-phone-dark.png"><img src="docs/screenshots/tasks-phone-light.png" alt="Task list with running, waiting and paused tasks" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/task-running-phone-dark.png"><img src="docs/screenshots/task-running-phone-light.png" alt="Running task with its live timeline" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/task-question-phone-dark.png"><img src="docs/screenshots/task-question-phone-light.png" alt="Task waiting on a question, with answer buttons" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/task-pr-phone-dark.png"><img src="docs/screenshots/task-pr-phone-light.png" alt="Finished task with its summary, pull request and CI result" width="200"></picture></td>
+  </tr>
+  <tr>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/new-task-phone-dark.png"><img src="docs/screenshots/new-task-phone-light.png" alt="New task form with a prompt" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/projects-phone-dark.png"><img src="docs/screenshots/projects-phone-light.png" alt="Projects" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/settings-phone-dark.png"><img src="docs/screenshots/settings-phone-light.png" alt="Settings with usage and backend health" width="200"></picture></td>
+    <td><picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/login-phone-dark.png"><img src="docs/screenshots/login-phone-light.png" alt="Sign in with password and TOTP code" width="200"></picture></td>
+  </tr>
+</table>
+
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/task-running-desktop-dark.png"><img src="docs/screenshots/task-running-desktop-light.png" alt="Desktop layout: task list and a running task side by side"></picture>
+
+The screenshots switch between light and dark to match your GitHub theme. `make screenshots` generates them from the mock backend ([web/e2e/screenshots](web/e2e/screenshots/screenshots.spec.ts)).
+
 ## Layout
 
 ```
