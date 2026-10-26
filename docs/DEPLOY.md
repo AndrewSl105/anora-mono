@@ -94,7 +94,7 @@ For a local sidecar, run the `whisper-server` binary from whisper.cpp with `--ho
 
 ## 7. GitHub secrets
 
-In **AndrewSl105/anora-mono**: *Settings → Environments → New environment* `production`, with three secrets:
+In **AndrewSl105/fleetpocket**: *Settings → Environments → New environment* `production`, with three secrets:
 
 | Secret | Value |
 |---|---|
