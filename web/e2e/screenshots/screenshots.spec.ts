@@ -34,7 +34,7 @@ async function open(page: Page, path: string) {
 }
 
 async function login(page: Page) {
-  await page.getByLabel('Password').fill('anora')
+  await page.getByLabel('Password').fill('fleetpocket')
   await page.getByLabel('Authenticator code').fill('123456')
   await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible()
 }
@@ -50,7 +50,7 @@ test.describe('screens', () => {
   test('login', async ({ page }) => {
     test.skip(isDesktop())
     await open(page, '/')
-    await expect(page.getByRole('heading', { name: 'Sign in to Anora' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Sign in to Fleetpocket' })).toBeVisible()
     await shot(page, 'login')
   })
 
@@ -144,9 +144,9 @@ test('demo video', async ({ browser }) => {
   await page.clock.setFixedTime(NOW)
   await hideOverlays(page)
   await page.goto('/')
-  await expect(page.getByRole('heading', { name: 'Sign in to Anora' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Sign in to Fleetpocket' })).toBeVisible()
   await page.waitForTimeout(600)
-  await page.getByLabel('Password').pressSequentially('anora', { delay: 80 })
+  await page.getByLabel('Password').pressSequentially('fleetpocket', { delay: 80 })
   await page.getByLabel('Authenticator code').pressSequentially('123456', { delay: 80 })
   await expect(page.getByText('Retry webhook deliveries with backoff')).toBeVisible()
   await page.waitForTimeout(1200)

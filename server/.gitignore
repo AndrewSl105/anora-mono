@@ -1,7 +1,7 @@
 # Go
 /bin/
 /dist/
-/anora
+/fleetpocket
 *.test
 *.out
 coverage.*
