@@ -14,12 +14,16 @@ export const ExitCode = {
 
 // ---- Commands (stdin) ----
 
+export const AGENTS = ["claude", "codex", "cursor"] as const;
+export type AgentKind = (typeof AGENTS)[number];
+
 export const RunCommand = z.object({
   type: z.literal("run"),
   task_id: z.union([z.string(), z.number()]).transform(String),
   prompt: z.string().min(1),
   append_system_prompt: z.string().optional(),
   resume_session_id: z.string().optional(),
+  agent: z.enum(AGENTS).default("claude"),
   model: z.string().optional(),
   limits: z.object({
     max_turns: z.number().int().positive(),

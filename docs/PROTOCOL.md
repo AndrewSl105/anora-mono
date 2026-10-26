@@ -2,7 +2,7 @@
 
 The Fleetpocket server (Go) and the runner (`runner/`, Node) talk over the runner container's attached stdin/stdout using JSON Lines: one JSON object per line, UTF-8, `\n`-terminated. There are no ports. Stderr is free-form diagnostics and is only logged.
 
-Source of truth: `runner/src/protocol.ts`. Go mirror: `internal/runnermgr/protocol.go`.
+Source of truth: `agent/src/protocol.ts`. Go mirror: `server/internal/runnermgr/protocol.go`.
 
 ## Lifecycle
 
@@ -15,9 +15,9 @@ Source of truth: `runner/src/protocol.ts`. Go mirror: `internal/runnermgr/protoc
 
 | type | fields | meaning |
 |---|---|---|
-| `run` | `task_id` (string or number), `prompt`, `append_system_prompt?`, `resume_session_id?`, `model?`, `limits{max_turns, max_budget_usd, max_duration_sec, question_timeout_sec}`, `commit{message, author_name, author_email}` | first line, starts the session |
+| `run` | `task_id` (string or number), `prompt`, `append_system_prompt?`, `resume_session_id?`, `agent?` (`claude` default, `codex`, `cursor`), `model?`, `limits{max_turns, max_budget_usd, max_duration_sec, question_timeout_sec}`, `commit{message, author_name, author_email}` | first line, starts the session |
 | `answer` | `question_id`, `text` | reply to a pending question. An answer that arrives before its question is kept and used when the question is asked. |
-| `message` | `text` | extra user message injected into the running session. A run handles one prompt: input closes after the first turn's result, so a message that arrives after that is dropped. **Fleetpocket does not send it**: it queues messages and starts them as the next run (API.md). |
+| `message` | `text` | extra user message injected into the running session. A run handles one prompt: input closes after the first turn's result, so a message that arrives after that is dropped. Codex and Cursor cannot take input mid-turn: a message that arrives during the turn runs as one more turn after it. **Fleetpocket does not send it**: it queues messages and starts them as the next run (API.md). |
 | `interrupt` | — | stop the current turn, keep the session. The run then ends as `done` (summary "Interrupted by the user.") with whatever was committed; send a follow-up as a new run with `resume_session_id`. |
 | `cancel` | — | end the session, exit code `2` |
 
@@ -45,6 +45,21 @@ Every event has `type`, `ts` (RFC 3339, UTC, milliseconds) and `seq` (monotonic 
 | `heartbeat` | — (every 15 s) |
 
 Error codes: `no_auth`, `bad_command`, `commit_failed`, `limit_exceeded`, `sdk_error`, `internal`.
+
+## Agents
+
+`agent` picks the session the runner starts; every agent emits the same events.
+
+| agent | SDK | session id (`resume_session_id`) | `append_system_prompt` | questions | limits enforced |
+|---|---|---|---|---|---|
+| `claude` | `@anthropic-ai/claude-agent-sdk` | Claude session id | appended to the `claude_code` system prompt | `AskUserQuestion` → `question` | turns, budget, duration |
+| `codex` | `@openai/codex-sdk` | Codex thread id (state in `$CODEX_HOME` = `~/.claude/codex`) | Codex `developer_instructions` | none | duration |
+| `cursor` | `@cursor/sdk` (local agent) | Cursor agent id (state in `~/.cursor` → `~/.claude/cursor`) | prepended to the first prompt of a new agent | none (`askQuestion` disallowed) | duration |
+
+- `model` is passed to the agent as is; without it Codex uses its default (`started.model` is `default`) and Cursor uses `auto`.
+- Codex and Cursor report tokens but no cost: their `usage` and `done` carry `cost_usd_total: 0`, and `turns` counts model turns (one per input).
+- Codex and Cursor get the images listed under "Attached images" as image inputs. Commands they run see no auth variables (Codex: `shell_environment_policy`; Cursor: the key is removed from the runner's environment and passed to the SDK). The tool policy below (`PreToolUse`) exists only for Claude.
+- Both run without their own sandbox and without approvals (Codex `danger-full-access` and `approval_policy = "never"`, Cursor `sandboxOptions.enabled: false`): the container is the sandbox.
 
 Notes for the backend:
 
@@ -79,6 +94,8 @@ Earlier attachments of this task (still available; Read them if they matter for 
 The folder /attachments is read-only; copy an image into the repository only if the change needs it.
 ```
 
+For `codex` and `cursor` the headings read "Attached images (included with this message):" and "…; open them if they matter for this request):", and the runner sends the "Attached images" files to the model as image inputs.
+
 "Attached images" are those sent with this run's input (the task prompt, the messages a follow-up carries, or, for a retry, the task's own images again); "Earlier attachments" are the task's other images still kept. Either section is left out when empty. The runner passes `/attachments` to the SDK as an additional directory when it exists, and its `PreToolUse` policy refuses writes there (Write/Edit, Bash writes and redirections) with an explanation; reads, and copies out of it, are allowed.
 
 ## Event log
@@ -90,8 +107,11 @@ Every event is also appended to `/workspace/.fleetpocket/events.jsonl`. The runn
 | variable | meaning |
 |---|---|
 | `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` | Claude auth; the OAuth token wins. Missing both → `error{code:"no_auth"}`, exit `1`. |
+| `OPENAI_API_KEY` | Codex auth (`agent: "codex"`); missing → `no_auth`. |
+| `CURSOR_API_KEY` | Cursor auth (`agent: "cursor"`); missing → `no_auth`. |
 | `FLEETPOCKET_RUNNER_FAKE=1` | scripted session, no Claude: `started`, tool events, one question (`q1`, options `hello`/`hi`), waits for the answer, writes `FLEETPOCKET_FAKE.md`, commits, `done`. An `interrupt` while it waits ends the run as `done` ("Interrupted by the user.", no changes), like a real session. |
 | `FLEETPOCKET_WORKSPACE` | workspace path, default `/workspace` (tests only). |
+| `FLEETPOCKET_STATE_DIR` | per-task agent state, default `~/.claude` (the volume Fleetpocket mounts; tests only). |
 | `FLEETPOCKET_ATTACHMENTS` | attachment folder, default `/attachments` (tests only). In fake mode, when it exists, the runner reads every file in it (a `tool_use` "Read /attachments/<file> (<n> bytes)" each) and tries to write `.write-probe` there (`tool_result` `ok: false`, "EROFS: … read-only" on the read-only mount) before asking its question. |
 
 ## Example

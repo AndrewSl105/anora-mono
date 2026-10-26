@@ -55,6 +55,7 @@ type RunCommand struct {
 	Prompt             string     `json:"prompt"`
 	AppendSystemPrompt string     `json:"append_system_prompt,omitempty"`
 	ResumeSessionID    string     `json:"resume_session_id,omitempty"`
+	Agent              string     `json:"agent,omitempty"`
 	Model              string     `json:"model,omitempty"`
 	Limits             Limits     `json:"limits"`
 	Commit             CommitInfo `json:"commit"`

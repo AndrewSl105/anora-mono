@@ -8,7 +8,7 @@ import type { EventBody } from "./protocol.ts";
 export const ASK_TOOL = "AskUserQuestion";
 const SUMMARY_MAX = 80;
 const RESULT_SUMMARY_MAX = 120;
-const TEXT_MAX = 4000;
+export const TEXT_MAX = 4000;
 export const DONE_SUMMARY_MAX = 2000;
 
 export function truncate(s: string, max: number): string {

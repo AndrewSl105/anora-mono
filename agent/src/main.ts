@@ -2,10 +2,28 @@ import { Control } from "./control.ts";
 import { Emitter } from "./emitter.ts";
 import { fakeSession } from "./fake.ts";
 import { commitAll } from "./git.ts";
-import { ExitCode, RUNNER_VERSION, type RunCommand } from "./protocol.ts";
+import { ExitCode, RUNNER_VERSION, type AgentKind, type RunCommand } from "./protocol.ts";
 import type { Session, SessionOutcome } from "./session.ts";
 
 const HEARTBEAT_MS = 15_000;
+
+// Auth each agent needs; any one of the listed variables is enough.
+const AUTH: Record<AgentKind, string[]> = {
+  claude: ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"],
+  codex: ["OPENAI_API_KEY"],
+  cursor: ["CURSOR_API_KEY"],
+};
+
+async function loadSession(agent: AgentKind): Promise<Session> {
+  switch (agent) {
+    case "claude":
+      return (await import("./claude.ts")).claudeSession;
+    case "codex":
+      return (await import("./codex.ts")).codexSession;
+    case "cursor":
+      return (await import("./cursor.ts")).cursorSession;
+  }
+}
 
 async function main(): Promise<number> {
   const workspace = process.env.FLEETPOCKET_WORKSPACE ?? "/workspace";
@@ -23,8 +41,9 @@ async function main(): Promise<number> {
     const cmd = await Promise.race([control.run, cancelledPromise(control)]);
     if (!cmd) return ExitCode.Cancelled;
 
-    if (!fake && !process.env.CLAUDE_CODE_OAUTH_TOKEN && !process.env.ANTHROPIC_API_KEY) {
-      emitter.emit({ type: "error", code: "no_auth", message: "neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set" });
+    const auth = AUTH[cmd.agent];
+    if (!fake && !auth.some((v) => process.env[v])) {
+      emitter.emit({ type: "error", code: "no_auth", message: `${cmd.agent}: ${auth.join(" or ")} is not set` });
       return ExitCode.Error;
     }
 
@@ -34,7 +53,7 @@ async function main(): Promise<number> {
       control.cancel();
     }, cmd.limits.max_duration_sec * 1000);
 
-    const session: Session = fake ? fakeSession : (await import("./claude.ts")).claudeSession;
+    const session: Session = fake ? fakeSession : await loadSession(cmd.agent);
     let outcome: SessionOutcome;
     try {
       outcome = await session({ cmd, workspace, emitter, control });

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { parseCommand } from "../src/protocol.ts";
+import { promptImages } from "../src/attachments.ts";
 import { parseShortstat } from "../src/git.ts";
 
 const run = {
@@ -42,4 +43,22 @@ test("rejects invalid JSON, unknown type and missing fields", () => {
 test("parses git shortstat", () => {
   assert.deepEqual(parseShortstat(" 3 files changed, 10 insertions(+), 2 deletions(-)\n"), { files_changed: 3, insertions: 10, deletions: 2 });
   assert.deepEqual(parseShortstat(" 1 file changed, 1 insertion(+)\n"), { files_changed: 1, insertions: 1, deletions: 0 });
+});
+
+test("run agent defaults to claude and rejects unknown agents", () => {
+  const r = parseCommand(JSON.stringify(run));
+  assert.ok(r.ok && r.command.type === "run" && r.command.agent === "claude");
+  const c = parseCommand(JSON.stringify({ ...run, agent: "codex" }));
+  assert.ok(c.ok && c.command.type === "run" && c.command.agent === "codex");
+  assert.equal(parseCommand(JSON.stringify({ ...run, agent: "gemini" })).ok, false);
+});
+
+test("promptImages lists only the images sent with this input", () => {
+  const prompt = [
+    "Fix the header",
+    "Attached images (included with this message):\n- /attachments/12.png (mock.png, 1200x600)\n- /attachments/13.jpg (b.jpg, 10x10)\n",
+    "Earlier attachments of this task (still available; open them if they matter for this request):\n- /attachments/7.jpg (photo.jpg, 3024x4032)\nThe folder /attachments is read-only.\n",
+  ].join("\n\n");
+  assert.deepEqual(promptImages(prompt), ["/attachments/12.png", "/attachments/13.jpg"]);
+  assert.deepEqual(promptImages("no images"), []);
 });

@@ -19,9 +19,11 @@ RUN curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz" | 
 ENV PATH=/usr/local/go/bin:/home/runner/go/bin:$PATH
 
 # The runner user must be uid 1000 so workspaces are shared with Fleetpocket.
+# ~/.claude is the per-task state volume; Cursor's ~/.cursor lives inside it.
 RUN if getent passwd 1000 >/dev/null; then userdel -r "$(getent passwd 1000 | cut -d: -f1)"; fi \
  && useradd -m -u 1000 -s /bin/bash runner \
  && mkdir -p /home/runner/.claude /workspace \
+ && ln -s /home/runner/.claude/cursor /home/runner/.cursor \
  && chown -R runner:runner /home/runner /workspace \
  && git config --system --add safe.directory '*'
 
