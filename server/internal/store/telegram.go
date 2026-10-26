@@ -165,12 +165,14 @@ type TelegramDraftMedia struct {
 type TelegramDraft struct {
 	ID, ChatID, ThreadID, RepositoryID, CardMessageID, SourceMessageID int64
 	ProjectID, Text                                                    string
-	Media                                                              []TelegramDraftMedia
-	ExpiresAt, CreatedAt, UpdatedAt                                    time.Time
+	// Agent is the agent picked on the card; "" runs with the project's.
+	Agent                           string
+	Media                           []TelegramDraftMedia
+	ExpiresAt, CreatedAt, UpdatedAt time.Time
 }
 
 const draftCols = `id, chat_id, thread_id, project_id, repository_id, text, media,
-	card_message_id, source_message_id, expires_at, created_at, updated_at`
+	card_message_id, source_message_id, expires_at, created_at, updated_at, agent`
 
 func scanTelegramDraft(row interface{ Scan(...any) error }) (*TelegramDraft, error) {
 	var d TelegramDraft
@@ -178,7 +180,7 @@ func scanTelegramDraft(row interface{ Scan(...any) error }) (*TelegramDraft, err
 	var repo, card *int64
 	var raw []byte
 	if err := row.Scan(&d.ID, &d.ChatID, &d.ThreadID, &project, &repo, &d.Text, &raw,
-		&card, &d.SourceMessageID, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		&card, &d.SourceMessageID, &d.ExpiresAt, &d.CreatedAt, &d.UpdatedAt, &d.Agent); err != nil {
 		return nil, err
 	}
 	d.ProjectID, d.RepositoryID, d.CardMessageID = deref(project, ""), deref(repo, 0), deref(card, 0)
@@ -244,6 +246,14 @@ func (s *Store) SetTelegramDraftText(ctx context.Context, id int64, text string)
 
 func (s *Store) SetTelegramDraftProject(ctx context.Context, id int64, projectID string, repositoryID int64) error {
 	tag, err := s.Pool.Exec(ctx, `UPDATE telegram_drafts SET project_id = $2, repository_id = NULLIF($3, 0), updated_at = now() WHERE id = $1`, id, projectID, repositoryID)
+	if err == nil && tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return err
+}
+
+func (s *Store) SetTelegramDraftAgent(ctx context.Context, id int64, agent string) error {
+	tag, err := s.Pool.Exec(ctx, `UPDATE telegram_drafts SET agent = $2, updated_at = now() WHERE id = $1`, id, agent)
 	if err == nil && tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}

@@ -2,6 +2,7 @@ package telegram
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -519,5 +520,48 @@ func TestMergeButtonConfirms(t *testing.T) {
 	}
 	if tk, _ = st.GetTask(ctx, v.ID); tk.Status != tasks.Completed {
 		t.Fatalf("status %s", tk.Status)
+	}
+}
+
+func TestDraftAgentCycleAndCreate(t *testing.T) {
+	if got := []string{nextAgent("", []string{"claude", "codex"}), nextAgent("claude", []string{"claude", "codex"}), nextAgent("codex", []string{"claude", "codex"}), nextAgent("cursor", []string{"claude"})}; fmt.Sprint(got) != "[claude codex  ]" {
+		t.Fatalf("cycle: %q", got)
+	}
+	st := testutil.DB(t)
+	ctx := context.Background()
+	hub := events.NewHub()
+	svc := &tasks.Service{Store: st, Hub: hub, AgentEnabled: func(a string) bool { return a != "cursor" }}
+	name := "Demo"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "demo", ProjectFields: store.ProjectFields{Name: &name}})
+	repo, _ := (&projects.Service{Store: st}).AddRepository(ctx, "demo", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+	d, err := st.MergeTelegramDraft(ctx, owner, 0, 1, "demo", repo.ID, "Rename the loader", nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Bot{API: &fakeAPI{}, Store: st, Tasks: svc, Hub: hub, OwnerID: owner}
+	b.init()
+	labels := ""
+	for _, row := range b.draftButtons(ctx, d).InlineKeyboard {
+		for _, button := range row {
+			labels += button.Text + "|"
+		}
+	}
+	if !strings.Contains(labels, "🤖 Agent: project's") {
+		t.Fatalf("no agent button: %s", labels)
+	}
+	var answers []string
+	answer := func(s string) { answers = append(answers, s) }
+	cb := func(action string) {
+		b.handleDraftCallback(ctx, &telego.CallbackQuery{}, store.TelegramCallback{Action: action, DraftID: d.ID}, answer)
+	}
+	cb("draft_agent") // claude
+	cb("draft_agent") // codex
+	cb("draft_create")
+	if fmt.Sprint(answers) != "[Claude Codex Task created]" {
+		t.Fatalf("answers: %v", answers)
+	}
+	list, err := st.ListTasks(ctx, store.TaskFilter{ProjectID: "demo", Limit: 10})
+	if err != nil || len(list) != 1 || list[0].Agent != "codex" {
+		t.Fatalf("task: %v %+v", err, list)
 	}
 }

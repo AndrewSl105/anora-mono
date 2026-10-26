@@ -43,6 +43,19 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 			return
 		}
 		answer("Send the new text")
+	case "draft_agent":
+		// Cycle: the project's agent, then each agent with a key.
+		next := nextAgent(d.Agent, b.Tasks.EnabledAgents())
+		if err := b.Store.SetTelegramDraftAgent(ctx, d.ID, next); err != nil {
+			answer("Could not change the agent")
+			return
+		}
+		_ = b.refreshDraft(ctx, d.ID)
+		if next == "" {
+			answer("Project's agent")
+		} else {
+			answer(agentName(next))
+		}
 	case "draft_project":
 		projects, err := b.Store.ListProjects(ctx, false, "", 50)
 		if err != nil {
@@ -119,7 +132,7 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 		}
 		b.createMu.Lock()
 		v, err := b.Tasks.Create(ctx, tasks.CreateInput{ProjectID: d.ProjectID, RepositoryID: d.RepositoryID,
-			Title: tasks.TitleFromPrompt(prompt), Prompt: prompt, Source: "telegram", Images: images})
+			Title: tasks.TitleFromPrompt(prompt), Prompt: prompt, Agent: d.Agent, Source: "telegram", Images: images})
 		if err == nil {
 			err = b.Store.SetTaskTelegram(ctx, v.ID, store.TelegramTarget{ChatID: d.ChatID, ThreadID: d.ThreadID})
 		}
@@ -137,6 +150,32 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 		_ = b.Store.DeleteTelegramDraft(ctx, d.ID)
 		answer("Task created")
 	}
+}
+
+// nextAgent is the agent after cur in the cycle "" (project's), enabled...
+func nextAgent(cur string, enabled []string) string {
+	for i, a := range enabled {
+		if a == cur {
+			if i+1 < len(enabled) {
+				return enabled[i+1]
+			}
+			return ""
+		}
+	}
+	if cur == "" && len(enabled) > 0 {
+		return enabled[0]
+	}
+	return ""
+}
+
+func agentName(agent string) string {
+	switch agent {
+	case "codex":
+		return "Codex"
+	case "cursor":
+		return "Cursor"
+	}
+	return "Claude"
 }
 
 func twoColumn(buttons []telego.InlineKeyboardButton) *telego.InlineKeyboardMarkup {

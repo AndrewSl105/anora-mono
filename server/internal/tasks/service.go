@@ -138,6 +138,17 @@ func ProjectAgent(p *store.Project, defaultAgent string) string {
 	return "claude"
 }
 
+// EnabledAgents lists the agents new tasks may use, in config.Agents order.
+func (s *Service) EnabledAgents() []string {
+	var out []string
+	for _, a := range config.Agents {
+		if s.AgentEnabled == nil || s.AgentEnabled(a) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // agentFor resolves a new task's agent and checks that it can run.
 func (s *Service) agentFor(p *store.Project, override string) (string, error) {
 	agent := strings.TrimSpace(override)

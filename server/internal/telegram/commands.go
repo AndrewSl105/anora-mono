@@ -453,11 +453,14 @@ func (b *Bot) renderDraft(ctx context.Context, d *store.TelegramDraft) string {
 	if len(d.Media) > 0 {
 		fmt.Fprintf(&bld, "\n+%d images", len(d.Media))
 	}
+	if d.Agent != "" {
+		fmt.Fprintf(&bld, "\nAgent: %s", agentName(d.Agent))
+	}
 	return bld.String()
 }
 
 func (b *Bot) draftButtons(ctx context.Context, d *store.TelegramDraft) *telego.InlineKeyboardMarkup {
-	return tu.InlineKeyboard(
+	rows := [][]telego.InlineKeyboardButton{
 		tu.InlineKeyboardRow(
 			tu.InlineKeyboardButton("✅ Create").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_create", DraftID: d.ID})),
 			tu.InlineKeyboardButton("📁 Project").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_project", DraftID: d.ID})),
@@ -466,7 +469,18 @@ func (b *Bot) draftButtons(ctx context.Context, d *store.TelegramDraft) *telego.
 			tu.InlineKeyboardButton("✏️ Edit text").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_edit", DraftID: d.ID})),
 			tu.InlineKeyboardButton("✖ Cancel").WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_cancel", DraftID: d.ID})),
 		),
-	)
+	}
+	// Only worth a choice when the server has keys for more than one agent.
+	if len(b.Tasks.EnabledAgents()) > 1 {
+		label := "🤖 Agent: project's"
+		if d.Agent != "" {
+			label = "🤖 Agent: " + agentName(d.Agent)
+		}
+		rows = append(rows, tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton(label).WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_agent", DraftID: d.ID})),
+		))
+	}
+	return tu.InlineKeyboard(rows...)
 }
 
 func (b *Bot) refreshDraft(ctx context.Context, id int64) error {
