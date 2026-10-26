@@ -6,6 +6,8 @@ One server, one domain. `/srv/fleetpocket/docker-compose.deploy.yml` runs `caddy
 
 Target: a fresh Ubuntu 24.04 VPS with Docker Engine and the Compose plugin, nothing else. Open ports 22, 80 and 443 (and 443/udp for HTTP/3). Below, `fleetpocket.example.com` stands for your domain.
 
+**Two ways to deploy.** With the published images (`ghcr.io/andrewsl105/fleetpocket-*`, public), follow steps 1–6, download `deploy/docker-compose.deploy.yml`, `deploy/Caddyfile` and `deploy/.env.example` (as `.env`) into `/srv/fleetpocket` as in the [README](../README.md#set-it-up), and start the stack as in step 8; skip step 7. Steps 7–9 set up automatic deploys from the repository with GitHub Actions; they use the repository's own secrets and image names.
+
 **DNS**: create an A record (and AAAA for IPv6) for `fleetpocket.example.com` pointing at the server, and wait until `dig +short fleetpocket.example.com` returns its address before the first start: Caddy needs it to get the certificate.
 
 ## 1. Deploy user and directories
@@ -55,7 +57,7 @@ Leave `COOKIE_INSECURE=false`, `CORS_ORIGINS` empty (same origin), `FLEETPOCKET_
 
 ## 3. Owner login (password + TOTP)
 
-These commands need the image: run the release workflow once first (step 8; for private packages, `docker login ghcr.io` as in step 7). Without it: `make dev-setup` on your machine prints the same values.
+These commands pull the published server image. With your own private images, run the release workflow once first (step 8) and `docker login ghcr.io` as in step 7. `make dev-setup` on your machine prints the same values.
 
 ```sh
 docker run --rm -it ghcr.io/andrewsl105/fleetpocket-server:latest hash-password   # prints ADMIN_PASSWORD_HASH (at least 12 characters)

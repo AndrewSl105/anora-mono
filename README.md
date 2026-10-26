@@ -44,16 +44,50 @@ Fleetpocket runs on your server, for one owner: you. Claude works in a sealed co
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/task-running-desktop-dark.png"><img src="docs/screenshots/task-running-desktop-light.png" alt="Desktop layout: task list and a running task side by side"></picture>
 
-## Self-host it
+## Set it up
 
-You need:
+You need a small Linux server (Ubuntu 24.04 with Docker), a domain, a Claude subscription or Anthropic API key, a GitHub account and a Telegram account. Below, `fleetpocket.example.com` stands for your domain.
 
-- a small Linux server with Docker and a domain name;
-- a Claude subscription or an Anthropic API key;
-- a GitHub account, where you create your own GitHub App for Fleetpocket;
-- a Telegram account, if you want the bot and the Mini App.
+**1. Point your domain at the server.** Add an A record for `fleetpocket.example.com` and open ports 80 and 443. The HTTPS certificate is issued automatically.
 
-The [setup guide](docs/DEPLOY.md) walks you through it step by step.
+**2. Download Fleetpocket** on the server:
+
+```sh
+sudo mkdir -p /srv/fleetpocket/{workspaces,attachments,secrets,backups}
+sudo chown "$USER": /srv/fleetpocket
+sudo chown -R 1000:1000 /srv/fleetpocket/{workspaces,attachments,secrets}
+cd /srv/fleetpocket
+curl -fsSLO https://raw.githubusercontent.com/AndrewSl105/fleetpocket/main/deploy/docker-compose.deploy.yml
+curl -fsSLO https://raw.githubusercontent.com/AndrewSl105/fleetpocket/main/deploy/Caddyfile
+curl -fsSL -o .env https://raw.githubusercontent.com/AndrewSl105/fleetpocket/main/deploy/.env.example
+chmod 600 .env
+```
+
+**3. Create your login**: a password and an authenticator code.
+
+```sh
+docker run --rm -it ghcr.io/andrewsl105/fleetpocket-server:latest hash-password
+docker run --rm ghcr.io/andrewsl105/fleetpocket-server:latest totp-setup
+```
+
+**4. Connect your accounts.** Each one gives you a few values for `.env`:
+
+- **Claude**: run `claude setup-token` on your computer, or use an Anthropic API key. ([details](docs/DEPLOY.md#4-claude-auth))
+- **GitHub**: create your own GitHub App and install it on the repositories Fleetpocket may work on. ([details](docs/DEPLOY.md#5-github-app))
+- **Telegram**: create a bot and a Mini App with @BotFather. ([details](docs/DEPLOY.md#6-telegram-bot-and-mini-app))
+
+**5. Fill in `.env`** with your domain, the values from steps 3 and 4, and two random secrets. Every variable is described in the file. ([details](docs/DEPLOY.md#2-env))
+
+**6. Start it:**
+
+```sh
+docker pull ghcr.io/andrewsl105/fleetpocket-agent:latest
+docker compose -f docker-compose.deploy.yml up -d
+```
+
+Open `https://fleetpocket.example.com`, sign in, add a repository and start your first task.
+
+To update later, run `docker compose -f docker-compose.deploy.yml pull`, pull the agent image again, then run `up -d`. The full [setup guide](docs/DEPLOY.md) also covers backups and automatic deploys with GitHub Actions.
 
 ## Docs
 
