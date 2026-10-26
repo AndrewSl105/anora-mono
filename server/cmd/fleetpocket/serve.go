@@ -58,7 +58,7 @@ func runServe() error {
 
 	met := metrics.New(st)
 	hub := events.NewHub()
-	taskSvc := &tasks.Service{Store: st, Hub: hub, Files: files}
+	taskSvc := &tasks.Service{Store: st, Hub: hub, Files: files, DefaultAgent: cfg.DefaultAgent, AgentEnabled: cfg.AgentEnabled}
 	sched := scheduler.New(&scheduler.Scheduler{
 		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws, Files: files,
 		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},

@@ -26,6 +26,7 @@ type Task struct {
 	CostUSDTotal float64    `json:"cost_usd_total"`
 	Turns        int        `json:"turns"`
 	Source       string     `json:"source"`
+	Agent        string     `json:"agent"`
 	CreatedAt    time.Time  `json:"created_at"`
 	UpdatedAt    time.Time  `json:"updated_at"`
 	FinishedAt   *time.Time `json:"finished_at"`
@@ -47,13 +48,13 @@ type Task struct {
 
 const taskCols = `id, project_id, repository_id, title, prompt, status, status_reason, branch, session_id,
 	pr_number, pr_url, ci_status, cost_usd_total::float8, turns, source, created_at, updated_at, finished_at, paused_at, cleaned_at,
-	last_activity, last_activity_at, queued_message`
+	last_activity, last_activity_at, queued_message, agent`
 
 func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ProjectID, &t.RepositoryID, &t.Title, &t.Prompt, &t.Status, &t.StatusReason, &t.Branch,
 		&t.SessionID, &t.PRNumber, &t.PRURL, &t.CIStatus, &t.CostUSDTotal, &t.Turns, &t.Source, &t.CreatedAt, &t.UpdatedAt,
-		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt, &t.QueuedMessage)
+		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt, &t.QueuedMessage, &t.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -67,8 +68,9 @@ func (s *Store) CreateTask(ctx context.Context, t Task, up *Upload) (*Task, erro
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
 		var err error
 		out, err = scanTask(tx.QueryRow(ctx, `INSERT INTO tasks (project_id, repository_id, title, prompt, status, source,
-				last_activity, last_activity_at)
-			VALUES ($1, $2, $3, $4, 'queued', $5, 'queued', now()) RETURNING `+taskCols, t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source))
+				last_activity, last_activity_at, agent)
+			VALUES ($1, $2, $3, $4, 'queued', $5, 'queued', now(), coalesce(nullif($6, ''), 'claude')) RETURNING `+taskCols,
+			t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source, t.Agent))
 		if err != nil {
 			return err
 		}

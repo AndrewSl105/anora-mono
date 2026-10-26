@@ -158,6 +158,10 @@ func humanizeError(raw string) humanError {
 	l := strings.ToLower(raw)
 	h := humanError{Summary: "The task failed", Raw: raw}
 	switch {
+	case strings.Contains(l, "openai_api_key") || strings.Contains(l, "invalid_api_key") || strings.Contains(l, "incorrect api key"):
+		h.Summary, h.Hint = "Codex authentication failed", "Check OPENAI_API_KEY and retry."
+	case strings.Contains(l, "cursor_api_key") || strings.Contains(l, "invalid user api key"):
+		h.Summary, h.Hint = "Cursor authentication failed", "Check CURSOR_API_KEY and retry."
 	case strings.Contains(l, "claude_code_oauth_token") || strings.Contains(l, "invalid") && strings.Contains(l, "oauth") || strings.Contains(l, "authentication") && strings.Contains(l, "claude"):
 		h.Summary, h.Hint = "Claude authentication failed", "Check CLAUDE_CODE_OAUTH_TOKEN and retry."
 	case strings.Contains(l, "branch") && (strings.Contains(l, "not found") || strings.Contains(l, "remote ref") || strings.Contains(l, "couldn't find")):

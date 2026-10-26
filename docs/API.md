@@ -31,7 +31,7 @@ Everything a client (the web app / Telegram Mini App) needs. The machine-readabl
 | `POST /auth/login` `{password, totp}` | password **and** current 6-digit TOTP code → sets the cookie. `{"ok":true,"kind":"web"}` |
 | `POST /auth/telegram` `{init_data}` | Mini App: pass `Telegram.WebApp.initData` verbatim. Valid for 1 hour after `auth_date`, only for the owner's Telegram user id → sets the cookie and returns `{"ok":true,"kind":"telegram","token":"…"}`. Keep `token` in memory only (never `localStorage`) and send it as `Authorization: Bearer`; it is the same session as the cookie |
 | `POST /auth/logout` | deletes the session (cookie or bearer token) and clears the cookie |
-| `GET /me` | `{"ok":true,"kind":"web"\|"telegram"}`; use it as the session check on app start |
+| `GET /me` | `{"ok":true,"kind":"web"\|"telegram","agents":["claude","codex"],"default_agent":"claude"}`; use it as the session check on app start. `agents` are the coding agents with credentials on the server (`claude`, `codex`, `cursor`), the ones a task may use |
 
 ## Projects and repositories
 
@@ -43,7 +43,7 @@ A **project** groups repositories and holds run settings. All override fields ar
   "instructions": "appended to Claude's system prompt",
   "services": ["postgres", "redis"],
   "env": {"NODE_ENV": "test"},
-  "runner_image": null, "model": null, "max_turns": null, "max_budget_usd": null,
+  "runner_image": null, "agent": null, "model": null, "max_turns": null, "max_budget_usd": null,
   "max_duration_sec": null, "runner_memory": null, "runner_cpus": null,
   "telegram_thread_id": null, "archived": false,
   "created_at": "…", "updated_at": "…",
@@ -66,7 +66,9 @@ A **project** groups repositories and holds run settings. All override fields ar
 
 `base_branch` must be a plain git branch name (letters, digits, `._/-`, not starting with `-` or `.`, no `..`); otherwise `400 invalid`.
 
-`services` accepts `postgres` and `redis`. `env` keys must match `[A-Z_][A-Z0-9_]*`; auth and service variables (`DATABASE_URL`, `REDIS_URL`, Claude tokens, …) are reserved.
+`agent` is `claude`, `codex` or `cursor` (`null`: the server's `default_agent`); it may name an agent without credentials, but creating a task with it fails. `model` is a model of the project's agent and applies only to tasks that run with that agent; a task that overrides the agent uses that agent's default model (Claude: the server's `DEFAULT_MODEL`).
+
+`services` accepts `postgres` and `redis`. `env` keys must match `[A-Z_][A-Z0-9_]*`; auth and service variables (`DATABASE_URL`, `REDIS_URL`, Claude, OpenAI and Cursor keys, `CODEX_HOME`, …) are reserved.
 
 ## Tasks
 
@@ -77,14 +79,16 @@ A **project** groups repositories and holds run settings. All override fields ar
   "status": "running", "status_reason": null,
   "branch": "agent/12-add-csv-export-to-tables", "session_id": "…",
   "pr_number": null, "pr_url": null, "ci_status": null,
-  "cost_usd_total": 0.42, "turns": 17, "source": "web",
+  "cost_usd_total": 0.42, "turns": 17, "source": "web", "agent": "claude",
   "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null,
   "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…",
   "queued_message": null
 }
 ```
 
-- `turns`: Claude turns across all runs of the task (sum of each run's last reported `usage.turns`).
+- `agent`: the coding agent, fixed when the task is created (the request's `agent`, else the project's, else the server default), so follow-ups and resumes continue the same session.
+- `cost_usd_total`: reported by Claude only; Codex and Cursor tasks stay at `0` (their usage still shows as tokens in `usage` events).
+- `turns`: agent turns across all runs of the task (sum of each run's last reported `usage.turns`).
 - `last_activity`: one line (max 120 characters) describing the latest thing that happened: the latest `tool_use` summary, or the latest status change as `<status>` / `<status>: <reason>`, whichever came last. `last_activity_at` is when it was set. Both are `null` only for tasks that predate the field and have no surviving events.
 - `queued_message`: text sent with `POST …/message` while a run was active (several messages are joined by a blank line), or `null`. It becomes the input of the next run as soon as the current run ends.
 
@@ -110,7 +114,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 | | |
 |---|---|
 | `GET /tasks?project=&status=` | newest first. `status` takes a comma-separated list |
-| `POST /tasks` `{project_id, prompt, repository_id?, title?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars). As multipart, add images in `files[]` |
+| `POST /tasks` `{project_id, prompt, repository_id?, title?, agent?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars); `agent` to the project's agent. `400 invalid` when the agent has no credentials on the server. As multipart, add images in `files[]` |
 | `GET /tasks/{id}` | task view (see above) |
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
 | `GET /tasks/{id}/events?before_id=` | timeline backwards, **newest first**: events older than `before_id`; `before_id=0` starts at the newest event. Pass `next_cursor` back as `before_id` (not as `cursor`, which means `after_id`). Combining `before_id` with `after_id`/`cursor` is `400 invalid` |

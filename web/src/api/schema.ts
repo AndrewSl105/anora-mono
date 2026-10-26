@@ -523,7 +523,15 @@ export interface components {
             ok: boolean;
             /** @enum {string} */
             kind: "web" | "telegram";
+            /** @description Agents with credentials on the server, which tasks may use */
+            agents: components["schemas"]["Agent"][];
+            default_agent: components["schemas"]["Agent"];
         };
+        /**
+         * @description Coding agent that runs a task (Claude Code, OpenAI Codex, Cursor)
+         * @enum {string}
+         */
+        Agent: "claude" | "codex" | "cursor";
         ProjectFields: {
             name?: string;
             instructions?: string;
@@ -532,6 +540,12 @@ export interface components {
                 [key: string]: string;
             };
             runner_image?: string | null;
+            /**
+             * @description Agent for the project's tasks; empty or null uses the server's default_agent
+             * @enum {string|null}
+             */
+            agent?: "claude" | "codex" | "cursor" | "" | null;
+            /** @description Model of the project's agent; tasks that override the agent use that agent's default */
             model?: string | null;
             max_turns?: number | null;
             max_budget_usd?: number | null;
@@ -552,6 +566,11 @@ export interface components {
                 [key: string]: string;
             };
             runner_image?: string | null;
+            /**
+             * @description null uses the server's default_agent
+             * @enum {string|null}
+             */
+            agent?: "claude" | "codex" | "cursor" | null;
             model?: string | null;
             max_turns?: number | null;
             max_budget_usd?: number | null;
@@ -604,11 +623,14 @@ export interface components {
             pr_url?: string | null;
             /** @enum {string|null} */
             ci_status?: "pending" | "success" | "failure" | null;
+            /** @description Reported by Claude only; 0 for Codex and Cursor */
             cost_usd_total: number;
-            /** @description Claude turns across all runs */
+            /** @description Agent turns across all runs */
             turns: number;
             /** @enum {string} */
             source: "web" | "telegram" | "api";
+            /** @description Fixed when the task is created: the request's agent, else the project's, else the server default */
+            agent: components["schemas"]["Agent"];
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1638,6 +1660,8 @@ export interface operations {
                     /** @description Defaults to the first line of the prompt */
                     title?: string;
                     prompt: string;
+                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the server */
+                    agent?: components["schemas"]["Agent"];
                 };
                 "multipart/form-data": {
                     project_id: string;
@@ -1649,6 +1673,8 @@ export interface operations {
                     /** @description Defaults to the first line of the prompt */
                     title?: string;
                     prompt: string;
+                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the server */
+                    agent?: components["schemas"]["Agent"];
                     /** @description PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content */
                     "files[]"?: string[];
                 };

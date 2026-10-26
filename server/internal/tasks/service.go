@@ -8,6 +8,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
@@ -49,6 +50,10 @@ type Service struct {
 	Files *attachments.Files
 	// GitHub merges PRs; nil rejects Merge with ErrGitHubDisabled.
 	GitHub Merger
+	// DefaultAgent runs tasks whose project picks none ("" means claude).
+	DefaultAgent string
+	// AgentEnabled reports whether an agent has credentials; nil allows every agent.
+	AgentEnabled func(agent string) bool
 }
 
 // View is a task with its latest run, open question and PR info.
@@ -64,7 +69,9 @@ type CreateInput struct {
 	RepositoryID int64  `json:"repository_id"`
 	Title        string `json:"title"`
 	Prompt       string `json:"prompt"`
-	Source       string `json:"-"`
+	// Agent overrides the project's agent; "" uses it.
+	Agent  string `json:"agent"`
+	Source string `json:"-"`
 	// Images are validated uploads (attachments.Process).
 	Images []*attachments.Image `json:"-"`
 }
@@ -101,11 +108,15 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
 	if in.Source == "" {
 		in.Source = "api"
 	}
+	agent, err := s.agentFor(p, in.Agent)
+	if err != nil {
+		return nil, err
+	}
 	up, release, err := s.upload(in.Images)
 	if err != nil {
 		return nil, err
 	}
-	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source}, up)
+	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source, Agent: agent}, up)
 	release()
 	if err != nil {
 		return nil, err
@@ -113,6 +124,33 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
 	s.publishTask(t)
 	s.wake()
 	return s.Get(ctx, t.ID)
+}
+
+// ProjectAgent is the agent a project's tasks run with unless a task
+// overrides it: the project's own, else the server default, else claude.
+func ProjectAgent(p *store.Project, defaultAgent string) string {
+	if p.Agent != nil && *p.Agent != "" {
+		return *p.Agent
+	}
+	if defaultAgent != "" {
+		return defaultAgent
+	}
+	return "claude"
+}
+
+// agentFor resolves a new task's agent and checks that it can run.
+func (s *Service) agentFor(p *store.Project, override string) (string, error) {
+	agent := strings.TrimSpace(override)
+	if agent == "" {
+		agent = ProjectAgent(p, s.DefaultAgent)
+	}
+	if !config.ValidAgent(agent) {
+		return "", fmt.Errorf("%w: agent must be one of %s", ErrInvalid, strings.Join(config.Agents, ", "))
+	}
+	if s.AgentEnabled != nil && !s.AgentEnabled(agent) {
+		return "", fmt.Errorf("%w: agent %s is not configured (set %s)", ErrInvalid, agent, config.AgentKeyHint(agent))
+	}
+	return agent, nil
 }
 
 // upload turns validated images into a store.Upload. release must be called

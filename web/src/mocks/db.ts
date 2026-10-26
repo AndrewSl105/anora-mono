@@ -1,4 +1,4 @@
-import type { ApiEvent, Attachment, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
+import type { Agent, ApiEvent, Attachment, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
 
 // In-memory backend for mock mode (VITE_MOCK=1) and tests. Shapes follow
 // docs/openapi.yaml; the OpenAPI file has no examples to generate from.
@@ -10,6 +10,9 @@ function repo(id: number, project_id: string, full_name: string, is_default: boo
   return { id, project_id, full_name, base_branch, installation_id: 123, is_default }
 }
 
+/** Agents with credentials in mock mode: Cursor has none, so the UI shows that case too. */
+export const MOCK_AGENTS = { agents: ['claude', 'codex'] as Agent[], default_agent: 'claude' as Agent }
+
 function project(id: string, name: string, repositories: Repository[], extra: Partial<Project> = {}): Project {
   return {
     id,
@@ -18,6 +21,7 @@ function project(id: string, name: string, repositories: Repository[], extra: Pa
     services: [],
     env: {},
     runner_image: null,
+    agent: null,
     model: null,
     max_turns: null,
     max_budget_usd: null,
@@ -151,6 +155,7 @@ export function makeTask(fields: Partial<Task> & Pick<Task, 'project_id' | 'titl
     last_activity_at: null,
     queued_message: null,
     source: 'web',
+    agent: (proj?.agent ?? MOCK_AGENTS.default_agent) as Agent,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     finished_at: null,

@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 )
 
@@ -21,7 +22,8 @@ var (
 	branchRe    = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}$`)
 	Services    = map[string]bool{"postgres": true, "redis": true}
 	reservedEnv = map[string]bool{
-		"CLAUDE_CODE_OAUTH_TOKEN": true, "ANTHROPIC_API_KEY": true, "DATABASE_URL": true, "REDIS_URL": true,
+		"CLAUDE_CODE_OAUTH_TOKEN": true, "ANTHROPIC_API_KEY": true, "OPENAI_API_KEY": true, "CODEX_API_KEY": true,
+		"CODEX_HOME": true, "CURSOR_API_KEY": true, "DATABASE_URL": true, "REDIS_URL": true,
 		"FLEETPOCKET_RUNNER_FAKE": true, "FLEETPOCKET_WORKSPACE": true, "HOME": true, "PATH": true,
 	}
 )
@@ -58,6 +60,9 @@ func (s *Service) Archive(ctx context.Context, id string) (*store.Project, error
 func validate(f store.ProjectFields) error {
 	if f.Name != nil && strings.TrimSpace(*f.Name) == "" {
 		return fmt.Errorf("%w: name must not be empty", ErrInvalid)
+	}
+	if f.Agent != nil && *f.Agent != "" && !config.ValidAgent(*f.Agent) {
+		return fmt.Errorf("%w: agent must be one of %s", ErrInvalid, strings.Join(config.Agents, ", "))
 	}
 	if f.Services != nil {
 		for _, svc := range *f.Services {

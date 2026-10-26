@@ -259,10 +259,9 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	for k, v := range svcEnv {
 		env[k] = v
 	}
-	if s.Cfg.ClaudeOAuthToken != "" {
-		env["CLAUDE_CODE_OAUTH_TOKEN"] = s.Cfg.ClaudeOAuthToken
-	} else if s.Cfg.AnthropicAPIKey != "" {
-		env["ANTHROPIC_API_KEY"] = s.Cfg.AnthropicAPIKey
+	// Only the task's agent gets credentials, and only its own.
+	for k, v := range s.Cfg.AgentEnv(t.Agent) {
+		env[k] = v
 	}
 	if s.Cfg.RunnerFake {
 		env["FLEETPOCKET_RUNNER_FAKE"] = "1"
@@ -366,7 +365,8 @@ func (s *Scheduler) runCommand(t *store.Task, run *store.Run, p *store.Project, 
 		TaskID:             strconv.FormatInt(t.ID, 10),
 		Prompt:             run.Input,
 		AppendSystemPrompt: SystemPrompt(t, repo, branch, p.Instructions),
-		Model:              deref(p.Model, s.Cfg.DefaultModel),
+		Agent:              t.Agent,
+		Model:              s.model(t, p),
 		Limits: runnermgr.Limits{
 			MaxTurns:           maxTurns,
 			MaxBudgetUSD:       budget,
@@ -379,6 +379,19 @@ func (s *Scheduler) runCommand(t *store.Task, run *store.Run, p *store.Project, 
 			AuthorEmail: commitEmail,
 		},
 	})
+}
+
+// model is the task's model: the project's when the task runs with the
+// project's agent (it names a model of that agent), else DEFAULT_MODEL for
+// Claude, else empty so Codex and Cursor use their own default.
+func (s *Scheduler) model(t *store.Task, p *store.Project) string {
+	if p.Model != nil && t.Agent == tasks.ProjectAgent(p, s.Cfg.DefaultAgent) {
+		return *p.Model
+	}
+	if t.Agent == "claude" {
+		return s.Cfg.DefaultModel
+	}
+	return ""
 }
 
 // prepareAttachments lists the run's attachments at the end of its prompt and
@@ -397,13 +410,15 @@ func (s *Scheduler) prepareAttachments(ctx context.Context, taskID int64, run *s
 	if _, err := os.Stat(dir); err != nil {
 		return "", err
 	}
-	cmd.Prompt += AttachmentBlock(cur, earlier)
+	cmd.Prompt += AttachmentBlock(cmd.Agent, cur, earlier)
 	return dir, nil
 }
 
 // AttachmentBlock is appended to a run's prompt: the images that came with
 // this input and the task's earlier ones, as paths in the agent container.
-func AttachmentBlock(cur, earlier []*store.Attachment) string {
+// Claude opens them with its Read tool; the Codex and Cursor runners pass the
+// "Attached images" to the model as image inputs (see docs/PROTOCOL.md).
+func AttachmentBlock(agent string, cur, earlier []*store.Attachment) string {
 	if len(cur)+len(earlier) == 0 {
 		return ""
 	}
@@ -413,25 +428,40 @@ func AttachmentBlock(cur, earlier []*store.Attachment) string {
 			fmt.Fprintf(&b, "- %s (%s, %dx%d)\n", attachments.AgentPath(a), a.Name, a.Width, a.Height)
 		}
 	}
+	claude := agent == "" || agent == "claude"
 	if len(cur) > 0 {
-		b.WriteString("\n\nAttached images (open each with the Read tool before you start):\n")
+		if claude {
+			b.WriteString("\n\nAttached images (open each with the Read tool before you start):\n")
+		} else {
+			b.WriteString("\n\nAttached images (included with this message):\n")
+		}
 		list(cur)
 	}
 	if len(earlier) > 0 {
-		b.WriteString("\n\nEarlier attachments of this task (still available; Read them if they matter for this request):\n")
+		if claude {
+			b.WriteString("\n\nEarlier attachments of this task (still available; Read them if they matter for this request):\n")
+		} else {
+			b.WriteString("\n\nEarlier attachments of this task (still available; open them if they matter for this request):\n")
+		}
 		list(earlier)
 	}
 	b.WriteString("\nThe folder " + attachments.AgentDir + " is read-only; copy an image into the repository only if the change needs it.\n")
 	return b.String()
 }
 
-// SystemPrompt is appended to Claude Code's default system prompt.
+// SystemPrompt is appended to Claude Code's default system prompt (Codex: its
+// developer instructions; Cursor: ahead of the first prompt).
 func SystemPrompt(t *store.Task, repo *store.Repository, branch, projectInstructions string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are running unattended inside Fleetpocket on task #%d.\n", t.ID)
 	fmt.Fprintf(&b, "Repository %s is checked out in /workspace on branch %s (base %s).\n", repo.FullName, branch, repo.BaseBranch)
 	b.WriteString("Do not push, change git remotes or touch .github/: Fleetpocket commits your changes and opens the pull request.\n")
-	b.WriteString("If a decision needs the owner, ask with the AskUserQuestion tool and keep options short.\n")
+	if t.Agent == "" || t.Agent == "claude" {
+		b.WriteString("If a decision needs the owner, ask with the AskUserQuestion tool and keep options short.\n")
+	} else {
+		// Only the Claude runner can ask (docs/DECISIONS.md, Agent).
+		b.WriteString("Nobody can answer questions during the run: make reasonable choices yourself and list open questions in your summary.\n")
+	}
 	b.WriteString("Finish with a short summary of what you changed and anything the reviewer should check.\n")
 	if strings.TrimSpace(projectInstructions) != "" {
 		b.WriteString("\nProject instructions:\n")

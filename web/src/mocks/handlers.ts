@@ -1,7 +1,7 @@
 import { http, HttpResponse, ws, delay } from 'msw'
-import type { ApiEvent, Project, Task } from '@/api/types'
+import type { Agent, ApiEvent, Project, Task } from '@/api/types'
 import { GROUPS } from '@/lib/status'
-import { addAttachment, addEvent, db, makeTask, startRun, taskView } from './db'
+import { addAttachment, addEvent, db, makeTask, MOCK_AGENTS, startRun, taskView } from './db'
 import { emitStatus, interruptRun, resumeAfterAnswer, setPush } from './simulator'
 
 const SESSION_KEY = 'fleetpocket.mock.session'
@@ -149,12 +149,12 @@ export const handlers = [
     }
     failures = 0
     setSession('web')
-    return HttpResponse.json({ ok: true, kind: 'web' })
+    return HttpResponse.json({ ok: true, kind: 'web', ...MOCK_AGENTS })
   }),
   http.post(`${API}/auth/telegram`, async () => {
     await delay(400)
     setSession('telegram')
-    return HttpResponse.json({ ok: true, kind: 'telegram', token: 'mock-telegram-token' })
+    return HttpResponse.json({ ok: true, kind: 'telegram', token: 'mock-telegram-token', ...MOCK_AGENTS })
   }),
   http.post(`${API}/ws/ticket`, ({ request }) => {
     const denied = guard(request)
@@ -167,7 +167,7 @@ export const handlers = [
   }),
   http.get(`${API}/me`, () => {
     const kind = session()
-    return kind ? HttpResponse.json({ ok: true, kind: kind as 'web' | 'telegram' }) : err(401, 'unauthorized', 'Not signed in')
+    return kind ? HttpResponse.json({ ok: true, kind: kind as 'web' | 'telegram', ...MOCK_AGENTS }) : err(401, 'unauthorized', 'Not signed in')
   }),
 
   // ---- Projects ----
@@ -187,6 +187,7 @@ export const handlers = [
       services: [],
       env: {},
       runner_image: null,
+      agent: null,
       model: null,
       max_turns: null,
       max_budget_usd: null,
@@ -296,19 +297,22 @@ export const handlers = [
   http.post(`${API}/tasks`, async ({ request }) => {
     const denied = guard(request)
     if (denied) return denied
-    const read = await readBody(request, ['project_id', 'prompt', 'repository_id', 'title'])
+    const read = await readBody(request, ['project_id', 'prompt', 'repository_id', 'title', 'agent'])
     if ('error' in read) return read.error
     const f = read.fields
     const body = { project_id: f.project_id, prompt: f.prompt ?? '', repository_id: f.repository_id ? Number(f.repository_id) : undefined, title: f.title }
     const p = db.projects.find((x) => x.id === body.project_id)
     if (!p) return err(404, 'not_found', 'No such project')
     if (!body.prompt?.trim()) return err(400, 'invalid', 'prompt is required')
+    const agent = (f.agent || p.agent || MOCK_AGENTS.default_agent) as Agent
+    if (!MOCK_AGENTS.agents.includes(agent)) return err(400, 'invalid', `agent ${agent} is not configured`)
     const task = makeTask({
       project_id: p.id,
       title: body.title || body.prompt.split('\n')[0].slice(0, 80),
       prompt: body.prompt,
       status: 'queued',
       repository_id: body.repository_id ?? p.repositories.find((r) => r.is_default)?.id ?? 1,
+      agent,
     })
     const attachments = await storeImages(task.id, read.files)
     addEvent(task.id, 'created', { attachments })

@@ -49,6 +49,7 @@ Fill in `/srv/fleetpocket/.env` (every variable is described in `deploy/.env.exa
 | `SESSION_SECRET` | `openssl rand -hex 32` |
 | `ADMIN_PASSWORD_HASH`, `ADMIN_TOTP_SECRET` | step 3 |
 | `CLAUDE_CODE_OAUTH_TOKEN` (or `ANTHROPIC_API_KEY`) | step 4 |
+| `OPENAI_API_KEY` (Codex), `CURSOR_API_KEY` (Cursor), `DEFAULT_AGENT` (optional) | step 4 |
 | `GITHUB_APP_ID`, `GITHUB_WEBHOOK_SECRET` | step 5 |
 | `TELEGRAM_BOT_TOKEN`, `TELEGRAM_ALLOWED_USER_ID`, `TELEGRAM_MINIAPP_LINK` | step 6 |
 | `STT_PROVIDER` + provider credentials (optional) | step 6 |
@@ -69,6 +70,8 @@ Add the `otpauth://` URI to your authenticator app (paste it, or render it as a 
 ## 4. Claude auth
 
 Run `claude setup-token` on your machine and put the result in `CLAUDE_CODE_OAUTH_TOKEN`. Alternatively set `ANTHROPIC_API_KEY`. Only runner containers receive it.
+
+**Codex and Cursor (optional).** Tasks can also run with OpenAI Codex or Cursor. Set `OPENAI_API_KEY` (an OpenAI API key; ChatGPT sign-in is not supported) for Codex and `CURSOR_API_KEY` (an API key from your Cursor dashboard) for Cursor. Pick the agent per project in its settings, or per task when you create it; `DEFAULT_AGENT` sets the agent for projects that pick none. A runner container only receives the key of its task's agent. Codex and Cursor never ask questions mid-run, report no cost (the budget limit does not apply to them) and enforce only the time limit.
 
 ## 5. GitHub App
 

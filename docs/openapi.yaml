@@ -321,6 +321,7 @@ paths:
                 repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
                 title: { type: string, description: Defaults to the first line of the prompt }
                 prompt: { type: string }
+                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the server" }
           multipart/form-data:
             schema:
               type: object
@@ -331,6 +332,7 @@ paths:
                 repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
                 title: { type: string, description: Defaults to the first line of the prompt }
                 prompt: { type: string }
+                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the server" }
                 'files[]':
                   type: array
                   maxItems: 10
@@ -730,10 +732,20 @@ components:
 
     SessionInfo:
       type: object
-      required: [ok, kind]
+      required: [ok, kind, agents, default_agent]
       properties:
         ok: { type: boolean }
         kind: { type: string, enum: [web, telegram] }
+        agents:
+          type: array
+          items: { $ref: '#/components/schemas/Agent' }
+          description: Agents with credentials on the server, which tasks may use
+        default_agent: { $ref: '#/components/schemas/Agent' }
+
+    Agent:
+      type: string
+      enum: [claude, codex, cursor]
+      description: Coding agent that runs a task (Claude Code, OpenAI Codex, Cursor)
 
     ProjectFields:
       type: object
@@ -744,7 +756,11 @@ components:
         services: { type: array, items: { type: string, enum: [postgres, redis] } }
         env: { type: object, additionalProperties: { type: string } }
         runner_image: { type: [string, 'null'] }
-        model: { type: [string, 'null'] }
+        agent:
+          type: [string, 'null']
+          enum: [claude, codex, cursor, '', null]
+          description: Agent for the project's tasks; empty or null uses the server's default_agent
+        model: { type: [string, 'null'], description: Model of the project's agent; tasks that override the agent use that agent's default }
         max_turns: { type: [integer, 'null'] }
         max_budget_usd: { type: [number, 'null'] }
         max_duration_sec: { type: [integer, 'null'] }
@@ -763,6 +779,7 @@ components:
         services: { type: array, items: { type: string } }
         env: { type: object, additionalProperties: { type: string } }
         runner_image: { type: [string, 'null'] }
+        agent: { type: [string, 'null'], enum: [claude, codex, cursor, null], description: null uses the server's default_agent }
         model: { type: [string, 'null'] }
         max_turns: { type: [integer, 'null'] }
         max_budget_usd: { type: [number, 'null'] }
@@ -807,7 +824,7 @@ components:
 
     Task:
       type: object
-      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, created_at, updated_at, last_activity, last_activity_at, queued_message]
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, agent, created_at, updated_at, last_activity, last_activity_at, queued_message]
       properties:
         id: { type: integer, format: int64 }
         project_id: { type: string }
@@ -821,9 +838,10 @@ components:
         pr_number: { type: [integer, 'null'] }
         pr_url: { type: [string, 'null'] }
         ci_status: { type: [string, 'null'], enum: [pending, success, failure, null] }
-        cost_usd_total: { type: number }
-        turns: { type: integer, description: Claude turns across all runs }
+        cost_usd_total: { type: number, description: 'Reported by Claude only; 0 for Codex and Cursor' }
+        turns: { type: integer, description: Agent turns across all runs }
         source: { type: string, enum: [web, telegram, api] }
+        agent: { $ref: '#/components/schemas/Agent', description: 'Fixed when the task is created: the request''s agent, else the project''s, else the server default' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }

@@ -43,3 +43,32 @@ func TestValidateSpeechToTextProvider(t *testing.T) {
 		})
 	}
 }
+
+func TestAgents(t *testing.T) {
+	c := &Config{ClaudeOAuthToken: "oauth", AnthropicAPIKey: "api", CursorAPIKey: "cur"}
+	if got := c.AgentEnv("claude"); len(got) != 1 || got["CLAUDE_CODE_OAUTH_TOKEN"] != "oauth" {
+		t.Fatalf("claude env: %v", got)
+	}
+	if got := c.AgentEnv("cursor"); len(got) != 1 || got["CURSOR_API_KEY"] != "cur" {
+		t.Fatalf("cursor env: %v", got)
+	}
+	if got := c.AgentEnv("codex"); len(got) != 0 {
+		t.Fatalf("codex env without key: %v", got)
+	}
+	if got := strings.Join(c.EnabledAgents(), ","); got != "claude,cursor" {
+		t.Fatalf("enabled: %s", got)
+	}
+	c.RunnerFake = true
+	if got := strings.Join(c.EnabledAgents(), ","); got != "claude,codex,cursor" || c.AgentEnabled("gemini") {
+		t.Fatalf("fake enabled: %s", got)
+	}
+
+	t.Setenv("DEFAULT_AGENT", "gemini")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "DEFAULT_AGENT") {
+		t.Fatalf("bad DEFAULT_AGENT: %v", err)
+	}
+	t.Setenv("DEFAULT_AGENT", "codex")
+	if c, err := Load(); err != nil || c.DefaultAgent != "codex" {
+		t.Fatalf("DEFAULT_AGENT: %v %v", c, err)
+	}
+}

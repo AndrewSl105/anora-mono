@@ -15,6 +15,7 @@ type Project struct {
 	Services         []string          `json:"services"`
 	Env              map[string]string `json:"env"`
 	RunnerImage      *string           `json:"runner_image"`
+	Agent            *string           `json:"agent"`
 	Model            *string           `json:"model"`
 	MaxTurns         *int              `json:"max_turns"`
 	MaxBudgetUSD     *float64          `json:"max_budget_usd"`
@@ -39,14 +40,14 @@ type Repository struct {
 
 const projectCols = `id, name, instructions, services, env, runner_image, model, max_turns,
 	max_budget_usd::float8, EXTRACT(EPOCH FROM max_duration)::bigint, runner_memory, runner_cpus::float8,
-	telegram_thread_id, archived, created_at, updated_at`
+	telegram_thread_id, archived, created_at, updated_at, agent`
 
 func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var p Project
 	var env []byte
 	err := row.Scan(&p.ID, &p.Name, &p.Instructions, &p.Services, &env, &p.RunnerImage, &p.Model, &p.MaxTurns,
 		&p.MaxBudgetUSD, &p.MaxDurationSec, &p.RunnerMemory, &p.RunnerCPUs,
-		&p.TelegramThreadID, &p.Archived, &p.CreatedAt, &p.UpdatedAt)
+		&p.TelegramThreadID, &p.Archived, &p.CreatedAt, &p.UpdatedAt, &p.Agent)
 	if err != nil {
 		return nil, err
 	}
@@ -71,6 +72,7 @@ type ProjectFields struct {
 	Services         *[]string          `json:"services"`
 	Env              *map[string]string `json:"env"`
 	RunnerImage      *string            `json:"runner_image"`
+	Agent            *string            `json:"agent"`
 	Model            *string            `json:"model"`
 	MaxTurns         *int               `json:"max_turns"`
 	MaxBudgetUSD     *float64           `json:"max_budget_usd"`
@@ -120,6 +122,9 @@ func (s *Store) UpdateProject(ctx context.Context, id string, f ProjectFields) (
 	// Empty strings and zero numbers reset an override to the global default.
 	if f.RunnerImage != nil {
 		add("runner_image", nilIfEmpty(*f.RunnerImage))
+	}
+	if f.Agent != nil {
+		add("agent", nilIfEmpty(*f.Agent))
 	}
 	if f.Model != nil {
 		add("model", nilIfEmpty(*f.Model))

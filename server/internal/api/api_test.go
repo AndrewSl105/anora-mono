@@ -59,11 +59,12 @@ func setup(t *testing.T) (*client, *store.Store, string) {
 	st := testutil.DB(t)
 	hash, _ := auth.HashPassword("pw-for-tests")
 	secret, _, _ := auth.NewTOTP("t")
-	cfg := &config.Config{TelegramBotToken: "1:T", TelegramAllowedUserID: 42}
+	// Claude and Codex have credentials; Cursor does not.
+	cfg := &config.Config{TelegramBotToken: "1:T", TelegramAllowedUserID: 42, ClaudeOAuthToken: "t", OpenAIAPIKey: "k", DefaultAgent: "claude"}
 	hub := events.NewHub()
 	srv := &api.Server{
 		Cfg: cfg, Store: st, Hub: hub,
-		Tasks:    &tasks.Service{Store: st, Hub: hub},
+		Tasks:    &tasks.Service{Store: st, Hub: hub, DefaultAgent: cfg.DefaultAgent, AgentEnabled: cfg.AgentEnabled},
 		Projects: &projects.Service{Store: st},
 		Auth:     &auth.Manager{Store: st, PasswordHash: hash, TOTPSecret: secret, SessionSecret: []byte("s"), CookieInsecure: true},
 	}
@@ -390,5 +391,42 @@ func TestUpdateRepository(t *testing.T) {
 	}
 	if code, _ := c.do("PATCH", p1, map[string]any{"is_default": true}); code != 200 {
 		t.Fatalf("default switch with a queued task: %d", code)
+	}
+}
+
+func TestAgents(t *testing.T) {
+	c, _, secret := setup(t)
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+
+	if code, me := c.do("GET", "/api/v1/me", nil); code != 200 || fmt.Sprint(me["agents"]) != "[claude codex]" || me["default_agent"] != "claude" {
+		t.Fatalf("me: %d %v", code, me)
+	}
+	if code, body := c.do("POST", "/api/v1/projects", map[string]any{"id": "ag", "name": "Ag", "agent": "gemini"}); code != 400 {
+		t.Fatalf("unknown agent: %d %v", code, body)
+	}
+	c.do("POST", "/api/v1/projects", map[string]any{"id": "ag", "name": "Ag"})
+	c.do("POST", "/api/v1/projects/ag/repositories", map[string]any{"full_name": "o/r", "installation_id": 1, "base_branch": "main"})
+
+	// No project agent: the server default.
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "ag", "prompt": "a"}); code != 201 || task["agent"] != "claude" {
+		t.Fatalf("default agent: %d %v", code, task)
+	}
+	if code, p := c.do("PATCH", "/api/v1/projects/ag", map[string]any{"agent": "codex"}); code != 200 || p["agent"] != "codex" {
+		t.Fatalf("set project agent: %d %v", code, p)
+	}
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "ag", "prompt": "b"}); code != 201 || task["agent"] != "codex" {
+		t.Fatalf("project agent: %d %v", code, task)
+	}
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "ag", "prompt": "c", "agent": "claude"}); code != 201 || task["agent"] != "claude" {
+		t.Fatalf("task override: %d %v", code, task)
+	}
+	code, body := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "ag", "prompt": "d", "agent": "cursor"})
+	if code != 400 || !strings.Contains(fmt.Sprint(body), "CURSOR_API_KEY") {
+		t.Fatalf("unconfigured agent: %d %v", code, body)
+	}
+	// An empty agent resets the project to the server default.
+	if code, p := c.do("PATCH", "/api/v1/projects/ag", map[string]any{"agent": ""}); code != 200 || p["agent"] != nil {
+		t.Fatalf("reset project agent: %d %v", code, p)
 	}
 }

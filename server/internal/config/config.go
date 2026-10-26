@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,10 @@ type Config struct {
 
 	ClaudeOAuthToken string
 	AnthropicAPIKey  string
+	// CursorAPIKey enables the Cursor agent; OpenAIAPIKey (below) enables Codex.
+	CursorAPIKey string
+	// DefaultAgent runs tasks of projects that do not pick one.
+	DefaultAgent string
 
 	GitHubAppID          int64
 	GitHubPrivateKeyPath string
@@ -38,7 +43,8 @@ type Config struct {
 	TelegramMiniAppLink string
 	// STTProvider is "off", "openai", or "whispercpp". OpenAI is called
 	// directly; whispercpp uses the optional HTTP sidecar protocol.
-	STTProvider   string
+	STTProvider string
+	// OpenAIAPIKey is used by STT_PROVIDER=openai and by the Codex agent.
 	OpenAIAPIKey  string
 	WhisperCPPURL string
 
@@ -89,6 +95,8 @@ func Load() (*Config, error) {
 
 		ClaudeOAuthToken: e.str("CLAUDE_CODE_OAUTH_TOKEN", ""),
 		AnthropicAPIKey:  e.str("ANTHROPIC_API_KEY", ""),
+		CursorAPIKey:     e.str("CURSOR_API_KEY", ""),
+		DefaultAgent:     e.str("DEFAULT_AGENT", "claude"),
 
 		GitHubAppID:          e.int64("GITHUB_APP_ID", 0),
 		GitHubPrivateKeyPath: e.str("GITHUB_APP_PRIVATE_KEY_PATH", ""),
@@ -129,6 +137,9 @@ func Load() (*Config, error) {
 	}
 	if c.MaxConcurrentTasks < 1 {
 		errs = append(errs, errors.New("MAX_CONCURRENT_TASKS must be >= 1"))
+	}
+	if !ValidAgent(c.DefaultAgent) {
+		errs = append(errs, fmt.Errorf("DEFAULT_AGENT must be one of %s", strings.Join(Agents, ", ")))
 	}
 	return c, errors.Join(errs...)
 }
@@ -181,6 +192,55 @@ func (c *Config) Validate() error {
 func within(path, dir string) bool {
 	rel, err := filepath.Rel(filepath.Clean(dir), filepath.Clean(path))
 	return err == nil && rel != ".." && !strings.HasPrefix(rel, "../")
+}
+
+// Agents are the coding agents a task can run with (agent/src/protocol.ts).
+var Agents = []string{"claude", "codex", "cursor"}
+
+func ValidAgent(a string) bool { return slices.Contains(Agents, a) }
+
+// AgentEnv is the auth environment a runner of the agent gets: only that
+// agent's credentials. Empty when the agent is not configured.
+func (c *Config) AgentEnv(agent string) map[string]string {
+	switch {
+	case agent == "claude" && c.ClaudeOAuthToken != "":
+		return map[string]string{"CLAUDE_CODE_OAUTH_TOKEN": c.ClaudeOAuthToken}
+	case agent == "claude" && c.AnthropicAPIKey != "":
+		return map[string]string{"ANTHROPIC_API_KEY": c.AnthropicAPIKey}
+	case agent == "codex" && c.OpenAIAPIKey != "":
+		return map[string]string{"OPENAI_API_KEY": c.OpenAIAPIKey}
+	case agent == "cursor" && c.CursorAPIKey != "":
+		return map[string]string{"CURSOR_API_KEY": c.CursorAPIKey}
+	}
+	return map[string]string{}
+}
+
+// AgentEnabled reports whether tasks may use the agent. The fake runner
+// needs no credentials, so every agent is enabled with it.
+func (c *Config) AgentEnabled(agent string) bool {
+	return ValidAgent(agent) && (c.RunnerFake || len(c.AgentEnv(agent)) > 0)
+}
+
+// AgentKeyHint names the variable that enables an agent.
+func AgentKeyHint(agent string) string {
+	switch agent {
+	case "codex":
+		return "OPENAI_API_KEY"
+	case "cursor":
+		return "CURSOR_API_KEY"
+	}
+	return "CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY"
+}
+
+// EnabledAgents lists the agents tasks may use, in Agents order.
+func (c *Config) EnabledAgents() []string {
+	out := []string{}
+	for _, a := range Agents {
+		if c.AgentEnabled(a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 func (c *Config) GitHubEnabled() bool   { return c.GitHubAppID != 0 && c.GitHubPrivateKeyPath != "" }

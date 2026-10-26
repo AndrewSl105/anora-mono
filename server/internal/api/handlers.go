@@ -39,7 +39,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, r, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "kind": "web"})
+	writeJSON(w, http.StatusOK, s.sessionInfo("web"))
 }
 
 func (s *Server) loginTelegram(w http.ResponseWriter, r *http.Request) {
@@ -72,7 +72,9 @@ func (s *Server) loginTelegram(w http.ResponseWriter, r *http.Request) {
 	// The cookie works where the Mini App is the top-level page (Telegram's
 	// native apps); Telegram Web embeds it cross-site, so the client keeps
 	// this token in memory and sends it as a bearer token instead.
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "kind": "telegram", "token": token})
+	info := s.sessionInfo("telegram")
+	info["token"] = token
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
@@ -96,7 +98,16 @@ func (s *Server) wsTicket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	kind, _ := r.Context().Value(sessionKindKey).(string)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "kind": kind})
+	writeJSON(w, http.StatusOK, s.sessionInfo(kind))
+}
+
+// sessionInfo is the SessionInfo body: the session kind and the agents tasks may use.
+func (s *Server) sessionInfo(kind string) map[string]any {
+	def := s.Cfg.DefaultAgent
+	if def == "" {
+		def = "claude"
+	}
+	return map[string]any{"ok": true, "kind": kind, "agents": s.Cfg.EnabledAgents(), "default_agent": def}
 }
 
 // ---- projects ----
@@ -263,7 +274,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var in tasks.CreateInput
 	if isMultipart(r) {
-		f, imgs, ok := readMultipart(w, r, "project_id", "repository_id", "title", "prompt")
+		f, imgs, ok := readMultipart(w, r, "project_id", "repository_id", "title", "prompt", "agent")
 		if !ok {
 			return
 		}
@@ -272,7 +283,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid", err.Error())
 			return
 		}
-		in = tasks.CreateInput{ProjectID: f["project_id"], RepositoryID: repoID, Title: f["title"], Prompt: f["prompt"], Images: imgs}
+		in = tasks.CreateInput{ProjectID: f["project_id"], RepositoryID: repoID, Title: f["title"], Prompt: f["prompt"], Agent: f["agent"], Images: imgs}
 	} else if !decode(w, r, &in) {
 		return
 	}
