@@ -10,8 +10,9 @@ export const CODEX_DEFAULT_MODEL = "default";
 export const codexSession: Session = async ({ cmd, workspace, emitter, control }) => {
   const apiKey = process.env.OPENAI_API_KEY;
   // The CLI gets the key as CODEX_API_KEY from the SDK; nothing else needs it.
-  const env: Record<string, string> = { CODEX_HOME: stateSubdir("codex") };
+  const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (v !== undefined && !AUTH_VARS.includes(k)) env[k] = v;
+  env.CODEX_HOME = stateSubdir("codex");
 
   const codex = new Codex({
     ...(apiKey ? { apiKey } : {}),
@@ -22,8 +23,8 @@ export const codexSession: Session = async ({ cmd, workspace, emitter, control }
       shell_environment_policy: { inherit: "all", exclude: ["*KEY*", "*TOKEN*", "*SECRET*"] },
     },
   });
-  // The container is the sandbox (no Docker, no host network, no GitHub token);
-  // Codex's own Linux sandbox does not work inside it, and nobody can approve.
+  // The container is the sandbox (no Docker, no host network, no GitHub token),
+  // and nobody can approve a request.
   const threadOptions = {
     ...(cmd.model ? { model: cmd.model } : {}),
     workingDirectory: workspace,

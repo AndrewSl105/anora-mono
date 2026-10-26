@@ -3,13 +3,14 @@
 // changes, secrets scan) is the second line of defence; this hook gives
 // Claude an early, explained "no" instead of a failed push.
 import { isAbsolute, normalize, relative, resolve } from "node:path";
-import { AUTH_VARS } from "./state.ts";
 
 export type PolicyDecision = { allow: true } | { allow: false; reason: string };
 
 const ALLOW: PolicyDecision = { allow: true };
 const deny = (reason: string): PolicyDecision => ({ allow: false, reason });
 
+// Only Claude runs this policy, and its container only has Claude's auth.
+const AUTH_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 const PROC_ENVIRON = /\/proc\/[^\s/'"]+\/environ\b/;
 
 const WRITE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit"]);

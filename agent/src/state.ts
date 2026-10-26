@@ -13,6 +13,5 @@ export function stateSubdir(name: string): string {
   return dir;
 }
 
-// Auth variables of every agent: removed from the environment the agent's
-// shell inherits, and named by the policy's env-dump checks.
+// Auth variables of every agent, kept out of the environment Codex passes on.
 export const AUTH_VARS = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "OPENAI_API_KEY", "CODEX_API_KEY", "CURSOR_API_KEY"];

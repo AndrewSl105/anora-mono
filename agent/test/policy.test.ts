@@ -141,3 +141,8 @@ test("attachments are readable but read-only", () => {
     assert.equal(checkBash(cmd).allow, true, cmd);
   }
 });
+
+test("other agents' key names are not Claude credentials", () => {
+  assert.equal(checkBash("grep -rn OPENAI_API_KEY src").allow, true);
+  assert.equal(checkBash("CURSOR_API_KEY=test npm test").allow, true);
+});
