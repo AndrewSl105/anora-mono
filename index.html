@@ -72,6 +72,12 @@ a{color:#064BFF}a:hover{color:#0236BD}
 .fp-badge{flex:none;display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:500}
 .fp-field{position:absolute;left:16px;width:328px;height:44px;box-sizing:border-box;border:1px solid #EBEBEB;border-radius:8px;padding:0 12px;display:flex;align-items:center;justify-content:space-between;font-size:14px}
 .fp-label{position:absolute;left:16px;font-size:14px;font-weight:500}
+/* GitHub App setup */
+.fp-gh{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px}
+.fp-gh li{display:flex;flex-direction:column;gap:8px;padding:18px;border:1px solid rgba(255,255,255,0.18);border-radius:6px;background:rgba(10,22,51,0.6);font-size:15px;line-height:1.5;color:#D5DEF3}
+.fp-gh b{font-weight:600;color:#FFFFFF}
+.fp-gh code{font-family:'Geist Mono',monospace;font-size:13px;padding:1px 5px;border-radius:4px;background:rgba(255,255,255,0.08);color:#FFFFFF;overflow-wrap:anywhere}
+.fp-gh-n{font-family:'Geist Mono',monospace;font-size:13px;color:#FF7A45}
 [data-st-icon]{display:none}
 [data-st-icon].on{display:inline}
 </style>
@@ -502,6 +508,19 @@ Attach images</div>
 </g>
 <path fill="#064BFF" d="M 307,822 L 446,760 C 464,752 481,768 473,787 L 420,932 C 413,952 393,952 386,933 L 368,884 C 365,875 361,871 353,868 L 304,851 C 288,845 289,829 307,822 Z"></path>
 </svg>
+<div id="github-app" style="flex: 1 1 100%; min-width: 0; display: flex; flex-direction: column; gap: 20px; padding-top: 32px; border-top: 1px solid rgba(255, 255, 255, 0.18)">
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px">
+<h3 style="margin: 0; font-family: 'Bricolage Grotesque', 'Geist', sans-serif; font-size: clamp(26px, 3vw, 36px); letter-spacing: -0.03em; font-weight: 700">Bring your own GitHub App.</h3>
+<a class="fp-link" href="https://github.com/AndrewSl105/anora-mono/blob/main/README.md#5-github-app" style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #AFC0E8">Full instructions →</a>
+</div>
+<p style="margin: 0; max-width: 720px; font-size: 17px; line-height: 1.55; color: #D5DEF3">There is no shared Fleetpocket app: every self-hosted server uses a GitHub App you create on your own account. Below, <code style="font-family: 'Geist Mono', monospace; font-size: 14px; color: #FFFFFF; overflow-wrap: anywhere">fleetpocket.example.com</code> stands for your domain.</p>
+<ol class="fp-gh">
+<li><span class="fp-gh-n">01</span><b>Create the App</b><span>Settings → Developer settings → GitHub Apps → New GitHub App, on your personal account. Installable: <b>Only on this account</b>.</span></li>
+<li><span class="fp-gh-n">02</span><b>URLs and permissions</b><span>Homepage <code>https://fleetpocket.example.com</code>, webhook <code>https://fleetpocket.example.com/webhooks/github</code>, secret from <code>openssl rand -hex 32</code>. Contents and Pull requests <i>read &amp; write</i>; Metadata, Checks, Actions <i>read</i>. Events: Pull request, Check suite, Workflow run.</span></li>
+<li><span class="fp-gh-n">03</span><b>Keys on your server</b><span>App ID → <code>GITHUB_APP_ID</code>, webhook secret → <code>GITHUB_WEBHOOK_SECRET</code> in <code>.env</code>. Private key → <code>/srv/fleetpocket/secrets/github-app.pem</code>, owned by uid 1000, <code>chmod 600</code>.</span></li>
+<li><span class="fp-gh-n">04</span><b>Install it</b><span>Install App on the repositories Fleetpocket may work on. The web app's "add repository" picker lists them.</span></li>
+</ol>
+</div>
 </div>
 </section>
 
