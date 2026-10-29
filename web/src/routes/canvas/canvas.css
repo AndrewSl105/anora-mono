@@ -1,0 +1,76 @@
+/* Canvas: a board of terminal windows (docs/design/remote-nodes.md, section 6).
+   Terminals stay dark in both themes, like a real terminal; the board follows the theme. */
+
+.fp-board {
+  background-color: var(--background);
+  background-image: radial-gradient(circle, color-mix(in oklab, var(--foreground) 16%, transparent) 1px, transparent 1.2px);
+  background-size: calc(24px * var(--zoom, 1)) calc(24px * var(--zoom, 1));
+  background-position: var(--bx, 0) var(--by, 0);
+  touch-action: none;
+}
+
+.fp-term {
+  --term-bg: #151b26;
+  --term-bar: #1c2431;
+  --term-fg: #d8dee9;
+  --term-dim: #8390a5;
+  --term-rule: #2a3445;
+  --term-ok: #7fd1a4;
+  --term-bad: #f28b82;
+  --term-ask: #f5c56b;
+  background: var(--term-bg);
+  color: var(--term-fg);
+  box-shadow:
+    0 1px 0 color-mix(in oklab, var(--host) 70%, transparent) inset,
+    0 18px 40px -18px rgb(10 14 22 / 0.55),
+    0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+.fp-term[data-focused='true'] {
+  box-shadow:
+    0 1px 0 var(--host) inset,
+    0 24px 56px -20px rgb(10 14 22 / 0.7),
+    0 0 0 1.5px color-mix(in oklab, var(--host) 75%, transparent);
+}
+
+.fp-term-bar {
+  background: var(--term-bar);
+  border-bottom: 1px solid var(--term-rule);
+}
+
+.fp-term-body {
+  font-family: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.55;
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-rule) transparent;
+}
+
+.fp-term-input {
+  font: inherit;
+  background: transparent;
+  color: var(--term-fg);
+  caret-color: var(--host);
+}
+.fp-term-input::placeholder {
+  color: var(--term-dim);
+}
+
+/* Status light: steady, except the two states that move (working, asking). */
+.fp-led {
+  box-shadow: 0 0 0 3px color-mix(in oklab, currentColor 22%, transparent);
+  background: currentColor;
+}
+.fp-led[data-live='true'] {
+  animation: fp-led 1.6s ease-in-out infinite;
+}
+@keyframes fp-led {
+  50% {
+    box-shadow: 0 0 0 6px color-mix(in oklab, currentColor 0%, transparent);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fp-led[data-live='true'] {
+    animation: none;
+  }
+}

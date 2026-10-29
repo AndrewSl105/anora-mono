@@ -1,0 +1,21 @@
+{
+  "name": "Fleetpocket",
+  "short_name": "Fleetpocket",
+  "description": "Your fleet of coding agents: tasks on the server and on your own computers.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#ffffff",
+  "theme_color": "#064BFF",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Canvas", "url": "/canvas" },
+    { "name": "New task", "url": "/new" }
+  ]
+}

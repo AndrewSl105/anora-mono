@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { TaskView } from '@/api/types'
 import { useTaskRuns } from '@/api/hooks'
 import { dateTime, duration, usd } from '@/lib/format'
+import { HostChip } from '@/components/HostChip'
 import { t } from '@/i18n/en'
 
 const ti = t.task.info
@@ -32,6 +33,9 @@ export function InfoTab({ task }: { task: TaskView }) {
         {task.status_reason && <Row label={ti.reason}>{task.status_reason}</Row>}
         <Row label={ti.source}>{task.source}</Row>
         <Row label={ti.agent}>{t.agents[task.agent]}</Row>
+        <Row label={t.hosts.runsOn}>
+          <HostChip node={task.node} always className="text-sm text-foreground" />
+        </Row>
         {task.ci_status && <Row label={ti.ci}>{task.ci_status}</Row>}
         {task.branch && (
           <Row label="Branch">

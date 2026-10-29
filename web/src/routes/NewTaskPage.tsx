@@ -4,7 +4,9 @@ import { useForm, Controller } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { toast } from 'sonner'
-import { errorMessage, useAgents, useCreateTask, useProjects } from '@/api/hooks'
+import { errorMessage, useAgents, useCreateTask, useNodes, useProjects } from '@/api/hooks'
+import { HostSelect } from '@/components/HostSelect'
+import { hostAgents, hostInfo, SERVER } from '@/lib/hosts'
 import type { Agent } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,6 +32,8 @@ const schema = z.object({
   prompt: z.string().trim().min(1, t.newTask.promptRequired),
   // '' runs with the project's agent.
   agent: z.enum(['', 'claude', 'codex', 'cursor']),
+  // '' runs on the project's host; else 'server' or a node id.
+  node: z.string(),
 })
 type Values = z.infer<typeof schema>
 
@@ -41,6 +45,7 @@ export function toCreateBody(v: Values) {
     ...(v.repository_id ? { repository_id: Number(v.repository_id) } : {}),
     ...(v.title?.trim() ? { title: v.title.trim() } : {}),
     ...(v.agent ? { agent: v.agent } : {}),
+    ...(v.node ? { node: v.node } : {}),
   }
 }
 
@@ -51,7 +56,7 @@ export default function NewTaskPage() {
 
   const form = useForm<Values>({
     resolver: zodResolver(schema),
-    defaultValues: { project_id: '', repository_id: '', title: '', prompt: '', agent: '' },
+    defaultValues: { project_id: '', repository_id: '', title: '', prompt: '', agent: '', node: '' },
   })
   const projectId = form.watch('project_id')
   const prompt = form.watch('prompt')
@@ -60,6 +65,10 @@ export default function NewTaskPage() {
   const agent = form.watch('agent')
   const projectAgent: Agent = project?.agent ?? agents.data?.defaultAgent ?? 'claude'
   const agentName = t.agents[agent || projectAgent]
+  const nodes = useNodes()
+  const node = form.watch('node')
+  const host = node || project?.node || SERVER
+  const agentsHere = hostAgents(host, nodes.data, agents.data?.agents ?? [])
   const picker = useImagePicker()
   const [progress, setProgress] = useState<number | null>(null)
   useClosingConfirmation(prompt.trim().length > 0 || picker.picked.length > 0)
@@ -79,6 +88,7 @@ export default function NewTaskPage() {
     const def = project?.repositories.find((r) => r.is_default) ?? project?.repositories[0]
     form.setValue('repository_id', def ? String(def.id) : '')
     form.setValue('agent', '')
+    form.setValue('node', '')
   }, [projectId, project, form])
 
   useEffect(() => {
@@ -187,8 +197,31 @@ export default function NewTaskPage() {
             </div>
           )}
 
-          {/* Only worth a choice when the server has keys for more than one agent. */}
-          {(agents.data?.agents.length ?? 0) > 1 && (
+          {/* Only once a computer is registered: single-server setups see no change. */}
+          {(nodes.data?.length ?? 0) > 0 && (
+            <div className="space-y-2">
+              <Label htmlFor="node">{t.hosts.runsOn}</Label>
+              <Controller
+                control={form.control}
+                name="node"
+                render={({ field }) => (
+                  <HostSelect
+                    id="node"
+                    value={field.value}
+                    onChange={(v) => {
+                      field.onChange(v)
+                      form.setValue('agent', '')
+                    }}
+                    nodes={nodes.data ?? []}
+                    defaultLabel={t.hosts.projectHost(hostInfo(project?.node, nodes.data).name)}
+                  />
+                )}
+              />
+            </div>
+          )}
+
+          {/* Only worth a choice when the task's host has keys for more than one agent. */}
+          {agentsHere.length > 1 && (
             <div className="space-y-2">
               <Label htmlFor="agent">{t.newTask.agent}</Label>
               <Controller
@@ -203,7 +236,7 @@ export default function NewTaskPage() {
                       <SelectItem value={PROJECT_AGENT} className="h-10">
                         {t.newTask.projectAgent(t.agents[projectAgent])}
                       </SelectItem>
-                      {agents.data?.agents.map((a) => (
+                      {agentsHere.map((a) => (
                         <SelectItem key={a} value={a} className="h-10">
                           {t.agents[a]}
                         </SelectItem>

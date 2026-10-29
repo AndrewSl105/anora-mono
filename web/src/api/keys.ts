@@ -18,6 +18,7 @@ export const keys = {
     list: () => ['projects', 'list'] as const,
     detail: (id: string) => ['projects', 'detail', id] as const,
   },
+  nodes: ['nodes'] as const,
   githubRepos: ['github', 'repositories'] as const,
   me: ['me'] as const,
   stats: ['stats'] as const,

@@ -9,6 +9,7 @@ import { usd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useRuntime } from '@/telegram/runtime'
 import { t } from '@/i18n/en'
+import { ComputersSection } from './settings/ComputersSection'
 
 const s = t.settings
 const version = import.meta.env.VITE_APP_VERSION || 'dev'
@@ -82,6 +83,8 @@ export default function SettingsPage() {
             </div>
           </section>
         )}
+
+        <ComputersSection />
 
         <section>
           <h2 className="mb-3 text-sm font-semibold tracking-wide text-muted-foreground uppercase">{s.about}</h2>

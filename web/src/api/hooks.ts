@@ -17,7 +17,7 @@ import {
   upsertTask,
   type EventsData,
 } from './cache'
-import type { ApiEvent, Health, Project, ProjectFields, Run, TaskView } from './types'
+import type { Agent, ApiEvent, Health, HostNode, Project, ProjectFields, Run, TaskView } from './types'
 import { isApiError } from './errors'
 import { GROUPS } from '@/lib/status'
 import { t } from '@/i18n/en'
@@ -169,7 +169,7 @@ function useTaskResult() {
   }
 }
 
-type CreateBody = { project_id: string; prompt: string; repository_id?: number; title?: string }
+type CreateBody = { project_id: string; prompt: string; repository_id?: number; title?: string; agent?: Agent; node?: string }
 
 /** Multipart body: the JSON fields as form fields plus files[] (API.md, "Attachments"). */
 export function toFormData(fields: Record<string, string | number | undefined>, files: File[]): FormData {
@@ -373,6 +373,65 @@ export function useGitHubRepos(enabled: boolean) {
     enabled,
     staleTime: 5 * 60_000,
     retry: (count, e) => !isApiError(e, 'github_disabled') && count < 2,
+  })
+}
+
+// ---- Nodes (computers that run tasks) ----
+
+export function useNodes() {
+  return useQuery({
+    queryKey: keys.nodes,
+    queryFn: async ({ signal }) => (await call(api.GET('/api/v1/nodes', { signal }))).items,
+    staleTime: 60_000,
+  })
+}
+
+/** Replaces one node in the cached list (WebSocket `node` messages, mutations). */
+export function upsertNode(qc: QueryClient, node: HostNode) {
+  qc.setQueryData<HostNode[]>(keys.nodes, (prev) => {
+    if (!prev) return prev
+    const i = prev.findIndex((n) => n.id === node.id)
+    if (i < 0) return [...prev, node]
+    const next = prev.slice()
+    next[i] = node
+    return next
+  })
+}
+
+export function useCreateNode() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { id: string; name?: string }) => call(api.POST('/api/v1/nodes', { params: { header: CSRF }, body })),
+    onSuccess: (res) => upsertNode(qc, res.node),
+  })
+}
+
+export function useUpdateNode(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { name?: string; max_concurrent?: number }) =>
+      call(api.PATCH('/api/v1/nodes/{id}', { params: { path: { id }, header: CSRF }, body })),
+    onSuccess: (node) => upsertNode(qc, node),
+    onError: toastError,
+  })
+}
+
+export function useRotateNodeToken(id: string) {
+  return useMutation({
+    mutationFn: () => call(api.POST('/api/v1/nodes/{id}/token', { params: { path: { id }, header: CSRF } })),
+    onError: toastError,
+  })
+}
+
+export function useDeleteNode(id: string) {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => call(api.DELETE('/api/v1/nodes/{id}', { params: { path: { id }, header: CSRF } })),
+    onSuccess: () => {
+      qc.setQueryData<HostNode[]>(keys.nodes, (prev) => prev?.filter((n) => n.id !== id))
+      void qc.invalidateQueries({ queryKey: keys.projects.all })
+    },
+    onError: toastError,
   })
 }
 

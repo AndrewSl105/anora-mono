@@ -1,6 +1,7 @@
 import { Link } from 'react-router'
 import type { Task } from '@/api/types'
 import { StatusBadge } from '@/components/StatusBadge'
+import { HostChip } from '@/components/HostChip'
 import { relativeTime, usd } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { t } from '@/i18n/en'
@@ -31,6 +32,12 @@ export function TaskCard({ task, projectName, selected }: { task: Task; projectN
       {line && <p className="mt-1 truncate font-mono text-xs text-muted-foreground">{line}</p>}
       <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
         <span className="truncate">{projectName ?? task.project_id}</span>
+        {task.node && (
+          <>
+            <span aria-hidden="true">·</span>
+            <HostChip node={task.node} className="shrink" />
+          </>
+        )}
         <span aria-hidden="true">·</span>
         <span className="shrink-0">{relativeTime(task.last_activity_at ?? task.updated_at)}</span>
         <span className="ml-auto shrink-0 tabular-nums">{usd(task.cost_usd_total)}</span>

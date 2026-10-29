@@ -4,6 +4,7 @@ import { RealtimeClient, wsUrl, type ServerMessage, type SocketStatus } from './
 import { appendEvents, upsertTask } from '@/api/cache'
 import { api, call, CSRF, hasBearerToken } from '@/api/client'
 import { keys } from '@/api/keys'
+import { upsertNode } from '@/api/hooks'
 
 const RealtimeContext = createContext<RealtimeClient | null>(null)
 
@@ -14,6 +15,7 @@ export function handleMessage(qc: QueryClient, msg: ServerMessage) {
       void qc.invalidateQueries({ queryKey: keys.tasks.runs(msg.task_id), exact: true })
     }
   } else if (msg.op === 'task') upsertTask(qc, msg.task)
+  else if (msg.op === 'node') upsertNode(qc, msg.node)
 }
 
 /**
@@ -33,6 +35,7 @@ export function catchUp(qc: QueryClient, taskIds: number[]) {
     void qc.invalidateQueries({ queryKey: keys.tasks.detail(id), exact: true })
   }
   void qc.invalidateQueries({ queryKey: keys.tasks.lists() })
+  void qc.invalidateQueries({ queryKey: keys.nodes })
 }
 
 export function RealtimeProvider({ children }: { children: ReactNode }) {

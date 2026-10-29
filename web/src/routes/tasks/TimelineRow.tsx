@@ -21,7 +21,7 @@ import { t } from '@/i18n/en'
 
 const tl = t.task.timeline
 
-function dividerText(text: string): string {
+export function dividerText(text: string): string {
   if (text.startsWith('run_started:')) return tl.runStarted(text.slice('run_started:'.length))
   if (text.startsWith('run_finished:')) {
     const code = text.slice('run_finished:'.length)

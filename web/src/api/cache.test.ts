@@ -29,6 +29,7 @@ const task = (id: number, status: Task['status'], project = 'p'): Task => ({
   queued_message: null,
   source: 'web',
   agent: 'claude',
+  node: null,
   created_at: '2026-10-14T10:00:00Z',
   updated_at: '2026-10-14T10:00:00Z',
 })

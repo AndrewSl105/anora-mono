@@ -1,5 +1,5 @@
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router'
-import { FolderGit2, ListTodo, Plus, Settings } from 'lucide-react'
+import { FolderGit2, ListTodo, Plus, Settings, SquareTerminal } from 'lucide-react'
 import { lazy, Suspense } from 'react'
 import { cn } from '@/lib/utils'
 import { t } from '@/i18n/en'
@@ -11,7 +11,7 @@ import { OfflineBanner } from './OfflineBanner'
 
 const DebugPanel = import.meta.env.VITE_DEBUG === '1' ? lazy(() => import('@/telegram/DebugPanel')) : null
 
-const TAB_ROOTS = ['/', '/new', '/projects', '/settings']
+const TAB_ROOTS = ['/', '/new', '/canvas', '/projects', '/settings']
 
 const NAV = [
   { to: '/', label: t.nav.tasks, icon: ListTodo, end: false },
@@ -19,6 +19,9 @@ const NAV = [
   { to: '/projects', label: t.nav.projects, icon: FolderGit2, end: false },
   { to: '/settings', label: t.nav.settings, icon: Settings, end: true },
 ] as const
+
+/** The sidebar adds the canvas, a desktop view (not a mobile tab). */
+const SIDEBAR_NAV = [NAV[0], { to: '/canvas', label: t.nav.canvas, icon: SquareTerminal, end: true }, ...NAV.slice(1)] as const
 
 function isActive(pathname: string, to: string) {
   if (to === '/') return pathname === '/' || pathname.startsWith('/tasks')
@@ -51,7 +54,7 @@ export function AppShell() {
           <span className="font-semibold">{t.app.name}</span>
         </div>
         <nav className="flex flex-col gap-1 px-2" aria-label="Main">
-          {NAV.map((item) => (
+          {SIDEBAR_NAV.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}

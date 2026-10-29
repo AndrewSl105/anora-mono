@@ -1,7 +1,7 @@
 import { http, HttpResponse, ws, delay } from 'msw'
-import type { Agent, ApiEvent, Project, Task } from '@/api/types'
+import type { Agent, ApiEvent, HostNode, Project, Task } from '@/api/types'
 import { GROUPS } from '@/lib/status'
-import { addAttachment, addEvent, db, makeTask, MOCK_AGENTS, startRun, taskView } from './db'
+import { addAttachment, addEvent, db, makeTask, MOCK_AGENTS, node, startRun, taskView } from './db'
 import { emitStatus, interruptRun, resumeAfterAnswer, setPush } from './simulator'
 
 const SESSION_KEY = 'fleetpocket.mock.session'
@@ -111,6 +111,10 @@ setPush({
 function pushEvent(taskId: number, event: ApiEvent) {
   for (const c of clients) if (c.subs.has(`task:${taskId}`)) c.send(JSON.stringify({ op: 'event', task_id: taskId, event }))
 }
+function pushNode(n: HostNode) {
+  for (const c of clients) if (c.subs.has('scope:tasks')) c.send(JSON.stringify({ op: 'node', node: n }))
+}
+
 function pushTask(task: Task) {
   for (const c of clients) {
     if (c.subs.has('scope:tasks') || c.subs.has(`task:${task.id}`)) c.send(JSON.stringify({ op: 'task', task }))
@@ -188,6 +192,7 @@ export const handlers = [
       env: {},
       runner_image: null,
       agent: null,
+      node: null,
       model: null,
       max_turns: null,
       max_budget_usd: null,
@@ -297,7 +302,7 @@ export const handlers = [
   http.post(`${API}/tasks`, async ({ request }) => {
     const denied = guard(request)
     if (denied) return denied
-    const read = await readBody(request, ['project_id', 'prompt', 'repository_id', 'title', 'agent'])
+    const read = await readBody(request, ['project_id', 'prompt', 'repository_id', 'title', 'agent', 'node'])
     if ('error' in read) return read.error
     const f = read.fields
     const body = { project_id: f.project_id, prompt: f.prompt ?? '', repository_id: f.repository_id ? Number(f.repository_id) : undefined, title: f.title }
@@ -305,7 +310,11 @@ export const handlers = [
     if (!p) return err(404, 'not_found', 'No such project')
     if (!body.prompt?.trim()) return err(400, 'invalid', 'prompt is required')
     const agent = (f.agent || p.agent || MOCK_AGENTS.default_agent) as Agent
-    if (!MOCK_AGENTS.agents.includes(agent)) return err(400, 'invalid', `agent ${agent} is not configured`)
+    const nodeId = f.node === 'server' ? null : f.node || p.node || null
+    const host = nodeId ? db.nodes.find((n) => n.id === nodeId) : null
+    if (nodeId && !host) return err(400, 'invalid', `no computer "${nodeId}"`)
+    const agentsHere = host ? host.agents : MOCK_AGENTS.agents
+    if (!agentsHere.includes(agent)) return err(400, 'invalid', `agent ${agent} is not configured`)
     const task = makeTask({
       project_id: p.id,
       title: body.title || body.prompt.split('\n')[0].slice(0, 80),
@@ -313,6 +322,7 @@ export const handlers = [
       status: 'queued',
       repository_id: body.repository_id ?? p.repositories.find((r) => r.is_default)?.id ?? 1,
       agent,
+      node: nodeId,
     })
     const attachments = await storeImages(task.id, read.files)
     addEvent(task.id, 'created', { attachments })
@@ -460,6 +470,47 @@ export const handlers = [
   }),
 
   // ---- System ----
+  // ---- Computers (nodes) ----
+  http.get(`${API}/nodes`, ({ request }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    return HttpResponse.json({ items: db.nodes })
+  }),
+  http.post(`${API}/nodes`, async ({ request }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const body = (await request.json()) as { id: string; name?: string }
+    if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(body.id) || body.id === 'server') return err(400, 'invalid', 'id must be a lowercase slug')
+    if (db.nodes.some((n) => n.id === body.id)) return err(409, 'conflict', 'Computer id exists')
+    const n = node(body.id, body.name?.trim() || body.id, { online: false, last_seen_at: null, agents: [], platform: '', created_at: new Date().toISOString() })
+    db.nodes.push(n)
+    pushNode(n)
+    return HttpResponse.json({ node: n, token: `fpn_${n.id}.mock-token-${Math.random().toString(36).slice(2)}` }, { status: 201 })
+  }),
+  http.patch(`${API}/nodes/:id`, async ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const n = db.nodes.find((x) => x.id === params.id)
+    if (!n) return err(404, 'not_found', 'No such computer')
+    Object.assign(n, (await request.json()) as Partial<HostNode>, { updated_at: new Date().toISOString() })
+    pushNode(n)
+    return HttpResponse.json(n)
+  }),
+  http.post(`${API}/nodes/:id/token`, ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    if (!db.nodes.some((x) => x.id === params.id)) return err(404, 'not_found', 'No such computer')
+    return HttpResponse.json({ token: `fpn_${params.id}.mock-token-${Math.random().toString(36).slice(2)}` })
+  }),
+  http.delete(`${API}/nodes/:id`, ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const live = db.tasks.filter((t) => t.node === params.id && !['completed', 'failed', 'cancelled', 'pr_open'].includes(t.status))
+    if (live.length) return err(409, 'conflict', `${live.length} live tasks run on this computer`)
+    db.nodes = db.nodes.filter((x) => x.id !== params.id)
+    for (const p of db.projects) if (p.node === params.id) p.node = null
+    return HttpResponse.json({ ok: true })
+  }),
   http.get(`${API}/stats`, ({ request }) => {
     const denied = guard(request)
     if (denied) return denied

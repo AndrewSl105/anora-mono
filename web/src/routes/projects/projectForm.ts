@@ -15,6 +15,8 @@ export const projectSchema = z.object({
   redis: z.boolean(),
   env: z.array(z.object({ key: z.string().trim().regex(ENV_KEY, 'A–Z, 0–9, _'), value: z.string() })),
   agent: z.enum(['', 'claude', 'codex', 'cursor']),
+  // '' runs on the server, else a node id.
+  node: z.string(),
   model: z.string().trim(),
   max_turns: numeric,
   max_budget_usd: numeric,
@@ -35,6 +37,7 @@ export function toFormValues(p?: Project): ProjectFormValues {
     redis: p?.services.includes('redis') ?? false,
     env: Object.entries(p?.env ?? {}).map(([key, value]) => ({ key, value })),
     agent: p?.agent ?? '',
+    node: p?.node ?? '',
     model: s(p?.model),
     max_turns: s(p?.max_turns),
     max_budget_usd: s(p?.max_budget_usd),
@@ -46,6 +49,7 @@ export function toFormValues(p?: Project): ProjectFormValues {
 
 type Full = Required<Pick<ProjectFields, 'name' | 'instructions' | 'services' | 'env'>> & {
   agent: '' | Agent
+  node: string
   model: string
   max_turns: number
   max_budget_usd: number
@@ -62,6 +66,7 @@ function normalize(v: ProjectFormValues): Full {
     services: [...(v.postgres ? ['postgres' as const] : []), ...(v.redis ? ['redis' as const] : [])],
     env: Object.fromEntries(v.env.filter((e) => e.key.trim()).map((e) => [e.key.trim(), e.value])),
     agent: v.agent,
+    node: v.node,
     model: v.model.trim(),
     max_turns: Number(v.max_turns || 0),
     max_budget_usd: Number(v.max_budget_usd || 0),
@@ -71,7 +76,7 @@ function normalize(v: ProjectFormValues): Full {
   }
 }
 
-const OVERRIDES = ['agent', 'model', 'max_turns', 'max_budget_usd', 'max_duration_sec', 'runner_memory', 'runner_cpus'] as const
+const OVERRIDES = ['agent', 'node', 'model', 'max_turns', 'max_budget_usd', 'max_duration_sec', 'runner_memory', 'runner_cpus'] as const
 
 /** POST body: only fields with a value (no explicit defaults). */
 export function createBody(v: ProjectFormValues): ProjectFields & { id: string } {

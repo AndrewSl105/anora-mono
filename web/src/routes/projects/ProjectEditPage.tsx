@@ -10,6 +10,7 @@ import {
   useArchiveProject,
   useCreateProject,
   useAgents,
+  useNodes,
   useGitHubRepos,
   useProject,
   useRemoveRepository,
@@ -19,6 +20,7 @@ import {
 import { isApiError } from '@/api/errors'
 import type { Agent, Project, Repository } from '@/api/types'
 import { AGENTS } from '@/lib/agents'
+import { HostSelect } from '@/components/HostSelect'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -98,6 +100,7 @@ function ProjectForm({ project }: { project?: Project }) {
   const create = useCreateProject()
   const update = useUpdateProject(project?.id ?? '')
   const archive = useArchiveProject(project?.id ?? '')
+  const nodes = useNodes()
 
   const form = useForm<ProjectFormValues>({
     resolver: zodResolver(projectSchema),
@@ -158,6 +161,15 @@ function ProjectForm({ project }: { project?: Project }) {
           <Field id="agent" label={f.agent} hint={f.agentHint}>
             <Controller control={form.control} name="agent" render={({ field }) => <AgentSelect value={field.value} onChange={field.onChange} />} />
           </Field>
+          {(nodes.data?.length ?? 0) > 0 && (
+            <Field id="node" label={t.hosts.runsOn} hint={t.hosts.runsOnHint}>
+              <Controller
+                control={form.control}
+                name="node"
+                render={({ field }) => <HostSelect id="node" value={field.value} onChange={field.onChange} nodes={nodes.data ?? []} />}
+              />
+            </Field>
+          )}
           <Field id="model" label={f.model} hint={f.modelHint}>
             <Input id="model" placeholder={t.common.serverDefault} className="h-11 font-mono" {...form.register('model')} />
           </Field>

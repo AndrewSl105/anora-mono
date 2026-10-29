@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router'
 import { ArrowLeft, Ban, Copy, ExternalLink, GitMerge, GitPullRequest, MoreVertical, OctagonPause, RotateCcw } from 'lucide-react'
 import type { TaskView } from '@/api/types'
-import { useTaskAction } from '@/api/hooks'
+import { useNodes, useTaskAction } from '@/api/hooks'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -10,6 +10,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { HostChip } from '@/components/HostChip'
+import { hostInfo } from '@/lib/hosts'
 import { StatusBadge } from '@/components/StatusBadge'
 import { useConfirm } from '@/components/confirm'
 import { CopyButton, copyText } from '@/components/CopyButton'
@@ -23,6 +25,17 @@ export function githubUrl(task: TaskView): string | null {
   const repo = task.repository?.full_name
   if (!repo) return null
   return task.branch ? `https://github.com/${repo}/tree/${encodeURIComponent(task.branch)}` : `https://github.com/${repo}`
+}
+
+/** A task whose computer is offline: queued tasks wait, live ones resume when it is back. */
+function HostWaiting({ task }: { task: TaskView }) {
+  const nodes = useNodes()
+  if (!task.node || !nodes.data) return null
+  const h = hostInfo(task.node, nodes.data)
+  if (h.online || ['completed', 'failed', 'cancelled'].includes(task.status)) return null
+  return (
+    <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-1.5 text-xs text-amber-800 dark:text-amber-300">{t.hosts.waitingFor(h.name)}</p>
+  )
 }
 
 export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boolean }) {
@@ -116,6 +129,7 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
           {task.project_id}
           {task.repository && <span className="font-mono"> / {task.repository.full_name.split('/').pop()}</span>}
         </span>
+        <HostChip node={task.node} />
         <span className="tabular-nums">{usd(task.cost_usd_total)}</span>
         {task.turns > 0 && <span className="tabular-nums">{t.task.turns(task.turns)}</span>}
         {task.pr_url && task.pr_number && (
@@ -142,6 +156,7 @@ export function TaskHeader({ task, stopping }: { task: TaskView; stopping: boole
         )}
       </div>
       {task.branch && <p className="mt-1.5 truncate font-mono text-xs text-muted-foreground">{task.branch}</p>}
+      <HostWaiting task={task} />
       {task.status_reason && (task.status === 'failed' || task.status === 'cancelled' || task.status === 'paused') && (
         <div className="mt-2 flex items-start gap-1 rounded-md bg-red-500/10 py-1.5 pr-1 pl-2.5 text-xs text-red-700 dark:text-red-300">
           <p className="min-w-0 flex-1 py-1 break-words">{task.status_reason}</p>

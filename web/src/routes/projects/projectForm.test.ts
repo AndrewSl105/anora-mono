@@ -48,6 +48,15 @@ describe('agent', () => {
   })
 })
 
+describe('node', () => {
+  it('sends a picked computer and moves back to the server with ""', () => {
+    expect(patchBody({ ...toFormValues(project), node: 'macbook' }, project)).toEqual({ node: 'macbook' })
+    const mac = { ...project, node: 'macbook' }
+    expect(patchBody({ ...toFormValues(mac), node: '' }, mac)).toEqual({ node: '' })
+    expect(createBody({ ...toFormValues(), id: 'n', name: 'N', node: 'macbook' })).toMatchObject({ node: 'macbook' })
+  })
+})
+
 describe('createBody', () => {
   it('omits empty overrides', () => {
     const v = { ...toFormValues(), id: 'new', name: 'New' }

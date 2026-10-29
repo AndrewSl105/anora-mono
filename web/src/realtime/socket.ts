@@ -1,8 +1,9 @@
-import type { ApiEvent, Task } from '@/api/types'
+import type { ApiEvent, HostNode, Task } from '@/api/types'
 
 export type ServerMessage =
   | { op: 'event'; task_id: number; event: ApiEvent }
   | { op: 'task'; task: Task }
+  | { op: 'node'; node: HostNode }
   | { op: 'error'; message: string }
 
 export type Subscription = { scope: 'tasks' } | { task_id: number }

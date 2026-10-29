@@ -1,4 +1,4 @@
-import type { Agent, ApiEvent, Attachment, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
+import type { Agent, ApiEvent, Attachment, HostNode, Project, Question, Repository, Run, Task, TaskStatus, TaskView } from '@/api/types'
 
 // In-memory backend for mock mode (VITE_MOCK=1) and tests. Shapes follow
 // docs/openapi.yaml; the OpenAPI file has no examples to generate from.
@@ -22,6 +22,7 @@ function project(id: string, name: string, repositories: Repository[], extra: Pa
     env: {},
     runner_image: null,
     agent: null,
+    node: null,
     model: null,
     max_turns: null,
     max_budget_usd: null,
@@ -39,6 +40,7 @@ function project(id: string, name: string, repositories: Repository[], extra: Pa
 
 type Db = {
   projects: Project[]
+  nodes: HostNode[]
   tasks: Task[]
   events: Map<number, ApiEvent[]>
   runs: Map<number, Run[]>
@@ -52,6 +54,7 @@ type Db = {
 
 export const db: Db = {
   projects: [],
+  nodes: [],
   tasks: [],
   events: new Map(),
   runs: new Map(),
@@ -156,6 +159,7 @@ export function makeTask(fields: Partial<Task> & Pick<Task, 'project_id' | 'titl
     queued_message: null,
     source: 'web',
     agent: (proj?.agent ?? MOCK_AGENTS.default_agent) as Agent,
+    node: proj?.node ?? null,
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     finished_at: null,
@@ -208,7 +212,26 @@ export function setStatus(task: Task, status: TaskStatus, reason?: string) {
 /** Runs queued by setStatus; the simulator starts them when it picks the task up. */
 export const pendingRuns = new Map<number, { kind: Run['kind']; input: string }>()
 
+/** A registered computer for mock mode (Settings → Computers, the canvas). */
+export function node(id: string, name: string, extra: Partial<HostNode> = {}): HostNode {
+  return {
+    id,
+    name,
+    max_concurrent: 2,
+    agents: ['claude', 'codex', 'cursor'],
+    platform: 'darwin/arm64',
+    version: 'dev',
+    last_seen_at: ago(1),
+    created_at: ago(60 * 24 * 3),
+    updated_at: ago(60 * 24 * 3),
+    online: true,
+    active_tasks: 0,
+    ...extra,
+  }
+}
+
 export function seed() {
+  db.nodes = [node('macbook', 'MacBook Pro')]
   db.projects = [
     project(
       'vatary',
@@ -298,6 +321,17 @@ export function seed() {
   db.questions.set(t8.id, [{ id: `${r8.id}-q1`, task_id: t8.id, run_id: r8.id, text: 'Should the limit apply per IP address or per API key?', options: ['Per IP address', 'Per API key'], answer: null, answered_via: null, created_at: ago(60 * 5 - 2), answered_at: null }])
   setStatus(t8, 'paused', 'no answer within the question timeout')
   Object.assign(t8, { cost_usd_total: 0.27, paused_at: ago(60 * 2), updated_at: ago(60 * 2), last_activity_at: ago(60 * 2) })
+
+  // A task running on the MacBook (a node), with Codex.
+  const t9 = makeTask({ project_id: 'bioma', title: 'Speed up the image pipeline', status: 'queued', created_at: ago(9), node: 'macbook', agent: 'codex' })
+  startRun(t9.id, 'initial', t9.prompt, ago(9))
+  addEvent(t9.id, 'started', { session_id: 's-9', model: 'gpt-5.5-codex' }, true, ago(9))
+  addEvent(t9.id, 'assistant_text', { text: 'Profiling the resize step first.' }, true, ago(8))
+  addEvent(t9.id, 'tool_use', { tool: 'Bash', summary: 'Bash pnpm bench images' }, true, ago(7))
+  addEvent(t9.id, 'tool_result', { tool: 'Bash', ok: true }, true, ago(6))
+  addEvent(t9.id, 'tool_use', { tool: 'Edit', summary: 'Edit src/images/resize.ts' }, true, ago(5))
+  Object.assign(t9, { status: 'running', updated_at: ago(5) })
+  db.nodes[0].active_tasks = 1
 }
 
 seed()

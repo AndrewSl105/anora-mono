@@ -20,6 +20,7 @@ const NewTaskPage = lazy(() => import('@/routes/NewTaskPage'))
 const ProjectsPage = lazy(() => import('@/routes/projects/ProjectsPage'))
 const ProjectEditPage = lazy(() => import('@/routes/projects/ProjectEditPage'))
 const SettingsPage = lazy(() => import('@/routes/SettingsPage'))
+const CanvasPage = lazy(() => import('@/routes/canvas/CanvasPage'))
 
 function lazyPage(Page: React.ComponentType) {
   return (
@@ -44,6 +45,7 @@ export function createAppRouter() {
           ],
         },
         { path: 'new', element: lazyPage(NewTaskPage) },
+        { path: 'canvas', element: lazyPage(CanvasPage) },
         { path: 'projects', element: lazyPage(ProjectsPage) },
         { path: 'projects/new', element: lazyPage(ProjectEditPage) },
         { path: 'projects/:id', element: lazyPage(ProjectEditPage) },
