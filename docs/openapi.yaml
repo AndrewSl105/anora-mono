@@ -706,6 +706,113 @@ paths:
                   token: { type: string }
         '404': { $ref: '#/components/responses/Error' }
 
+  /api/v1/nodes/pair:
+    post:
+      operationId: approvePairing
+      tags: [nodes]
+      summary: Connect the computer that shows this pairing code
+      description: Registers a node for a code from `fleetpocket-node setup` and hands its token to that computer (it collects it with GET /node/pair/{id}).
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              additionalProperties: false
+              properties:
+                code: { type: string, example: KQ7-4MX, description: Case and dash do not matter }
+                name: { type: string, description: Defaults to the computer's name }
+      responses:
+        '201':
+          description: Connected
+          content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } }
+        '400': { $ref: '#/components/responses/Error' }
+
+  /api/v1/nodes/pair/{code}:
+    get:
+      operationId: lookupPairing
+      tags: [nodes]
+      summary: The computer waiting with this pairing code
+      parameters:
+        - { name: code, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Waiting computer
+          content: { application/json: { schema: { $ref: '#/components/schemas/PendingPairing' } } }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/node/pair:
+    post:
+      operationId: startPairing
+      tags: [nodes]
+      summary: A computer asks for a pairing code (fleetpocket-node setup)
+      description: No session. Limited to 5 waiting codes per IP and 20 in total; a code lives 10 minutes and works once.
+      security: []
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                hostname: { type: string }
+                platform: { type: string }
+                agents: { type: array, items: { $ref: '#/components/schemas/Agent' } }
+      responses:
+        '201':
+          description: Code issued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, poll_id, expires_in, approve_url]
+                properties:
+                  code: { type: string, example: KQ7-4MX }
+                  poll_id: { type: string, description: Secret the computer polls with }
+                  expires_in: { type: integer, description: Seconds }
+                  approve_url: { type: string, description: The app's settings page with the code filled in }
+        '429': { $ref: '#/components/responses/Error' }
+
+  /api/v1/node/pair/{id}:
+    get:
+      operationId: pollPairing
+      tags: [nodes]
+      summary: The computer waits for approval
+      description: '`pending` until the owner approves; then `approved` with the node token, once. 404 when unknown, expired or already collected.'
+      security: []
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string } }
+      responses:
+        '200':
+          description: Status
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status: { type: string, enum: [pending, approved] }
+                  node_id: { type: string }
+                  name: { type: string }
+                  token: { type: string }
+                  runner_image: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/node/install:
+    get:
+      operationId: nodeInstallScript
+      tags: [nodes]
+      summary: 'Install script: curl -fsSL <server>/api/v1/node/install | sh'
+      security: []
+      responses:
+        '200':
+          description: POSIX shell script that installs fleetpocket-node and runs its setup
+          content: { text/x-shellscript: { schema: { type: string } } }
+
   /api/v1/node/connect:
     get:
       operationId: connectNode
@@ -958,6 +1065,17 @@ components:
         updated_at: { type: string, format: date-time }
         online: { type: boolean }
         active_tasks: { type: integer, description: Tasks preparing, running, waiting for input or pushing on it }
+
+    PendingPairing:
+      type: object
+      required: [code, hostname, platform, agents, ip, expires_at]
+      properties:
+        code: { type: string }
+        hostname: { type: string }
+        platform: { type: string }
+        agents: { type: array, items: { type: string } }
+        ip: { type: string, description: Where the request came from }
+        expires_at: { type: string, format: date-time }
 
     TaskStatus:
       type: string

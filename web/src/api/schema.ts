@@ -481,6 +481,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nodes/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect the computer that shows this pairing code
+         * @description Registers a node for a code from `fleetpocket-node setup` and hands its token to that computer (it collects it with GET /node/pair/{id}).
+         */
+        post: operations["approvePairing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nodes/pair/{code}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The computer waiting with this pairing code */
+        get: operations["lookupPairing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/node/pair": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * A computer asks for a pairing code (fleetpocket-node setup)
+         * @description No session. Limited to 5 waiting codes per IP and 20 in total; a code lives 10 minutes and works once.
+         */
+        post: operations["startPairing"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/node/pair/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The computer waits for approval
+         * @description `pending` until the owner approves; then `approved` with the node token, once. 404 when unknown, expired or already collected.
+         */
+        get: operations["pollPairing"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/node/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Install script: curl -fsSL <server>/api/v1/node/install | sh */
+        get: operations["nodeInstallScript"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/node/connect": {
         parameters: {
             query?: never;
@@ -708,6 +802,16 @@ export interface components {
             online: boolean;
             /** @description Tasks preparing */
             active_tasks: number;
+        };
+        PendingPairing: {
+            code: string;
+            hostname: string;
+            platform: string;
+            agents: string[];
+            /** @description Where the request came from */
+            ip: string;
+            /** Format: date-time */
+            expires_at: string;
         };
         /** @enum {string} */
         TaskStatus: "queued" | "preparing" | "running" | "waiting_input" | "paused" | "pushing" | "pr_open" | "completed" | "failed" | "cancelled";
@@ -2298,6 +2402,154 @@ export interface operations {
                 };
             };
             404: components["responses"]["Error"];
+        };
+    };
+    approvePairing: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Case and dash do not matter
+                     * @example KQ7-4MX
+                     */
+                    code: string;
+                    /** @description Defaults to the computer's name */
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Connected */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Node"];
+                };
+            };
+            400: components["responses"]["Error"];
+        };
+    };
+    lookupPairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                code: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Waiting computer */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PendingPairing"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    startPairing: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    hostname?: string;
+                    platform?: string;
+                    agents?: components["schemas"]["Agent"][];
+                };
+            };
+        };
+        responses: {
+            /** @description Code issued */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @example KQ7-4MX */
+                        code: string;
+                        /** @description Secret the computer polls with */
+                        poll_id: string;
+                        /** @description Seconds */
+                        expires_in: number;
+                        /** @description The app's settings page with the code filled in */
+                        approve_url: string;
+                    };
+                };
+            };
+            429: components["responses"]["Error"];
+        };
+    };
+    pollPairing: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @enum {string} */
+                        status: "pending" | "approved";
+                        node_id?: string;
+                        name?: string;
+                        token?: string;
+                        runner_image?: string;
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    nodeInstallScript: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description POSIX shell script that installs fleetpocket-node and runs its setup */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/x-shellscript": string;
+                };
+            };
         };
     };
     connectNode: {

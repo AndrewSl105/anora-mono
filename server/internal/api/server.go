@@ -108,6 +108,12 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("PATCH /api/v1/nodes/{id}", a(s.updateNode))
 		mux.HandleFunc("POST /api/v1/nodes/{id}/token", a(s.rotateNodeToken))
 		mux.HandleFunc("DELETE /api/v1/nodes/{id}", a(s.deleteNode))
+		mux.HandleFunc("POST /api/v1/nodes/pair", a(s.approvePairing))
+		mux.HandleFunc("GET /api/v1/nodes/pair/{code}", a(s.lookupPairing))
+		// fleetpocket-node setup: no session (see nodes/pairing.go).
+		mux.HandleFunc("POST /api/v1/node/pair", s.startPairing)
+		mux.HandleFunc("GET /api/v1/node/pair/{id}", s.pollPairing)
+		mux.HandleFunc("GET /api/v1/node/install", s.installScript)
 		// The node's own WebSocket: bearer node token, no session.
 		mux.HandleFunc("GET /api/v1/node/connect", s.Nodes.Serve)
 	}

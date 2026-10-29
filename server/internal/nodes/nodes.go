@@ -65,6 +65,10 @@ type Service struct {
 	Store    *store.Store
 	Hub      *events.Hub
 	Registry *hosts.Registry
+	// RunnerImage is handed to newly paired nodes so setup can pull it.
+	RunnerImage string
+
+	pairing pairings
 }
 
 // View returns a node as clients see it.

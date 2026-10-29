@@ -30,6 +30,7 @@ var version = "dev"
 const usage = `usage: fleetpocket-node <command> [flags]
 
 commands:
+  setup      set this computer up: Docker, agent keys, pairing, start at login
   run        connect to the server and run tasks (default)
   doctor     check Docker, the runner image, credentials and gitleaks, then exit
   version    print the version
@@ -61,6 +62,8 @@ func main() {
 		err = run(args, false)
 	case "doctor":
 		err = run(args, true)
+	case "setup":
+		err = setup(args)
 	case "version":
 		fmt.Println(version)
 	case "-h", "--help", "help":
@@ -118,6 +121,8 @@ func run(args []string, doctor bool) error {
 		// Docker Desktop / OrbStack resolve host.docker.internal to the Mac;
 		// runners must not reach its local services by name.
 		ExtraHosts: []string{"host.docker.internal:0.0.0.0", "gateway.docker.internal:0.0.0.0"},
+		// A node pulls the agent image itself (first task, or a new tag).
+		PullMissing: true,
 	}
 	if os.Getenv("SECRETS_SCAN") != "off" {
 		if _, err := exec.LookPath("gitleaks"); err == nil {

@@ -89,9 +89,13 @@ fleetpocket-node run --server https://fleetpocket.example.com
 
 While a runner is active on macOS the node holds `caffeinate -i` so the Mac does not idle-sleep. `deploy/node/com.fleetpocket.node.plist` is a launchd agent for start at login.
 
+### 5.1 Setup and pairing
+
+`curl -fsSL <server>/api/v1/node/install | sh` installs the binary and runs `fleetpocket-node setup` (Docker or OrbStack, agent keys into the Keychain, pairing, image pull, gitleaks, launchd). Pairing works like a TV sign-in: `POST /node/pair` returns a short code and a secret poll id; the owner approves the code (`POST /nodes/pair`, session) and the node collects its token once from `GET /node/pair/{id}`. While it waits, setup answers `GET http://127.0.0.1:47641/pairing` for the server's origin only, so the app open on the same computer recognises it and connects it with one click; elsewhere the code is typed. The approve dialog shows the requesting computer's name, platform and IP and warns when it is not this computer.
+
 ## 6. Web: hosts and the canvas
 
-- **Settings → Computers**: register a node (shows the token once and the install command), see online status, agents, capacity and running tasks, rotate or remove.
+- **Settings → Computers**: add a computer (one install command, then one click or a code, see 5.1; a manual token path stays), see online status, agents, capacity and running tasks, rotate or remove.
 - **Where to run** select on the project form and the new-task form (`Server` / each node, offline ones marked), and on the Telegram draft card (cycles like Agent).
 - Task card, header and info show the host (a small chip: server / laptop icon + name).
 - **Canvas** (`/canvas`, desktop; on narrow screens it falls back to the task list): an infinite pan / zoom board of terminal windows, one per task. Each window is a live terminal-style view of the task's timeline (agent text, tool calls, questions with inline answers, a message box), with a title bar showing status, agent and host. Windows can be dragged, resized, minimised to a chip, focused (opens the full task page) and closed (hidden from the canvas until the task changes again). Layout: new tasks land in their host's column (server, then one column per node), so the fleet reads left to right by machine; positions and zoom are remembered per browser (localStorage). A toolbar filters by host / status, "fit all" and "tidy" (re-run the column layout).

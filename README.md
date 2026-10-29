@@ -78,7 +78,7 @@ docker compose -f docker-compose.deploy.yml up -d
 
 Open `https://fleetpocket.example.com`, sign in, add a repository and start your first task.
 
-**Optional: run tasks on your Mac too.** Register it in Settings → Computers and start `fleetpocket-node` there; then choose per project or per task whether it runs on the server or on your Mac. One login and one task list either way. ([details](docs/DEPLOY.md#11-run-tasks-on-your-own-computer-optional))
+**Optional: run tasks on your Mac too.** In Settings → Computers → Add computer, copy one command into the Mac's Terminal and click Connect; then choose per project or per task whether it runs on the server or on your Mac. One login and one task list either way. ([details](docs/DEPLOY.md#11-run-tasks-on-your-own-computer-optional))
 
 To update later, run `docker compose -f docker-compose.deploy.yml pull`, pull the agent image again, then run `up -d`. The full [setup guide](docs/DEPLOY.md) also covers backups and automatic deploys with GitHub Actions.
 

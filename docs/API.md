@@ -192,6 +192,16 @@ A **node** is a computer that runs tasks next to the server, with its own Docker
 | `DELETE /nodes/{id}` | `409 conflict` while unfinished tasks run on it; projects that used it go back to the server |
 | `GET /node/connect` | the node's WebSocket, `Authorization: Bearer <token>`; not for clients |
 
+**Pairing** (what `fleetpocket-node setup` uses instead of a copied token):
+
+| | |
+|---|---|
+| `GET /node/install` | the install script: `curl -fsSL <server>/api/v1/node/install | sh` downloads `fleetpocket-node` (`NODE_DOWNLOAD_URL`) and runs its setup. No session |
+| `POST /node/pair` `{hostname, platform, agents}` | the computer asks for a code → `201 {code, poll_id, expires_in, approve_url}`. No session; 5 waiting codes per IP, 20 in total (`429 rate_limited`); a code lives 10 minutes |
+| `GET /node/pair/{poll_id}` | the computer waits: `{"status":"pending"}`, then once `{"status":"approved", node_id, name, token, runner_image}`; afterwards `404` |
+| `GET /nodes/pair/{code}` | owner: the waiting computer `{code, hostname, platform, agents, ip, expires_at}`, shown before connecting it |
+| `POST /nodes/pair` `{code, name?}` | owner: registers the node (id from the name, `-2`… when taken) and hands its token to the computer → `201` node. Codes ignore case and the dash |
+
 `agents` and `platform`/`version` are what the node reported when it last connected. A node's tasks count only against its `max_concurrent`.
 
 ## WebSocket

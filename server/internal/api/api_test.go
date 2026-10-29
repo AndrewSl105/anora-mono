@@ -515,3 +515,46 @@ func TestNodesAndPlacement(t *testing.T) {
 		t.Fatalf("connect without token: %d", code)
 	}
 }
+
+func TestPairingHTTP(t *testing.T) {
+	c, _, secret := setup(t)
+	// The computer, without a session.
+	anon := &client{t: t, base: c.base, http: &http.Client{}}
+	code, start := anon.do("POST", "/api/v1/node/pair", map[string]any{"hostname": "Studio Mac", "platform": "darwin/arm64", "agents": []string{"claude"}})
+	if code != 201 || start["code"] == nil || !strings.Contains(fmt.Sprint(start["approve_url"]), "/settings?pair=") {
+		t.Fatalf("start: %d %v", code, start)
+	}
+	poll := "/api/v1/node/pair/" + fmt.Sprint(start["poll_id"])
+	if code, res := anon.do("GET", poll, nil); code != 200 || res["status"] != "pending" {
+		t.Fatalf("poll: %d %v", code, res)
+	}
+	// Approving needs the owner's session.
+	if code, _ := anon.do("POST", "/api/v1/nodes/pair", map[string]any{"code": start["code"]}); code != 401 {
+		t.Fatalf("approve without session: %d", code)
+	}
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+	if code, p := c.do("GET", "/api/v1/nodes/pair/"+fmt.Sprint(start["code"]), nil); code != 200 || p["hostname"] != "Studio Mac" {
+		t.Fatalf("lookup: %d %v", code, p)
+	}
+	code, n := c.do("POST", "/api/v1/nodes/pair", map[string]any{"code": start["code"]})
+	if code != 201 || n["id"] != "studio-mac" || n["online"] != false {
+		t.Fatalf("approve: %d %v", code, n)
+	}
+	if code, res := anon.do("GET", poll, nil); code != 200 || res["status"] != "approved" || !strings.HasPrefix(fmt.Sprint(res["token"]), "fpn_studio-mac.") {
+		t.Fatalf("approved poll: %d %v", code, res)
+	}
+	if code, _ := anon.do("GET", poll, nil); code != 404 {
+		t.Fatalf("token handed out twice: %d", code)
+	}
+	// The install script names this server.
+	resp, err := http.Get(c.base + "/api/v1/node/install")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != 200 || !strings.Contains(string(body), "fleetpocket-node") || !strings.Contains(string(body), "setup --server") {
+		t.Fatalf("install: %d %s", resp.StatusCode, body)
+	}
+}

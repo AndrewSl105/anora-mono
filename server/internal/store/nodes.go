@@ -115,6 +115,13 @@ func (s *Store) NodeSeen(ctx context.Context, id string, agents []string, platfo
 	return n, notFound(err)
 }
 
+// SetNodeReport stores agents and platform a computer reported while pairing
+// (before its first connection; last_seen_at stays empty).
+func (s *Store) SetNodeReport(ctx context.Context, id string, agents []string, platform string) (*Node, error) {
+	n, err := scanNode(s.Pool.QueryRow(ctx, `UPDATE nodes SET agents = $2, platform = $3 WHERE id = $1 RETURNING `+nodeCols, id, agents, platform))
+	return n, notFound(err)
+}
+
 // DeleteNode removes a node unless it has live tasks (ErrConflict).
 func (s *Store) DeleteNode(ctx context.Context, id string) error {
 	var live int

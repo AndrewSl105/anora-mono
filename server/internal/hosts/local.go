@@ -33,6 +33,9 @@ type Local struct {
 	// ImageOverride replaces the runner image the server names (a node with
 	// a locally built image).
 	ImageOverride string
+	// PullMissing pulls a runner image that is not there yet (nodes; the
+	// server never pulls runner images).
+	PullMissing bool
 }
 
 func (l *Local) image(name string) string {
@@ -131,7 +134,14 @@ func (l *Local) WriteAttachmentFiles(taskID int64, files map[string][]byte) erro
 }
 
 func (l *Local) HasImage(ctx context.Context, image string) error {
-	return l.Docker.HasImage(ctx, l.image(image))
+	err := l.Docker.HasImage(ctx, l.image(image))
+	if err != nil && l.PullMissing {
+		if perr := l.Docker.PullImage(ctx, l.image(image)); perr != nil {
+			return fmt.Errorf("%w (pull: %v)", err, perr)
+		}
+		return nil
+	}
+	return err
 }
 
 func (l *Local) EnsureNetwork(ctx context.Context, taskID int64, project string) error {

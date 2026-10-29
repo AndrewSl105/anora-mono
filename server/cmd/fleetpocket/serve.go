@@ -74,7 +74,7 @@ func runServe() error {
 		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},
 	})
 	taskSvc.Executor = sched
-	nodeSvc := &nodes.Service{Store: st, Hub: hub, Registry: registry}
+	nodeSvc := &nodes.Service{Store: st, Hub: hub, Registry: registry, RunnerImage: cfg.RunnerImage}
 	registry.OnChange = func(id string, online bool) {
 		nodeSvc.Changed(id, online)
 		if online {

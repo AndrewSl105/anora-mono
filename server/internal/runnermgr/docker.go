@@ -589,6 +589,11 @@ func (m *Manager) HasImage(ctx context.Context, image string) error {
 	return nil
 }
 
+// PullImage pulls an image (a node's setup, or a node missing its runner image).
+func (m *Manager) PullImage(ctx context.Context, image string) error {
+	return m.ensureImage(ctx, image)
+}
+
 // ensureImage pulls a public sidecar image that is not available locally
 // (unlike runner images, which are never pulled).
 func (m *Manager) ensureImage(ctx context.Context, image string) error {

@@ -22,6 +22,9 @@ type Config struct {
 	// like WorkspacesDir, the same path on the host and in the container.
 	AttachmentsDir string
 	RunnerImage    string
+	// NodeDownloadURL is where the install script downloads fleetpocket-node
+	// binaries (fleetpocket-node-<os>-<arch>).
+	NodeDownloadURL string
 
 	ClaudeOAuthToken string
 	AnthropicAPIKey  string
@@ -85,13 +88,14 @@ func Load() (*Config, error) {
 	var errs []error
 	e := envReader{errs: &errs}
 	c := &Config{
-		HTTPAddr:       e.str("HTTP_ADDR", ":8080"),
-		PublicBaseURL:  strings.TrimRight(e.str("PUBLIC_BASE_URL", ""), "/"),
-		DatabaseURL:    e.str("DATABASE_URL", ""),
-		DockerHost:     e.str("DOCKER_HOST", "tcp://docker-proxy:2375"),
-		WorkspacesDir:  e.str("WORKSPACES_DIR", "/srv/fleetpocket/workspaces"),
-		AttachmentsDir: e.str("ATTACHMENTS_DIR", "/srv/fleetpocket/attachments"),
-		RunnerImage:    e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/fleetpocket-agent:latest"),
+		HTTPAddr:        e.str("HTTP_ADDR", ":8080"),
+		PublicBaseURL:   strings.TrimRight(e.str("PUBLIC_BASE_URL", ""), "/"),
+		DatabaseURL:     e.str("DATABASE_URL", ""),
+		DockerHost:      e.str("DOCKER_HOST", "tcp://docker-proxy:2375"),
+		WorkspacesDir:   e.str("WORKSPACES_DIR", "/srv/fleetpocket/workspaces"),
+		AttachmentsDir:  e.str("ATTACHMENTS_DIR", "/srv/fleetpocket/attachments"),
+		RunnerImage:     e.str("RUNNER_IMAGE", "ghcr.io/andrewsl105/fleetpocket-agent:latest"),
+		NodeDownloadURL: strings.TrimRight(e.str("NODE_DOWNLOAD_URL", ""), "/"),
 
 		ClaudeOAuthToken: e.str("CLAUDE_CODE_OAUTH_TOKEN", ""),
 		AnthropicAPIKey:  e.str("ANTHROPIC_API_KEY", ""),

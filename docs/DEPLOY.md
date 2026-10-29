@@ -144,26 +144,23 @@ Restore with `docker compose -f docker-compose.deploy.yml exec -T postgres pg_re
 
 A **node** runs tasks on another machine, typically your Mac, with that machine's Docker and its own agent keys. Login, history, the task list and GitHub stay on the server; you pick per project or per task where it runs. The node only connects out (a WebSocket to the server), so it needs no open port or public address. Design: [remote-nodes.md](design/remote-nodes.md).
 
-1. **Register it**: web app → Settings → Computers → Add computer (id e.g. `macbook`). Copy the token; it is shown once.
-2. **Docker**: install Docker Desktop or OrbStack, then pull the agent image (it has a `linux/arm64` variant for Apple silicon): `docker pull ghcr.io/andrewsl105/fleetpocket-agent:latest`. For the secrets scan: `brew install gitleaks`.
-3. **Install the node**: download `fleetpocket-node-darwin-arm64` (or `-darwin-amd64`) from the `node-latest` release, then `chmod +x` it and move it to `/usr/local/bin/fleetpocket-node`. macOS may ask you to allow it in System Settings → Privacy & Security the first time.
-4. **Secrets go to the Keychain**, never to a file:
+1. In the web app: **Settings → Computers → Add computer**. It shows one command.
+2. Run it in Terminal on the computer you want to add:
 
    ```sh
-   security add-generic-password -U -s fleetpocket-node -a FLEETPOCKET_NODE_TOKEN -w   # paste the node token
-   security add-generic-password -U -s fleetpocket-node -a CLAUDE_CODE_OAUTH_TOKEN -w  # `claude setup-token`; optional: OPENAI_API_KEY, CURSOR_API_KEY
+   curl -fsSL https://fleetpocket.example.com/api/v1/node/install | sh
    ```
 
-5. **Check and start**:
+   It installs `fleetpocket-node` into `~/.fleetpocket/bin` (no sudo) and runs `fleetpocket-node setup`, which:
+   - starts Docker, or offers to install OrbStack with Homebrew, and waits until it runs;
+   - connects Claude (`claude setup-token`, or an API key) and optionally Codex and Cursor; keys go to the macOS Keychain;
+   - shows a pairing code and opens the app with it. In the app on that computer the dialog shows **This computer → Connect** (one click); on another device type the code;
+   - pulls the agent image, offers gitleaks, and starts the node now and at every login (launchd; logs in `~/Library/Logs/fleetpocket-node.log`).
+3. The computer turns **online** in Settings → Computers, with the agents it has keys for.
 
-   ```sh
-   fleetpocket-node doctor --server https://fleetpocket.example.com
-   fleetpocket-node run --server https://fleetpocket.example.com
-   ```
+Run setup again any time to add an agent key or to re-pair. By hand (no pairing): Add computer → "Set up by hand with a token", then `fleetpocket-node run --server …` with the token in the Keychain (`security add-generic-password -U -s fleetpocket-node -a FLEETPOCKET_NODE_TOKEN -w`). `NODE_DOWNLOAD_URL` changes where the install script downloads the binaries (default: the `node-latest` release).
 
-   To start it at login, fill in `deploy/node/com.fleetpocket.node.plist` (server URL, home folder), copy it to `~/Library/LaunchAgents/` and run `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleetpocket.node.plist`. Logs: `~/Library/Logs/fleetpocket-node.log`.
-
-The node shows as online in Settings → Computers, with the agents it has keys for. While a task runs, the node keeps the Mac awake (`caffeinate -i`); if the Mac sleeps or goes offline anyway, queued tasks wait, a running task keeps running in Docker, and its output catches up when the node reconnects. Workspaces live in `~/Library/Application Support/Fleetpocket`.
+While a task runs, the node keeps the Mac awake (`caffeinate -i`); if the Mac sleeps or goes offline anyway, queued tasks wait, a running task keeps running in Docker, and its output catches up when the node reconnects. Workspaces live in `~/Library/Application Support/Fleetpocket`.
 
 ## CI/CD
 
