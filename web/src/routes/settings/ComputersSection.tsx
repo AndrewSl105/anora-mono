@@ -12,6 +12,9 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { CopyButton } from '@/components/CopyButton'
 import { useConfirm } from '@/components/confirm'
 import { relativeTime } from '@/lib/format'
+import { useSearchParams } from 'react-router'
+import { AddComputerDialog } from './AddComputerDialog'
+import { useTasksSubscription } from '@/realtime/RealtimeProvider'
 import { cn } from '@/lib/utils'
 import { t } from '@/i18n/en'
 
@@ -21,6 +24,12 @@ const AGENT_IMAGE = 'ghcr.io/andrewsl105/fleetpocket-agent:latest'
 /** Settings → Computers: register machines that run tasks (fleetpocket-node). */
 export function ComputersSection() {
   const nodes = useNodes()
+  // Node online/offline changes arrive with the task list's WebSocket scope.
+  useTasksSubscription()
+  const [params, setParams] = useSearchParams()
+  const pairCode = params.get('pair') ?? undefined
+  // Setup on the computer opens /settings?pair=<code>: start with that code.
+  const [wizard, setWizard] = useState(!!pairCode)
   const [adding, setAdding] = useState(false)
   const [token, setToken] = useState<{ id: string; token: string } | null>(null)
 
@@ -28,7 +37,7 @@ export function ComputersSection() {
     <section>
       <div className="mb-3 flex items-center justify-between gap-3">
         <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase">{c.title}</h2>
-        <Button variant="outline" size="sm" className="h-9" onClick={() => setAdding(true)}>
+        <Button variant="outline" size="sm" className="h-9" onClick={() => setWizard(true)}>
           <Plus /> {c.add}
         </Button>
       </div>
@@ -42,6 +51,18 @@ export function ComputersSection() {
           ))}
         </ul>
       )}
+      <AddComputerDialog
+        open={wizard}
+        initialCode={pairCode}
+        onOpenChange={(v) => {
+          setWizard(v)
+          if (!v && pairCode) setParams({}, { replace: true })
+        }}
+        onManual={() => {
+          setWizard(false)
+          setAdding(true)
+        }}
+      />
       <AddDialog open={adding} onOpenChange={setAdding} onCreated={(id, tok) => setToken({ id, token: tok })} />
       <TokenDialog value={token} onClose={() => setToken(null)} />
     </section>

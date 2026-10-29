@@ -41,6 +41,8 @@ function project(id: string, name: string, repositories: Repository[], extra: Pa
 type Db = {
   projects: Project[]
   nodes: HostNode[]
+  /** Computers waiting in fleetpocket-node setup, by code. */
+  pairings: Map<string, { hostname: string; platform: string; agents: Agent[]; ip: string }>
   tasks: Task[]
   events: Map<number, ApiEvent[]>
   runs: Map<number, Run[]>
@@ -55,6 +57,7 @@ type Db = {
 export const db: Db = {
   projects: [],
   nodes: [],
+  pairings: new Map(),
   tasks: [],
   events: new Map(),
   runs: new Map(),
@@ -232,6 +235,7 @@ export function node(id: string, name: string, extra: Partial<HostNode> = {}): H
 
 export function seed() {
   db.nodes = [node('macbook', 'MacBook Pro')]
+  db.pairings = new Map([['KQ7-4MX', { hostname: 'Studio Mac', platform: 'darwin/arm64', agents: ['claude'] as Agent[], ip: '203.0.113.7' }]])
   db.projects = [
     project(
       'vatary',

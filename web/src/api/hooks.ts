@@ -378,11 +378,13 @@ export function useGitHubRepos(enabled: boolean) {
 
 // ---- Nodes (computers that run tasks) ----
 
-export function useNodes() {
+/** `poll`: also refetch every few seconds (waiting for a computer to come online). */
+export function useNodes(poll = false) {
   return useQuery({
     queryKey: keys.nodes,
     queryFn: async ({ signal }) => (await call(api.GET('/api/v1/nodes', { signal }))).items,
     staleTime: 60_000,
+    refetchInterval: poll ? 4_000 : false,
   })
 }
 
@@ -403,6 +405,25 @@ export function useCreateNode() {
   return useMutation({
     mutationFn: (body: { id: string; name?: string }) => call(api.POST('/api/v1/nodes', { params: { header: CSRF }, body })),
     onSuccess: (res) => upsertNode(qc, res.node),
+  })
+}
+
+/** The computer waiting with a pairing code (fleetpocket-node setup). */
+export function usePendingPairing(code: string) {
+  return useQuery({
+    queryKey: ['pairing', code],
+    queryFn: ({ signal }) => call(api.GET('/api/v1/nodes/pair/{code}', { params: { path: { code } }, signal })),
+    enabled: code.replace(/[^0-9a-z]/gi, '').length === 6,
+    retry: false,
+    staleTime: 5_000,
+  })
+}
+
+export function useApprovePairing() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { code: string; name?: string }) => call(api.POST('/api/v1/nodes/pair', { params: { header: CSRF }, body })),
+    onSuccess: (node) => upsertNode(qc, node),
   })
 }
 

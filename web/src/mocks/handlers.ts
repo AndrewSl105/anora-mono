@@ -111,6 +111,14 @@ setPush({
 function pushEvent(taskId: number, event: ApiEvent) {
   for (const c of clients) if (c.subs.has(`task:${taskId}`)) c.send(JSON.stringify({ op: 'event', task_id: taskId, event }))
 }
+function mockLocalSetup(): boolean {
+  try {
+    return localStorage.getItem('fleetpocket.mock.localSetup') === '1'
+  } catch {
+    return false
+  }
+}
+
 function pushNode(n: HostNode) {
   for (const c of clients) if (c.subs.has('scope:tasks')) c.send(JSON.stringify({ op: 'node', node: n }))
 }
@@ -495,6 +503,40 @@ export const handlers = [
     Object.assign(n, (await request.json()) as Partial<HostNode>, { updated_at: new Date().toISOString() })
     pushNode(n)
     return HttpResponse.json(n)
+  }),
+  // A fleetpocket-node setup waiting on this computer (mock: only when
+  // localStorage "fleetpocket.mock.localSetup" is set, e.g. by an e2e test).
+  http.get('http://127.0.0.1:47641/pairing', () => {
+    if (!mockLocalSetup() || !db.pairings.has('KQ7-4MX')) return HttpResponse.error()
+    return HttpResponse.json({ code: 'KQ7-4MX', hostname: 'Studio Mac', platform: 'darwin/arm64' })
+  }),
+  http.get(`${API}/nodes/pair/:code`, ({ request, params }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const code = String(params.code).toUpperCase()
+    const p = db.pairings.get(code)
+    if (!p) return err(404, 'not_found', 'no such pairing code, or it expired')
+    return HttpResponse.json({ code, ...p, expires_at: new Date(Date.now() + 600_000).toISOString() })
+  }),
+  http.post(`${API}/nodes/pair`, async ({ request }) => {
+    const denied = guard(request)
+    if (denied) return denied
+    const body = (await request.json()) as { code: string; name?: string }
+    const code = body.code.toUpperCase()
+    const p = db.pairings.get(code)
+    if (!p) return err(400, 'invalid', 'no such pairing code, or it expired')
+    db.pairings.delete(code)
+    const name = body.name?.trim() || p.hostname
+    const id = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'computer'
+    const n = node(id, name, { online: false, last_seen_at: null, agents: p.agents, platform: p.platform, created_at: new Date().toISOString() })
+    db.nodes.push(n)
+    pushNode(n)
+    // The computer finishes setup and connects a moment later.
+    setTimeout(() => {
+      Object.assign(n, { online: true, last_seen_at: new Date().toISOString(), version: 'dev' })
+      pushNode(n)
+    }, 1500)
+    return HttpResponse.json(n, { status: 201 })
   }),
   http.post(`${API}/nodes/:id/token`, ({ request, params }) => {
     const denied = guard(request)

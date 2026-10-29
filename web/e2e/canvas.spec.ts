@@ -44,9 +44,36 @@ test('run a task on a computer and follow it on the canvas', async ({ page }) =>
   await expect(mac).toBeVisible()
 })
 
+test('add this computer with one click while its setup waits', async ({ page }) => {
+  // fleetpocket-node setup answers on the loopback port with its pairing code
+  // (mock mode serves it when this flag is set).
+  await page.evaluate(() => localStorage.setItem('fleetpocket.mock.localSetup', '1'))
+  await page.getByRole('link', { name: 'Settings' }).click()
+  await page.getByRole('button', { name: 'Add computer' }).click()
+  await expect(page.getByText('curl -fsSL')).toContainText('/api/v1/node/install | sh')
+  await expect(page.getByText('This computer')).toBeVisible()
+  await expect(page.getByLabel('Pairing code')).toHaveValue('KQ7-4MX')
+  await expect(page.getByLabel('Name')).toHaveValue('Studio Mac')
+  await page.getByRole('button', { name: 'Connect' }).click()
+  await expect(page.getByText('Studio Mac is paired')).toBeVisible()
+  await expect(page.getByText('Studio Mac is online')).toBeVisible()
+  await page.getByRole('button', { name: 'Done' }).click()
+  await expect(page.getByText('studio-mac', { exact: true })).toBeVisible()
+})
+
+test('a code from another device needs care', async ({ page }) => {
+  await page.goto('/settings?pair=kq74mx')
+  await expect(page.getByLabel('Pairing code')).toHaveValue('KQ7-4MX')
+  await expect(page.getByText(/Connect it only if you ran setup on that computer yourself/)).toBeVisible()
+  await expect(page.getByText('Request from 203.0.113.7')).toBeVisible()
+  await page.getByLabel('Pairing code').fill('AAA-AAA')
+  await expect(page.getByText(/No computer is waiting with this code/)).toBeVisible()
+})
+
 test('register a computer and see its token once', async ({ page }) => {
   await page.getByRole('link', { name: 'Settings' }).click()
   await page.getByRole('button', { name: 'Add computer' }).click()
+  await page.getByRole('button', { name: 'Set up by hand with a token' }).click()
   await page.getByLabel('Name').fill('Studio Mac')
   await expect(page.getByLabel('Id')).toHaveValue('studio-mac')
   await page.getByRole('button', { name: 'Create and show token' }).click()
