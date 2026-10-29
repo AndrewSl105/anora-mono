@@ -35,7 +35,9 @@ func line(seq int) string {
 	return fmt.Sprintf(`{"type":"tool_use","ts":"2026-10-29T10:00:00Z","seq":%d,"tool":"Edit","summary":"x"}`, seq)
 }
 
-func ok(m Message) *Message { return &Message{Op: OpResult, ID: m.ID, Result: []byte(`{"container":"c1"}`)} }
+func ok(m Message) *Message {
+	return &Message{Op: OpResult, ID: m.ID, Result: []byte(`{"container":"c1"}`)}
+}
 
 func TestRemoteBacklogDoesNotBlockReadLoop(t *testing.T) {
 	r := NewRemote("mac")

@@ -13,13 +13,6 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
-func callbackMessage(cq *telego.CallbackQuery) *telego.Message {
-	if cq.Message == nil || !cq.Message.IsAccessible() {
-		return nil
-	}
-	return cq.Message.Message()
-}
-
 func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery, c store.TelegramCallback, answer func(string)) {
 	d, err := b.Store.TelegramDraft(ctx, c.DraftID)
 	if err != nil {

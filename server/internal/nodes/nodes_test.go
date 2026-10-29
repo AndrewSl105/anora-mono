@@ -166,7 +166,9 @@ func appendLog(t *testing.T, ws *workspace.Manager, taskID int64, lines ...strin
 	}
 	defer f.Close()
 	for _, l := range lines {
-		fmt.Fprintln(f, l)
+		if _, err := fmt.Fprintln(f, l); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 

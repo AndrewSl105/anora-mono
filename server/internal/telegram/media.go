@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -26,6 +27,9 @@ type OpenAITranscriber struct {
 	APIKey string
 	Client *http.Client
 }
+
+// errVoiceDisabled is sent to the owner as is (a sentence for a chat).
+var errVoiceDisabled = errors.New("Voice messages are not enabled — dictate with the keyboard microphone instead.") //nolint:staticcheck // ST1005: shown to the owner verbatim
 
 func (o *OpenAITranscriber) Transcribe(ctx context.Context, name, mime string, data []byte) (string, error) {
 	return transcribeHTTP(ctx, o.Client, "https://api.openai.com/v1/audio/transcriptions", o.APIKey, name, mime, data,
@@ -118,7 +122,7 @@ func (b *Bot) incomingDraftContent(ctx context.Context, m *telego.Message) (stri
 	media := append(messageMedia(m), albumMedia(ctx)...)
 	if m.Voice != nil || m.Audio != nil {
 		if !b.STTEnabled || b.STT == nil {
-			return "", nil, fmt.Errorf("Voice messages are not enabled — dictate with the keyboard microphone instead.")
+			return "", nil, errVoiceDisabled
 		}
 		fileID, name, mime := "", "voice.ogg", "audio/ogg"
 		if m.Voice != nil {
@@ -200,7 +204,7 @@ func (b *Bot) download(ctx context.Context, fileID string) ([]byte, error) {
 		return nil, err
 	}
 	if len(raw) > attachments.MaxFileBytes {
-		return nil, fmt.Errorf("Telegram file is larger than %d MB", attachments.MaxFileBytes>>20)
+		return nil, fmt.Errorf("telegram file is larger than %d MB", attachments.MaxFileBytes>>20)
 	}
 	return raw, nil
 }

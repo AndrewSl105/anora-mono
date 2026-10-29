@@ -39,7 +39,7 @@ type Host interface {
 // LocalHost adapts hosts.Local to Host.
 type LocalHost struct{ *hosts.Local }
 
-func (l LocalHost) Git(token string) Host { return LocalHost{l.Local.WithGitToken(token)} }
+func (l LocalHost) Git(token string) Host { return LocalHost{l.WithGitToken(token)} }
 
 // Agent is one fleetpocket-node process.
 type Agent struct {
