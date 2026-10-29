@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent: starts fleetpocket-node at login and restarts it if it exits.
+  Replace SERVER_URL and USER_HOME, copy to ~/Library/LaunchAgents/ and load:
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleetpocket.node.plist
+  Secrets are not in this file: the node reads them from the Keychain
+  (service "fleetpocket-node", see `fleetpocket-node help`).
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.fleetpocket.node</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/fleetpocket-node</string>
+    <string>run</string>
+    <string>--server</string>
+    <string>SERVER_URL</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- git, gitleaks (Homebrew), security and caffeinate -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>StandardOutPath</key>
+  <string>USER_HOME/Library/Logs/fleetpocket-node.log</string>
+  <key>StandardErrorPath</key>
+  <string>USER_HOME/Library/Logs/fleetpocket-node.log</string>
+</dict>
+</plist>
