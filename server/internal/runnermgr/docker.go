@@ -165,6 +165,9 @@ func (m *Manager) startSidecar(ctx context.Context, taskID int64, project, name 
 		}
 		return secret, nil
 	}
+	if err := m.ensureImage(ctx, spec.image); err != nil {
+		return "", err
+	}
 	secret := randomHex(16)
 	memory, err := ParseMemory(m.SidecarMemory)
 	if err != nil {
@@ -526,6 +529,23 @@ func (m *Manager) HasImage(ctx context.Context, image string) error {
 	_, err := m.Docker.ImageInspect(ctx, image)
 	if err != nil {
 		return fmt.Errorf("runner image %s is not available locally (docker pull it first): %w", image, err)
+	}
+	return nil
+}
+
+// ensureImage pulls a public sidecar image that is not available locally
+// (unlike runner images, which are never pulled).
+func (m *Manager) ensureImage(ctx context.Context, image string) error {
+	if _, err := m.Docker.ImageInspect(ctx, image); err == nil {
+		return nil
+	}
+	resp, err := m.Docker.ImagePull(ctx, image, client.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull %s: %w", image, err)
+	}
+	defer resp.Close()
+	if err := resp.Wait(ctx); err != nil {
+		return fmt.Errorf("pull %s: %w", image, err)
 	}
 	return nil
 }

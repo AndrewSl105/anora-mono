@@ -33,6 +33,7 @@ Deviations from the specs (`docs/SPEC-server.md` for server and agent, `docs/SPE
 - Heartbeat events are not persisted (they would dominate the events table); everything else from the runner is stored verbatim.
 - On re-attach the backend attaches first and replays `events.jsonl` second; duplicates are dropped by `UNIQUE (run_id, seq)`.
 - Runner containers are named `fleetpocket-agent-<task>` and run as `1000:1000`; sidecars get the network alias `postgres` / `redis` and are reached as `DATABASE_URL=postgres://app:<random>@postgres:5432/app` and `REDIS_URL=redis://redis:6379/0`. The Postgres password is recovered from the sidecar's env when it is reused.
+- Sidecar images (`postgres:17-alpine`, `redis:7-alpine`) are pulled when missing locally, unlike the runner image: the spec only requires the runner image to be pre-pulled, and a fresh host (or CI) otherwise fails every task with services.
 - `waiting_input` holds a scheduler slot like `running`, because its container is alive.
 - A resumed run (after a question timeout) gets the answer restated in its prompt, and the backend also writes an `answer` for the original question id so the fake runner's scripted re-ask is satisfied.
 - Exit 4 (limit) with new commits still pushes and opens/updates the PR (status `pr_open`, reason = the limit message); with nothing to push the task fails with the limit message.
