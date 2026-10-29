@@ -102,3 +102,13 @@ func (r *Registry) Disconnect(id string, c Conn) {
 		r.OnChange(id, false)
 	}
 }
+
+// Kick closes a node's connection (token rotated, node removed).
+func (r *Registry) Kick(id string) {
+	r.mu.Lock()
+	n, ok := r.nodes[id]
+	r.mu.Unlock()
+	if ok {
+		n.Kick()
+	}
+}

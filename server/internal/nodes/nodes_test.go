@@ -72,8 +72,11 @@ func (f *fakeHost) HasImage(context.Context, string) error             { return 
 func (f *fakeHost) EnsureNetwork(context.Context, int64, string) error { return nil }
 func (f *fakeHost) EnsureVolume(context.Context, int64, string) error  { return nil }
 func (f *fakeHost) Ping(context.Context) error                         { return nil }
-func (f *fakeHost) RemoveAll(context.Context, int64) error             { return nil }
-func (f *fakeHost) Stop(context.Context, string, time.Duration) error  { return nil }
+
+// IsRunning is false once a runner's output ended (no re-attach in tests).
+func (f *fakeHost) IsRunning(context.Context, string) (bool, error)   { return false, nil }
+func (f *fakeHost) RemoveAll(context.Context, int64) error            { return nil }
+func (f *fakeHost) Stop(context.Context, string, time.Duration) error { return nil }
 func (f *fakeHost) TaskIDsWithResources(context.Context) (map[int64]bool, error) {
 	return map[int64]bool{}, nil
 }

@@ -142,11 +142,20 @@ func (s *Service) Update(ctx context.Context, id string, f store.NodeFields) (*s
 // connected node keeps its connection until it reconnects).
 func (s *Service) RotateToken(ctx context.Context, id string) (string, error) {
 	tok, hash := NewToken(id)
-	return tok, s.Store.SetNodeToken(ctx, id, hash)
+	if err := s.Store.SetNodeToken(ctx, id, hash); err != nil {
+		return "", err
+	}
+	// The connected node used the old token: it must reconnect with the new one.
+	s.Registry.Kick(id)
+	return tok, nil
 }
 
 func (s *Service) Delete(ctx context.Context, id string) error {
-	return s.Store.DeleteNode(ctx, id)
+	if err := s.Store.DeleteNode(ctx, id); err != nil {
+		return err
+	}
+	s.Registry.Kick(id)
+	return nil
 }
 
 // Changed publishes a node's snapshot (the registry calls it on connect and
@@ -170,12 +179,16 @@ func (s *Service) Changed(id string, online bool) {
 // ---- connection ----
 
 const (
-	readLimit    = 64 << 20
+	readLimit    = 128 << 20
 	pingInterval = 25 * time.Second
 	helloTimeout = 15 * time.Second
 )
 
 type wsConn struct{ c *websocket.Conn }
+
+func (w *wsConn) Close() {
+	_ = w.c.Close(websocket.StatusPolicyViolation, "connection replaced or token revoked")
+}
 
 func (w *wsConn) Send(ctx context.Context, m hosts.Message) error {
 	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
@@ -205,16 +218,17 @@ func (s *Service) Authenticate(ctx context.Context, r *http.Request) (*store.Nod
 func (s *Service) Serve(w http.ResponseWriter, r *http.Request) {
 	n, err := s.Authenticate(r.Context(), r)
 	if err != nil {
-		status := http.StatusUnauthorized
-		if !errors.Is(err, ErrUnauthorized) {
-			status = http.StatusInternalServerError
+		if errors.Is(err, ErrUnauthorized) {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+		} else {
+			slog.Error("node auth", "err", err)
+			http.Error(w, "internal error", http.StatusInternalServerError)
 		}
-		http.Error(w, err.Error(), status)
 		return
 	}
 	if s.Registry.IsOnline(n.ID) {
-		// One connection per node; the old one may be half-dead, so the new
-		// one wins after the old one is dropped below.
+		// One connection per node: the new one wins and Connect closes the
+		// old one (it may be half-dead after a network change).
 		slog.Warn("node reconnected while still connected", "node", n.ID)
 	}
 	// A node is not a browser: no Origin check applies.

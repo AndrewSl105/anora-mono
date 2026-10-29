@@ -80,7 +80,9 @@ type Scheduler struct {
 	wake chan struct{}
 	mu   sync.Mutex
 	live map[int64]*liveRun
-	wg   sync.WaitGroup
+	// pushing holds tasks with an afterRun in flight.
+	pushing map[int64]bool
+	wg      sync.WaitGroup
 }
 
 type liveRun struct {
@@ -93,6 +95,7 @@ type liveRun struct {
 func New(s *Scheduler) *Scheduler {
 	s.wake = make(chan struct{}, 1)
 	s.live = map[int64]*liveRun{}
+	s.pushing = map[int64]bool{}
 	return s
 }
 
@@ -326,16 +329,26 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		User:   s.Cfg.RunnerUser,
 	})
 	if err != nil {
+		if hosts.IsOffline(err) {
+			// Back to the queue; if the container did start, the node's next
+			// hello reports it and reconciliation removes it (its run is reset).
+			s.failOrRequeue(ctx, t, run, "", err)
+			return
+		}
 		_, _ = s.Store.FinishRun(ctx, run.ID, -1)
 		s.fail(ctx, t, err.Error())
 		return
 	}
 	_ = s.Store.SetRunContainer(ctx, run.ID, r.ContainerID)
+	// Registered before the status says running, so a node reconnecting in
+	// between does not take the task for one whose runner is lost.
+	s.register(t.ID, run.ID, h, r)
 
 	nt, err := s.Tasks.SetStatus(ctx, t.ID, tasks.Running, "")
 	if err != nil {
 		// Cancelled while preparing.
 		log.Info("task left preparing before start", "err", err)
+		s.unregister(t.ID)
 		_ = r.Send(runnermgr.Cancel())
 		r.Close()
 		_ = h.Remove(ctx, r.ContainerID)
@@ -345,7 +358,6 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	}
 	t = nt
 	s.addEvent(ctx, t.ID, &run.ID, "run_started", map[string]any{"run_id": run.ID, "kind": run.Kind})
-	s.register(t.ID, run.ID, h, r)
 	log.Info("runner started", "container", short(r.ContainerID), "kind", run.Kind)
 
 	if err := r.Send(cmd); err != nil {
@@ -733,6 +745,19 @@ func (s *Scheduler) finishRun(ctx context.Context, h hosts.Host, taskID int64, r
 // afterRun pushes new commits (opening or updating the PR) or completes the
 // task when there is nothing to push. Also used to resume a crashed push.
 func (s *Scheduler) afterRun(ctx context.Context, t *store.Task, summary string, turns int, limit string) {
+	// One push per task at a time (a node reconnect resumes pushes too).
+	s.mu.Lock()
+	if s.pushing[t.ID] {
+		s.mu.Unlock()
+		return
+	}
+	s.pushing[t.ID] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.pushing, t.ID)
+		s.mu.Unlock()
+	}()
 	repo, err := s.Store.GetRepository(ctx, t.RepositoryID)
 	if err != nil {
 		s.fail(ctx, t, "repository: "+err.Error())

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"runtime"
@@ -109,6 +110,10 @@ func (a *Agent) connectURL() (string, error) {
 	default:
 		return "", fmt.Errorf("server URL must start with https:// (got %q)", a.Server)
 	}
+	// The token travels in a header: plain http only to this machine (development).
+	if (u.Scheme == "ws" || u.Scheme == "http") && !isLoopback(u.Hostname()) {
+		return "", fmt.Errorf("server URL must use https:// (got %q)", a.Server)
+	}
 	u.Path += "/api/v1/node/connect"
 	return u.String(), nil
 }
@@ -132,7 +137,7 @@ func (a *Agent) session(ctx context.Context) error {
 		return err
 	}
 	defer c.CloseNow()
-	c.SetReadLimit(64 << 20)
+	c.SetReadLimit(128 << 20)
 	ctx, cancel = context.WithCancel(ctx)
 	defer cancel()
 
@@ -167,11 +172,17 @@ func (a *Agent) session(ctx context.Context) error {
 		if a.conn == c {
 			a.conn = nil
 		}
-		// Streams stop sending until the server re-attaches them.
+		pumps := make([]*pump, 0, len(a.pumps))
 		for _, p := range a.pumps {
-			p.pause()
+			pumps = append(pumps, p)
 		}
 		a.mu.Unlock()
+		// Streams stop sending until the server re-attaches them. (pump.mu is
+		// taken after a.mu is released: pump.line holds pump.mu while send
+		// takes a.mu.)
+		for _, p := range pumps {
+			p.pause()
+		}
 	}()
 
 	for {
@@ -259,6 +270,9 @@ func (a *Agent) dispatch(ctx context.Context, method string, raw json.RawMessage
 		return nil, l.RemoveWorkspace(ctx, tp.TaskID)
 	case hosts.MEventLog:
 		lines, err := l.EventLog(ctx, tp.TaskID, tp.After)
+		if tp.Limit > 0 && len(lines) > tp.Limit {
+			lines = lines[:tp.Limit]
+		}
 		out := make([]string, len(lines))
 		for i, b := range lines {
 			out[i] = string(b)
@@ -302,7 +316,7 @@ func (a *Agent) dispatch(ctx context.Context, method string, raw json.RawMessage
 		if !ok {
 			return nil, fmt.Errorf("runner %s is not attached", short(cp.Container))
 		}
-		return nil, p.runner.WriteLine([]byte(cp.Line))
+		return nil, p.current().WriteLine([]byte(cp.Line))
 	case hosts.MStop:
 		return nil, l.Stop(ctx, cp.Container, time.Duration(cp.GraceSec)*time.Second)
 	case hosts.MRemove:
@@ -374,6 +388,24 @@ func (p *pump) line(raw []byte) {
 	}
 }
 
+func (p *pump) current() *runnermgr.Runner {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.runner
+}
+
+// swap replaces the attached runner (re-attach) and, while live, sends what
+// the event log has after the last line sent.
+func (p *pump) swap(r *runnermgr.Runner) {
+	p.mu.Lock()
+	p.runner = r
+	live, last := p.live, p.lastSeq
+	p.mu.Unlock()
+	if live {
+		_ = p.resume(context.Background(), last)
+	}
+}
+
 // resume sends the log lines after afterSeq, then the buffered lines the log
 // did not cover, then goes live.
 func (p *pump) resume(ctx context.Context, afterSeq int64) error {
@@ -411,8 +443,25 @@ func (a *Agent) startPump(r *runnermgr.Runner, taskID int64, live bool) *pump {
 	a.keepAwakeLocked()
 	a.mu.Unlock()
 	go func() {
-		for ev := range r.Events {
-			p.line(ev.Raw)
+		for reattached := 0; ; reattached++ {
+			for ev := range r.Events {
+				p.line(ev.Raw)
+			}
+			// The Docker attach can end while the container keeps running
+			// (an idle timeout): attach again and fill the gap from the log.
+			running, err := a.Local.IsRunning(context.Background(), r.ContainerID)
+			if err != nil || !running || reattached >= 50 {
+				break
+			}
+			nr, err := a.Local.Attach(context.Background(), r.ContainerID)
+			if err != nil {
+				slog.Warn("re-attach runner", "container", short(r.ContainerID), "err", err)
+				break
+			}
+			r.Close()
+			r = nr
+			p.swap(nr)
+			slog.Warn("runner output ended while running; re-attached", "container", short(r.ContainerID))
 		}
 		// stdout ended: report the exit once the container has stopped.
 		code, err := a.Local.Wait(context.Background(), r.ContainerID)
@@ -467,6 +516,14 @@ func (a *Agent) keepAwakeLocked() {
 		a.awake = active
 		a.KeepAwake(active)
 	}
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func short(id string) string {

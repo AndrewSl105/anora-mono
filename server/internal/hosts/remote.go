@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 
@@ -19,6 +18,8 @@ import (
 // production, a pipe in tests). Send must be safe for concurrent use.
 type Conn interface {
 	Send(ctx context.Context, m Message) error
+	// Close ends the connection (a newer one replaced it, or the token was revoked).
+	Close()
 }
 
 // Remote is a node. It outlives connections: runners it supervises survive a
@@ -35,25 +36,99 @@ type Remote struct {
 	conn    Conn
 	hello   *Hello
 	nextID  int64
-	calls   map[int64]chan Message
+	calls   map[int64]*pendingCall
 	runners map[string]*remoteRunner
 	// pending holds lines of containers whose runner is not registered yet
 	// (output that arrives before the start_runner result is handled).
 	pending map[string][][]byte
 }
 
+type pendingCall struct {
+	ch   chan Message
+	conn Conn
+}
+
+// remoteRunner feeds a runner's events from its own goroutine, so a consumer
+// that is slow (or not started yet) never blocks the connection's read loop.
 type remoteRunner struct {
 	runner *runnermgr.Runner
 	stream *runnermgr.Stream
 	taskID int64
-	exited chan struct{}
-	code   int
+	exited chan struct{} // closed after the last line and the exit are delivered
+
+	mu    sync.Mutex
+	queue [][]byte
+	ended bool
+	code  int
+	wake  chan struct{}
+}
+
+func newRemoteRunner(runner *runnermgr.Runner, stream *runnermgr.Stream, taskID int64) *remoteRunner {
+	rr := &remoteRunner{runner: runner, stream: stream, taskID: taskID, exited: make(chan struct{}), wake: make(chan struct{}, 1)}
+	go rr.feed()
+	return rr
+}
+
+func (rr *remoteRunner) signal() {
+	select {
+	case rr.wake <- struct{}{}:
+	default:
+	}
+}
+
+// push queues one stdout line (ignored after the exit).
+func (rr *remoteRunner) push(line []byte) {
+	rr.mu.Lock()
+	if !rr.ended {
+		rr.queue = append(rr.queue, line)
+	}
+	rr.mu.Unlock()
+	rr.signal()
+}
+
+// finish queues the exit; only the first call counts.
+func (rr *remoteRunner) finish(code int) {
+	rr.mu.Lock()
+	if !rr.ended {
+		rr.ended, rr.code = true, code
+	}
+	rr.mu.Unlock()
+	rr.signal()
+}
+
+func (rr *remoteRunner) feed() {
+	for {
+		rr.mu.Lock()
+		lines, ended := rr.queue, rr.ended
+		rr.queue = nil
+		rr.mu.Unlock()
+		for _, l := range lines {
+			rr.stream.Line(l)
+		}
+		if ended && len(lines) == 0 {
+			rr.stream.End()
+			close(rr.exited)
+			return
+		}
+		if len(lines) == 0 {
+			<-rr.wake
+		}
+	}
+}
+
+func (rr *remoteRunner) done() bool {
+	select {
+	case <-rr.exited:
+		return true
+	default:
+		return false
+	}
 }
 
 var _ Host = (*Remote)(nil)
 
 func NewRemote(id string) *Remote {
-	return &Remote{id: id, calls: map[int64]chan Message{}, runners: map[string]*remoteRunner{}, pending: map[string][][]byte{}}
+	return &Remote{id: id, calls: map[int64]*pendingCall{}, runners: map[string]*remoteRunner{}, pending: map[string][][]byte{}}
 }
 
 func (r *Remote) ID() string { return r.id }
@@ -72,12 +147,38 @@ func (r *Remote) Hello() *Hello {
 	return r.hello
 }
 
-// Install sets a new connection after the node's hello.
+// Install sets a new connection after the node's hello. An older connection
+// is closed and its calls fail (they would never get a result).
 func (r *Remote) Install(c Conn, h *Hello) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	old := r.conn
 	r.conn = c
 	r.hello = h
+	r.failCallsLocked(func(p *pendingCall) bool { return p.conn != c })
+	r.mu.Unlock()
+	if old != nil && old != c {
+		old.Close()
+	}
+}
+
+// Kick closes the current connection (the node's token was rotated or the
+// node removed); the node must reconnect with a valid token.
+func (r *Remote) Kick() {
+	r.mu.Lock()
+	c := r.conn
+	r.mu.Unlock()
+	if c != nil {
+		c.Close()
+	}
+}
+
+func (r *Remote) failCallsLocked(match func(*pendingCall) bool) {
+	for id, p := range r.calls {
+		if match(p) {
+			p.ch <- Message{Op: OpResult, ID: id, Error: ErrOffline.Error(), ErrorKind: "offline"}
+			delete(r.calls, id)
+		}
+	}
 }
 
 // Resume runs after Install: it resumes the streams of runners this server
@@ -108,10 +209,9 @@ func (r *Remote) Resume(ctx context.Context, h *Hello) []runnermgr.ContainerInfo
 			continue
 		}
 		// Exited while disconnected: deliver what the log has, then the exit.
-		var lines []string
-		if err := r.call(ctx, MEventLog, TaskParams{TaskID: rr.taskID, After: after}, &lines); err == nil {
+		if lines, err := r.EventLog(ctx, rr.taskID, after); err == nil {
 			for _, l := range lines {
-				rr.stream.Line([]byte(l))
+				rr.push(l)
 			}
 		}
 		r.exit(info.ID, info.ExitCode)
@@ -125,17 +225,13 @@ func (r *Remote) Resume(ctx context.Context, h *Hello) []runnermgr.ContainerInfo
 	return unknown
 }
 
-// Disconnected drops the connection; calls in flight fail with ErrOffline.
+// Disconnected drops the connection; its calls in flight fail with ErrOffline.
 func (r *Remote) Disconnected(c Conn) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.conn != c {
-		return
-	}
-	r.conn = nil
-	for id, ch := range r.calls {
-		ch <- Message{Op: OpResult, ID: id, Error: ErrOffline.Error(), ErrorKind: "offline"}
-		delete(r.calls, id)
+	r.failCallsLocked(func(p *pendingCall) bool { return p.conn == c })
+	if r.conn == c {
+		r.conn = nil
 	}
 }
 
@@ -144,24 +240,27 @@ func (r *Remote) Handle(m Message) {
 	switch m.Op {
 	case OpResult:
 		r.mu.Lock()
-		ch, ok := r.calls[m.ID]
+		p, ok := r.calls[m.ID]
 		delete(r.calls, m.ID)
 		r.mu.Unlock()
 		if ok {
-			ch <- m
+			p.ch <- m
 		}
 	case OpLine:
 		r.mu.Lock()
 		rr, ok := r.runners[m.Container]
 		if !ok {
-			if len(r.pending[m.Container]) < 10000 {
-				r.pending[m.Container] = append(r.pending[m.Container], []byte(m.Line))
+			// Bounded: a few containers, a few thousand lines each.
+			if _, known := r.pending[m.Container]; known || len(r.pending) < 32 {
+				if len(r.pending[m.Container]) < 10000 {
+					r.pending[m.Container] = append(r.pending[m.Container], []byte(m.Line))
+				}
 			}
 			r.mu.Unlock()
 			return
 		}
 		r.mu.Unlock()
-		rr.stream.Line([]byte(m.Line))
+		rr.push([]byte(m.Line))
 	case OpExited:
 		r.exit(m.Container, m.Code)
 	}
@@ -171,17 +270,9 @@ func (r *Remote) exit(container string, code int) {
 	r.mu.Lock()
 	rr, ok := r.runners[container]
 	r.mu.Unlock()
-	if !ok {
-		return
+	if ok {
+		rr.finish(code)
 	}
-	select {
-	case <-rr.exited:
-		return
-	default:
-	}
-	rr.code = code
-	rr.stream.End()
-	close(rr.exited)
 }
 
 func (r *Remote) maxSeq(ctx context.Context, taskID int64) int64 {
@@ -210,7 +301,7 @@ func (r *Remote) call(ctx context.Context, method string, params, out any) error
 	r.nextID++
 	id := r.nextID
 	ch := make(chan Message, 1)
-	r.calls[id] = ch
+	r.calls[id] = &pendingCall{ch: ch, conn: c}
 	r.mu.Unlock()
 
 	if err := c.Send(ctx, Message{Op: OpCall, ID: id, Method: method, Params: raw}); err != nil {
@@ -297,28 +388,54 @@ func (r *Remote) RemoveWorkspace(ctx context.Context, taskID int64) error {
 	return r.call(ctx, MRemoveWorkspace, TaskParams{TaskID: taskID}, nil)
 }
 
+// EventLog fetches the log in pages (EventLogPage lines per call), so a long
+// log never exceeds the WebSocket message limit.
 func (r *Remote) EventLog(ctx context.Context, taskID int64, afterSeq int64) ([][]byte, error) {
-	var lines []string
-	if err := r.call(ctx, MEventLog, TaskParams{TaskID: taskID, After: afterSeq}, &lines); err != nil {
-		return nil, err
+	var out [][]byte
+	for {
+		var lines []string
+		if err := r.call(ctx, MEventLog, TaskParams{TaskID: taskID, After: afterSeq, Limit: EventLogPage}, &lines); err != nil {
+			return nil, err
+		}
+		for _, l := range lines {
+			out = append(out, []byte(l))
+		}
+		if len(lines) < EventLogPage {
+			return out, nil
+		}
+		next := seqOf([]byte(lines[len(lines)-1]))
+		if next <= afterSeq {
+			return out, nil
+		}
+		afterSeq = next
 	}
-	out := make([][]byte, len(lines))
-	for i, l := range lines {
-		out[i] = []byte(l)
-	}
-	return out, nil
 }
 
+func seqOf(line []byte) int64 {
+	var h struct {
+		Seq int64 `json:"seq"`
+	}
+	_ = json.Unmarshal(line, &h)
+	return h.Seq
+}
+
+// PrepareAttachments sends one file per call (an upload may be 40 MB; all of
+// a task's files together would exceed the WebSocket message limit).
 func (r *Remote) PrepareAttachments(ctx context.Context, taskID int64, files []AttachmentFile) error {
-	p := AttachmentParams{TaskID: taskID, Files: map[string][]byte{}}
+	if len(files) == 0 {
+		return r.call(ctx, MAttachments, AttachmentParams{TaskID: taskID, Files: map[string][]byte{}}, nil)
+	}
 	for _, f := range files {
 		b, err := readAll(f.Path)
 		if err != nil {
 			return err
 		}
-		p.Files[filepath.Base(f.Name)] = b
+		p := AttachmentParams{TaskID: taskID, Files: map[string][]byte{filepath.Base(f.Name): b}}
+		if err := r.call(ctx, MAttachments, p, nil); err != nil {
+			return err
+		}
 	}
-	return r.call(ctx, MAttachments, p, nil)
+	return nil
 }
 
 func (r *Remote) HasImage(ctx context.Context, image string) error {
@@ -351,13 +468,13 @@ func (r *Remote) register(container string, taskID int64) *runnermgr.Runner {
 		defer cancel()
 		return r.call(ctx, MSend, ContainerParams{Container: container, Line: string(b)}, nil)
 	}, nil)
-	rr := &remoteRunner{runner: runner, stream: stream, taskID: taskID, exited: make(chan struct{})}
+	rr := newRemoteRunner(runner, stream, taskID)
 	r.runners[container] = rr
 	lines := r.pending[container]
 	delete(r.pending, container)
 	r.mu.Unlock()
 	for _, l := range lines {
-		stream.Line(l)
+		rr.push(l)
 	}
 	return runner
 }
@@ -397,12 +514,7 @@ func (r *Remote) IsRunning(_ context.Context, container string) (bool, error) {
 	if !ok {
 		return false, nil
 	}
-	select {
-	case <-rr.exited:
-		return false, nil
-	default:
-		return true, nil
-	}
+	return !rr.done(), nil
 }
 
 func (r *Remote) Wait(ctx context.Context, container string) (int, error) {
@@ -435,12 +547,9 @@ func (r *Remote) Remove(ctx context.Context, container string) error {
 func (r *Remote) forget(container string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if rr, ok := r.runners[container]; ok {
-		select {
-		case <-rr.exited:
-			delete(r.runners, container)
-		default:
-		}
+	delete(r.pending, container)
+	if rr, ok := r.runners[container]; ok && rr.done() {
+		delete(r.runners, container)
 	}
 }
 
@@ -485,6 +594,3 @@ func short(id string) string {
 	}
 	return id
 }
-
-// TaskLabel is a task id as the label value runner containers carry.
-func TaskLabel(id int64) string { return strconv.FormatInt(id, 10) }

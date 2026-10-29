@@ -49,6 +49,9 @@ const (
 	MPing             = "ping"
 )
 
+// EventLogPage is the most event_log lines one call returns.
+const EventLogPage = 2000
+
 // ErrKindInvalidDiff marks a Validate rejection (workspace.ErrInvalidDiff).
 const ErrKindInvalidDiff = "invalid_diff"
 

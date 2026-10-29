@@ -142,7 +142,10 @@ func (s *Scheduler) reconcileRunner(ctx context.Context, h hosts.Host, c runnerm
 		return
 	}
 	run, err := s.Store.GetRun(ctx, c.RunID)
-	if err != nil || run.FinishedAt != nil || run.TaskID != t.ID || placement(t) != h.ID() {
+	// A queued or preparing task has no runner yet: this one is left over from
+	// a start whose result was lost (the run was reset).
+	if err != nil || run.FinishedAt != nil || run.TaskID != t.ID || placement(t) != h.ID() ||
+		t.Status == tasks.Queued || t.Status == tasks.Preparing {
 		_ = h.Remove(ctx, c.ID)
 		return
 	}

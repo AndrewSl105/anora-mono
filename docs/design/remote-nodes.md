@@ -51,7 +51,7 @@ Not a goal: a second server on the Mac, peer-to-peer clients, or nodes run by an
 
 ### 3.4 Node API
 
-- `GET /api/v1/node/connect`: WebSocket. `Authorization: Bearer fpn_<node>_<secret>`. The server keeps only the SHA-256 of the secret (`nodes.token_hash`); the token is shown once at registration. Max message 64 MB (attachments).
+- `GET /api/v1/node/connect`: WebSocket. `Authorization: Bearer fpn_<node>.<secret>`. The server keeps only the SHA-256 of the secret (`nodes.token_hash`); the token is shown once at registration. Max message 128 MB; attachments go one file per call and the event log in pages of 2000 lines. A newer connection replaces an older one (its calls fail), and rotating the token or removing the node closes the connection.
 - Owner API: `GET /nodes`, `POST /nodes {id, name}` → `{node, token}`, `PATCH /nodes/{id} {name?, max_concurrent?}`, `POST /nodes/{id}/token` (rotate), `DELETE /nodes/{id}` (409 while it has live tasks). Node snapshots go out on the WebSocket as `{"op":"node","node":{…}}` to `scope: "tasks"` subscribers.
 - Wire format (one JSON object per WebSocket text message):
   - node → server: `{"op":"hello","version","platform","agents":[…],"runners":[{id,task_id,run_id,running,exit_code}]}`, `{"op":"line","container","line"}`, `{"op":"exited","container","code"}`, `{"op":"result","id","result"|"error"}`.
