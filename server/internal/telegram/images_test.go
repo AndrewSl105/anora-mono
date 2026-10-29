@@ -166,7 +166,12 @@ func TestAlbumAcknowledgesEveryPart(t *testing.T) {
 
 func TestAlbumCollectionStillMergesWithRecentText(t *testing.T) {
 	e := newImageEnv(t)
-	e.bot.MergeWindow = 50 * time.Millisecond
+	// The window is measured from the draft's last write, which happens before
+	// the card is sent: leave room for that work on a slow CI runner.
+	e.bot.MergeWindow = 500 * time.Millisecond
+	// The album is handled long after the window closed; it still merges
+	// because the window counts from the album's first part.
+	e.bot.AlbumWait = 800 * time.Millisecond
 	ctx := context.Background()
 	e.bot.onMessage(ctx, &telego.Message{MessageID: 10, From: &telego.User{ID: owner}, Chat: telego.Chat{ID: owner, Type: "private"}, Text: "Use the screenshots"})
 	time.Sleep(40 * time.Millisecond)
