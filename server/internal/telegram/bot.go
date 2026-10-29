@@ -584,7 +584,7 @@ func (b *Bot) onCallback(ctx context.Context, cq *telego.CallbackQuery) {
 			return
 		}
 		answer(fmt.Sprintf("PR #%d merged", deref(v.PRNumber)))
-	case "draft_create", "draft_cancel", "draft_project", "draft_repo", "draft_edit", "draft_agent":
+	case "draft_create", "draft_cancel", "draft_project", "draft_repo", "draft_edit", "draft_agent", "draft_node":
 		b.handleDraftCallback(ctx, cq, c, answer)
 	default:
 		answer("Unknown action")

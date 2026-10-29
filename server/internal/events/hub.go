@@ -11,8 +11,9 @@ import (
 // Message is what subscribers receive: either a timeline event or a task snapshot.
 type Message struct {
 	TaskID int64
-	Event  *store.Event // set for timeline events
-	Task   *store.Task  // set for task changes
+	Event  *store.Event    // set for timeline events
+	Task   *store.Task     // set for task changes
+	Node   *store.NodeView // set for node changes (online, offline, edits)
 }
 
 type Hub struct {
@@ -66,4 +67,11 @@ func (h *Hub) PublishTask(t *store.Task) {
 		h.PublishEvent(ev)
 	}
 	h.publish(Message{TaskID: t.ID, Task: t})
+}
+
+// PublishNode publishes a node snapshot (WebSocket scope "tasks").
+func (h *Hub) PublishNode(n *store.NodeView) {
+	if n != nil {
+		h.publish(Message{Node: n})
+	}
 }

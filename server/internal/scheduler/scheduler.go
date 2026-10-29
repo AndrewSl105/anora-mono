@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +17,7 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
@@ -36,6 +37,8 @@ var ErrRejected = errors.New("diff rejected")
 
 // PublishInput is what the publisher needs to push and open/update the PR.
 type PublishInput struct {
+	// Host holds the task's workspace (validate, push, diff stat).
+	Host    hosts.Host
 	Task    *store.Task
 	Repo    *store.Repository
 	Project *store.Project
@@ -63,12 +66,12 @@ type Hooks struct {
 }
 
 type Scheduler struct {
-	Cfg       *config.Config
-	Store     *store.Store
-	Hub       *events.Hub
-	Tasks     *tasks.Service
-	Docker    *runnermgr.Manager
-	Workspace *workspace.Manager
+	Cfg   *config.Config
+	Store *store.Store
+	Hub   *events.Hub
+	Tasks *tasks.Service
+	// Hosts resolves a task's placement (the server or a node).
+	Hosts     *hosts.Registry
 	Publisher Publisher // nil: commits stay local (phase 3 / GitHub not configured)
 	Hooks     Hooks
 	// Files holds task attachments, mounted read-only into runners; nil = none.
@@ -83,6 +86,7 @@ type Scheduler struct {
 type liveRun struct {
 	runner *runnermgr.Runner
 	runID  int64
+	host   hosts.Host
 }
 
 // New initialises a Scheduler whose dependencies are already set.
@@ -127,19 +131,33 @@ func (s *Scheduler) Interrupt(taskID int64) error {
 	return r.Send(runnermgr.Interrupt())
 }
 
+// host is the task's host: the server, or the node it was placed on.
+func (s *Scheduler) host(t *store.Task) hosts.Host { return s.Hosts.For(t.Node) }
+
 // Cancel asks a live runner to stop (SIGTERM after a grace period) and removes
 // the task's containers; a task without a runner just loses its sidecars.
+// A node that is offline is told again when it reconnects.
 func (s *Scheduler) Cancel(ctx context.Context, taskID int64) error {
-	r, ok := s.liveRunner(taskID)
+	s.mu.Lock()
+	l, ok := s.live[taskID]
+	s.mu.Unlock()
 	if !ok {
-		return s.Docker.RemoveAll(ctx, taskID)
+		t, err := s.Store.GetTask(ctx, taskID)
+		if err != nil {
+			return err
+		}
+		if err := s.host(t).RemoveAll(ctx, taskID); err != nil && !hosts.IsOffline(err) {
+			return err
+		}
+		return nil
 	}
+	r := l.runner
 	_ = r.Send(runnermgr.Cancel())
 	go func() {
 		select {
 		case <-r.Done():
 		case <-time.After(cancelGrace):
-			_ = s.Docker.Stop(context.Background(), r.ContainerID, 5*time.Second)
+			_ = l.host.Stop(context.Background(), r.ContainerID, 5*time.Second)
 		}
 	}()
 	return nil
@@ -168,7 +186,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 func (s *Scheduler) claim(ctx context.Context) {
 	for {
-		t, err := s.Store.ClaimNext(ctx, s.Cfg.MaxConcurrentTasks)
+		t, err := s.Store.ClaimNext(ctx, s.Cfg.MaxConcurrentTasks, s.Hosts.Online())
 		if err != nil {
 			if ctx.Err() == nil {
 				slog.Error("claim", "err", err)
@@ -194,12 +212,29 @@ func (s *Scheduler) log(t *store.Task, runID int64) *slog.Logger {
 // fail marks the task failed and removes its containers (workspace kept).
 func (s *Scheduler) fail(ctx context.Context, t *store.Task, reason string) {
 	s.log(t, 0).Warn("task failed", "reason", reason)
-	_ = s.Docker.RemoveAll(ctx, t.ID)
+	_ = s.host(t).RemoveAll(ctx, t.ID)
 	_ = s.Store.CloseOpenQuestions(ctx, t.ID, "")
 	if _, err := s.Tasks.SetStatus(ctx, t.ID, tasks.Failed, reason); err != nil && !errors.Is(err, store.ErrConflict) {
 		slog.Error("set failed", "task_id", t.ID, "err", err)
 	}
 	s.Wake()
+}
+
+// failOrRequeue fails the task, unless its node went offline while it was
+// being prepared: then it waits in the queue for the node to come back.
+func (s *Scheduler) failOrRequeue(ctx context.Context, t *store.Task, run *store.Run, reason string, err error) {
+	if hosts.IsOffline(err) && t.Node != nil {
+		s.log(t, run.ID).Info("node went offline while preparing; requeued", "node", *t.Node)
+		_ = s.Store.ResetRunStart(ctx, run.ID)
+		if nt, err := s.Store.SetStatus(ctx, t.ID, []string{tasks.Preparing}, tasks.Queued, "waiting for "+*t.Node, false); err == nil {
+			s.Hub.PublishTask(nt)
+		}
+		return
+	}
+	if reason != "" {
+		reason += ": "
+	}
+	s.fail(ctx, t, reason+err.Error())
 }
 
 // execute runs one claimed task (status preparing).
@@ -228,27 +263,28 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		s.fail(ctx, t, err.Error())
 		return
 	}
+	h := s.host(t)
 	wsRepo := workspace.Repo{FullName: repo.FullName, InstallationID: repo.InstallationID, BaseBranch: repo.BaseBranch}
-	if err := s.Workspace.Prepare(ctx, t.ID, wsRepo, branch); err != nil {
-		s.fail(ctx, t, "prepare workspace: "+err.Error())
+	if err := h.PrepareWorkspace(ctx, t.ID, wsRepo, branch); err != nil {
+		s.failOrRequeue(ctx, t, run, "prepare workspace", err)
 		return
 	}
 	image := deref(project.RunnerImage, s.Cfg.RunnerImage)
-	if err := s.Docker.HasImage(ctx, image); err != nil {
-		s.fail(ctx, t, err.Error())
+	if err := h.HasImage(ctx, image); err != nil {
+		s.failOrRequeue(ctx, t, run, "", err)
 		return
 	}
-	if _, err := s.Docker.EnsureNetwork(ctx, t.ID, t.ProjectID); err != nil {
-		s.fail(ctx, t, "network: "+err.Error())
+	if err := h.EnsureNetwork(ctx, t.ID, t.ProjectID); err != nil {
+		s.failOrRequeue(ctx, t, run, "network", err)
 		return
 	}
-	if _, err := s.Docker.EnsureVolume(ctx, t.ID, t.ProjectID); err != nil {
-		s.fail(ctx, t, "volume: "+err.Error())
+	if err := h.EnsureVolume(ctx, t.ID, t.ProjectID); err != nil {
+		s.failOrRequeue(ctx, t, run, "volume", err)
 		return
 	}
-	svcEnv, err := s.Docker.EnsureSidecars(ctx, t.ID, t.ProjectID, project.Services)
+	svcEnv, err := h.EnsureSidecars(ctx, t.ID, t.ProjectID, project.Services)
 	if err != nil {
-		s.fail(ctx, t, err.Error())
+		s.failOrRequeue(ctx, t, run, "", err)
 		return
 	}
 
@@ -259,18 +295,14 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	for k, v := range svcEnv {
 		env[k] = v
 	}
-	// Only the task's agent gets credentials, and only its own.
-	for k, v := range s.Cfg.AgentEnv(t.Agent) {
-		env[k] = v
-	}
 	if s.Cfg.RunnerFake {
 		env["FLEETPOCKET_RUNNER_FAKE"] = "1"
 	}
 
 	cmd := s.runCommand(t, run, project, repo, branch)
-	attDir, err := s.prepareAttachments(ctx, t.ID, run, &cmd)
+	hasAtt, err := s.prepareAttachments(ctx, h, t.ID, run, &cmd)
 	if err != nil {
-		s.fail(ctx, t, "attachments: "+err.Error())
+		s.failOrRequeue(ctx, t, run, "attachments", err)
 		return
 	}
 	if run.Kind == tasks.RunResume || run.Kind == tasks.RunFollowup {
@@ -284,9 +316,11 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		s.fail(ctx, t, err.Error())
 		return
 	}
-	r, err := s.Docker.StartRunner(ctx, runnermgr.RunnerSpec{
-		TaskID: t.ID, RunID: run.ID, Project: t.ProjectID, Image: image,
-		Workspace: s.Workspace.Path(t.ID), Attachments: attDir, Env: env,
+	// The host adds the agent's credentials: the server's own, or the
+	// node's (docs/design/remote-nodes.md, section 4).
+	r, err := h.StartRunner(ctx, hosts.StartSpec{
+		TaskID: t.ID, RunID: run.ID, Project: t.ProjectID, Image: image, Agent: t.Agent,
+		Env: env, Attachments: hasAtt,
 		Memory: deref(project.RunnerMemory, s.Cfg.RunnerMemory),
 		CPUs:   deref(project.RunnerCPUs, s.Cfg.RunnerCPUs),
 		User:   s.Cfg.RunnerUser,
@@ -304,15 +338,15 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 		log.Info("task left preparing before start", "err", err)
 		_ = r.Send(runnermgr.Cancel())
 		r.Close()
-		_ = s.Docker.Remove(ctx, r.ContainerID)
+		_ = h.Remove(ctx, r.ContainerID)
 		_, _ = s.Store.FinishRun(ctx, run.ID, runnermgr.ExitCancelled)
-		_ = s.Docker.RemoveAll(ctx, t.ID)
+		_ = h.RemoveAll(ctx, t.ID)
 		return
 	}
 	t = nt
 	s.addEvent(ctx, t.ID, &run.ID, "run_started", map[string]any{"run_id": run.ID, "kind": run.Kind})
-	s.register(t.ID, run.ID, r)
-	log.Info("runner started", "container", r.ContainerID[:12], "kind", run.Kind)
+	s.register(t.ID, run.ID, h, r)
+	log.Info("runner started", "container", short(r.ContainerID), "kind", run.Kind)
 
 	if err := r.Send(cmd); err != nil {
 		log.Error("send run", "err", err)
@@ -320,7 +354,14 @@ func (s *Scheduler) execute(ctx context.Context, t *store.Task) {
 	if run.Kind == tasks.RunResume {
 		s.replayAnswer(ctx, t.ID, run.ID, r)
 	}
-	s.supervise(ctx, t, run, r, time.Now())
+	s.supervise(ctx, h, t, run, r, time.Now())
+}
+
+func short(id string) string {
+	if len(id) > 12 {
+		return id[:12]
+	}
+	return id
 }
 
 // replayAnswer sends the answer of the question that paused the previous run.
@@ -338,9 +379,9 @@ func (s *Scheduler) replayAnswer(ctx context.Context, taskID, runID int64, r *ru
 	_ = r.Send(runnermgr.NewAnswer(tasks.RunnerQuestionID(q.ID), *q.Answer))
 }
 
-func (s *Scheduler) register(taskID, runID int64, r *runnermgr.Runner) {
+func (s *Scheduler) register(taskID, runID int64, h hosts.Host, r *runnermgr.Runner) {
 	s.mu.Lock()
-	s.live[taskID] = &liveRun{runner: r, runID: runID}
+	s.live[taskID] = &liveRun{runner: r, runID: runID, host: h}
 	s.mu.Unlock()
 }
 
@@ -395,23 +436,25 @@ func (s *Scheduler) model(t *store.Task, p *store.Project) string {
 }
 
 // prepareAttachments lists the run's attachments at the end of its prompt and
-// returns the host folder to mount at /attachments ("" when the task has no
-// live attachments, so nothing is mounted).
-func (s *Scheduler) prepareAttachments(ctx context.Context, taskID int64, run *store.Run, cmd *runnermgr.RunCommand) (string, error) {
+// makes them available on the host. It reports whether there are any (when
+// not, nothing is mounted at /attachments).
+func (s *Scheduler) prepareAttachments(ctx context.Context, h hosts.Host, taskID int64, run *store.Run, cmd *runnermgr.RunCommand) (bool, error) {
 	if s.Files == nil {
-		return "", nil
+		return false, nil
 	}
 	cur, earlier, err := s.Store.AttachmentsForRun(ctx, taskID, run.ID, run.Kind == tasks.RunRetry)
 	if err != nil || len(cur)+len(earlier) == 0 {
-		return "", err
+		return false, err
 	}
-	dir := s.Files.TaskDir(taskID)
-	// A missing bind source would be created by Docker as root.
-	if _, err := os.Stat(dir); err != nil {
-		return "", err
+	var files []hosts.AttachmentFile
+	for _, a := range append(append([]*store.Attachment{}, cur...), earlier...) {
+		files = append(files, hosts.AttachmentFile{Name: path.Base(attachments.AgentPath(a)), Path: s.Files.Path(a)})
+	}
+	if err := h.PrepareAttachments(ctx, taskID, files); err != nil {
+		return false, err
 	}
 	cmd.Prompt += AttachmentBlock(cmd.Agent, cur, earlier)
-	return dir, nil
+	return true, nil
 }
 
 // AttachmentBlock is appended to a run's prompt: the images that came with
@@ -487,7 +530,7 @@ const maxReattach = 50
 // supervise streams events until the runner exits, then waits for the exit
 // code and applies it. A stream that ends while the container still runs is
 // re-attached; events.jsonl fills any gap.
-func (s *Scheduler) supervise(ctx context.Context, t *store.Task, run *store.Run, r *runnermgr.Runner, started time.Time) {
+func (s *Scheduler) supervise(ctx context.Context, h hosts.Host, t *store.Task, run *store.Run, r *runnermgr.Runner, started time.Time) {
 	var baseline float64
 	if run.Kind == tasks.RunResume || run.Kind == tasks.RunFollowup {
 		baseline, _ = s.Store.SessionBaselineCost(ctx, t.ID, run.ID)
@@ -498,12 +541,12 @@ func (s *Scheduler) supervise(ctx context.Context, t *store.Task, run *store.Run
 		select {
 		case ev, ok := <-r.Events:
 			if !ok {
-				running, err := s.Docker.IsRunning(ctx, r.ContainerID)
+				running, err := h.IsRunning(ctx, r.ContainerID)
 				if err != nil || !running || reattached >= maxReattach {
 					goto exited
 				}
 				r.Close()
-				nr, err := s.Docker.Attach(ctx, r.ContainerID)
+				nr, err := h.Attach(ctx, r.ContainerID)
 				if err != nil {
 					s.log(t, run.ID).Error("re-attach after stream end", "err", err)
 					goto exited
@@ -511,8 +554,8 @@ func (s *Scheduler) supervise(ctx context.Context, t *store.Task, run *store.Run
 				reattached++
 				s.log(t, run.ID).Warn("runner output stream ended while running; re-attached", "count", reattached)
 				r = nr
-				s.register(t.ID, run.ID, r)
-				s.replayFile(ctx, t, run.ID, &out)
+				s.register(t.ID, run.ID, h, r)
+				s.replayFile(ctx, h, t, run.ID, &out)
 				continue
 			}
 			s.handleEvent(ctx, t, run.ID, baseline, ev, &out)
@@ -524,13 +567,13 @@ func (s *Scheduler) supervise(ctx context.Context, t *store.Task, run *store.Run
 	}
 exited:
 	r.Close()
-	code, err := s.Docker.Wait(ctx, r.ContainerID)
+	code, err := h.Wait(ctx, r.ContainerID)
 	if err != nil {
 		s.log(t, run.ID).Error("wait runner", "err", err)
 	}
 	// Anything the stream missed (a cut connection) is in the event log.
-	s.replayFile(ctx, t, run.ID, &out)
-	s.finishRun(ctx, t.ID, run, code, out, started)
+	s.replayFile(ctx, h, t, run.ID, &out)
+	s.finishRun(ctx, h, t.ID, run, code, out, started)
 }
 
 // handleEvent persists one runner event, publishes it and applies its side effects.
@@ -604,16 +647,18 @@ func (s *Scheduler) handleEvent(ctx context.Context, t *store.Task, runID int64,
 }
 
 // finishRun records the exit and moves the task on.
-func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run, code int, out runOutcome, started time.Time) {
+func (s *Scheduler) finishRun(ctx context.Context, h hosts.Host, taskID int64, run *store.Run, code int, out runOutcome, started time.Time) {
 	s.unregister(taskID)
 	first, _ := s.Store.FinishRun(ctx, run.ID, code)
 	if first {
 		s.addEvent(ctx, taskID, &run.ID, "run_finished", map[string]any{"run_id": run.ID, "exit_code": code})
 	}
 	if run.ContainerID != nil {
-		_ = s.Docker.Remove(ctx, *run.ContainerID)
+		_ = h.Remove(ctx, *run.ContainerID)
 	}
-	_ = s.Docker.Remove(ctx, runnermgr.RunnerName(taskID))
+	if h.ID() == "" {
+		_ = h.Remove(ctx, runnermgr.RunnerName(taskID))
+	}
 	t, err := s.Store.GetTask(ctx, taskID)
 	if err != nil {
 		return
@@ -626,7 +671,7 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 	defer s.Wake()
 
 	if t.Status == tasks.Cancelled {
-		_ = s.Docker.RemoveAll(ctx, taskID)
+		_ = h.RemoveAll(ctx, taskID)
 		return
 	}
 	// The owner may have acted already (e.g. cancel then retry): the exit of
@@ -670,7 +715,7 @@ func (s *Scheduler) finishRun(ctx context.Context, taskID int64, run *store.Run,
 		}
 		s.afterRun(ctx, t, summary, turns, limit)
 	case runnermgr.ExitCancelled:
-		_ = s.Docker.RemoveAll(ctx, taskID)
+		_ = h.RemoveAll(ctx, taskID)
 		nt, err := s.Store.SetStatus(ctx, taskID, []string{tasks.Running, tasks.WaitingInput}, tasks.Cancelled, "runner cancelled", true)
 		if err != nil && !errors.Is(err, store.ErrConflict) {
 			log.Error("set cancelled", "err", err)
@@ -694,8 +739,17 @@ func (s *Scheduler) afterRun(ctx context.Context, t *store.Task, summary string,
 		return
 	}
 	branch := deref(t.Branch, "")
-	unpushed, err := s.Workspace.UnpushedCommits(ctx, t.ID, repo.BaseBranch, branch)
+	h := s.host(t)
+	unpushed, err := h.UnpushedCommits(ctx, t.ID, repo.BaseBranch, branch)
 	if err != nil {
+		if hosts.IsOffline(err) {
+			// Stays pushing; the node's reconnect resumes it.
+			s.log(t, 0).Warn("node offline after the run; push resumes when it reconnects")
+			if t.Status != tasks.Pushing {
+				_, _ = s.Tasks.SetStatus(ctx, t.ID, tasks.Pushing, "waiting for "+deref(t.Node, ""))
+			}
+			return
+		}
 		s.fail(ctx, t, "inspect workspace: "+err.Error())
 		return
 	}
@@ -708,7 +762,7 @@ func (s *Scheduler) afterRun(ctx context.Context, t *store.Task, summary string,
 				s.log(t, 0).Error("set pr_open", "err", err)
 			}
 		default:
-			_ = s.Docker.RemoveAll(ctx, t.ID)
+			_ = h.RemoveAll(ctx, t.ID)
 			if _, err := s.Tasks.SetStatus(ctx, t.ID, tasks.Completed, "finished with no changes"); err != nil {
 				s.log(t, 0).Error("set completed", "err", err)
 			}
@@ -723,7 +777,7 @@ func (s *Scheduler) afterRun(ctx context.Context, t *store.Task, summary string,
 		}
 	}
 	if s.Publisher == nil {
-		_ = s.Docker.RemoveAll(ctx, t.ID)
+		_ = h.RemoveAll(ctx, t.ID)
 		if _, err := s.Tasks.SetStatus(ctx, t.ID, tasks.Completed, "committed locally (GitHub App not configured)"); err != nil {
 			s.log(t, 0).Error("set completed", "err", err)
 		}
@@ -739,10 +793,14 @@ func (s *Scheduler) afterRun(ctx context.Context, t *store.Task, summary string,
 		t = latest
 	}
 	res, err := s.Publisher.Publish(ctx, PublishInput{
-		Task: t, Repo: repo, Project: project, Branch: branch,
+		Host: h, Task: t, Repo: repo, Project: project, Branch: branch,
 		Summary: summary, CostUSD: t.CostUSDTotal, Turns: turns, Limit: limit,
 	})
 	if err != nil {
+		if hosts.IsOffline(err) {
+			s.log(t, 0).Warn("node offline while publishing; resumes when it reconnects")
+			return
+		}
 		if errors.Is(err, ErrRejected) {
 			s.addEvent(ctx, t.ID, nil, "diff_rejected", map[string]any{"reason": err.Error()})
 		}

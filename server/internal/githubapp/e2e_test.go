@@ -11,6 +11,7 @@ import (
 
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
 	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
@@ -46,8 +47,9 @@ func TestEndToEndPR(t *testing.T) {
 		RunnerUser: fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())}
 	hub := events.NewHub()
 	svc := &tasks.Service{Store: st, Hub: hub}
-	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws,
-		Publisher: &Publisher{App: app, Workspace: ws}})
+	local := &hosts.Local{Docker: docker, Workspace: ws, AttachmentsDir: func(int64) string { return t.TempDir() }}
+	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Hosts: &hosts.Registry{Local: local},
+		Publisher: &Publisher{App: app}})
 	svc.Executor = sched
 	ps := &projects.Service{Store: st}
 	name := "P"

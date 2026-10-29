@@ -9,24 +9,26 @@ import (
 )
 
 type Project struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Instructions     string            `json:"instructions"`
-	Services         []string          `json:"services"`
-	Env              map[string]string `json:"env"`
-	RunnerImage      *string           `json:"runner_image"`
-	Agent            *string           `json:"agent"`
-	Model            *string           `json:"model"`
-	MaxTurns         *int              `json:"max_turns"`
-	MaxBudgetUSD     *float64          `json:"max_budget_usd"`
-	MaxDurationSec   *int64            `json:"max_duration_sec"`
-	RunnerMemory     *string           `json:"runner_memory"`
-	RunnerCPUs       *float64          `json:"runner_cpus"`
-	TelegramThreadID *int64            `json:"telegram_thread_id"`
-	Archived         bool              `json:"archived"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
-	Repositories     []Repository      `json:"repositories"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Instructions string            `json:"instructions"`
+	Services     []string          `json:"services"`
+	Env          map[string]string `json:"env"`
+	RunnerImage  *string           `json:"runner_image"`
+	Agent        *string           `json:"agent"`
+	// Node runs the project's tasks unless a task picks a host; nil: the server.
+	Node             *string      `json:"node"`
+	Model            *string      `json:"model"`
+	MaxTurns         *int         `json:"max_turns"`
+	MaxBudgetUSD     *float64     `json:"max_budget_usd"`
+	MaxDurationSec   *int64       `json:"max_duration_sec"`
+	RunnerMemory     *string      `json:"runner_memory"`
+	RunnerCPUs       *float64     `json:"runner_cpus"`
+	TelegramThreadID *int64       `json:"telegram_thread_id"`
+	Archived         bool         `json:"archived"`
+	CreatedAt        time.Time    `json:"created_at"`
+	UpdatedAt        time.Time    `json:"updated_at"`
+	Repositories     []Repository `json:"repositories"`
 }
 
 type Repository struct {
@@ -40,14 +42,14 @@ type Repository struct {
 
 const projectCols = `id, name, instructions, services, env, runner_image, model, max_turns,
 	max_budget_usd::float8, EXTRACT(EPOCH FROM max_duration)::bigint, runner_memory, runner_cpus::float8,
-	telegram_thread_id, archived, created_at, updated_at, agent`
+	telegram_thread_id, archived, created_at, updated_at, agent, node`
 
 func scanProject(row interface{ Scan(...any) error }) (*Project, error) {
 	var p Project
 	var env []byte
 	err := row.Scan(&p.ID, &p.Name, &p.Instructions, &p.Services, &env, &p.RunnerImage, &p.Model, &p.MaxTurns,
 		&p.MaxBudgetUSD, &p.MaxDurationSec, &p.RunnerMemory, &p.RunnerCPUs,
-		&p.TelegramThreadID, &p.Archived, &p.CreatedAt, &p.UpdatedAt, &p.Agent)
+		&p.TelegramThreadID, &p.Archived, &p.CreatedAt, &p.UpdatedAt, &p.Agent, &p.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -73,6 +75,7 @@ type ProjectFields struct {
 	Env              *map[string]string `json:"env"`
 	RunnerImage      *string            `json:"runner_image"`
 	Agent            *string            `json:"agent"`
+	Node             *string            `json:"node"`
 	Model            *string            `json:"model"`
 	MaxTurns         *int               `json:"max_turns"`
 	MaxBudgetUSD     *float64           `json:"max_budget_usd"`
@@ -125,6 +128,13 @@ func (s *Store) UpdateProject(ctx context.Context, id string, f ProjectFields) (
 	}
 	if f.Agent != nil {
 		add("agent", nilIfEmpty(*f.Agent))
+	}
+	if f.Node != nil {
+		node := *f.Node
+		if node == "server" {
+			node = ""
+		}
+		add("node", nilIfEmpty(node))
 	}
 	if f.Model != nil {
 		add("model", nilIfEmpty(*f.Model))

@@ -23,6 +23,8 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/auth"
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
+	"github.com/andrewsl105/fleetpocket/server/internal/nodes"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
@@ -66,6 +68,7 @@ func setup(t *testing.T) (*client, *store.Store, string) {
 		Cfg: cfg, Store: st, Hub: hub,
 		Tasks:    &tasks.Service{Store: st, Hub: hub, DefaultAgent: cfg.DefaultAgent, AgentEnabled: cfg.AgentEnabled},
 		Projects: &projects.Service{Store: st},
+		Nodes:    &nodes.Service{Store: st, Hub: hub, Registry: &hosts.Registry{}},
 		Auth:     &auth.Manager{Store: st, PasswordHash: hash, TOTPSecret: secret, SessionSecret: []byte("s"), CookieInsecure: true},
 	}
 	ts := httptest.NewServer(srv.Handler())
@@ -428,5 +431,87 @@ func TestAgents(t *testing.T) {
 	// An empty agent resets the project to the server default.
 	if code, p := c.do("PATCH", "/api/v1/projects/ag", map[string]any{"agent": ""}); code != 200 || p["agent"] != nil {
 		t.Fatalf("reset project agent: %d %v", code, p)
+	}
+}
+
+func TestNodesAndPlacement(t *testing.T) {
+	c, st, secret := setup(t)
+	ctx := context.Background()
+	otp, _ := totp.GenerateCode(secret, time.Now())
+	c.do("POST", "/api/v1/auth/login", map[string]string{"password": "pw-for-tests", "totp": otp})
+
+	for _, bad := range []string{"server", "Mac", "", "a_b"} {
+		if code, body := c.do("POST", "/api/v1/nodes", map[string]any{"id": bad}); code != 400 {
+			t.Fatalf("node id %q: %d %v", bad, code, body)
+		}
+	}
+	code, created := c.do("POST", "/api/v1/nodes", map[string]any{"id": "mac", "name": "MacBook"})
+	if code != 201 || !strings.HasPrefix(fmt.Sprint(created["token"]), "fpn_mac.") {
+		t.Fatalf("create node: %d %v", code, created)
+	}
+	node := created["node"].(map[string]any)
+	if node["online"] != false || node["max_concurrent"] != float64(2) || node["name"] != "MacBook" {
+		t.Fatalf("node view: %v", node)
+	}
+	if code, _ := c.do("POST", "/api/v1/nodes", map[string]any{"id": "mac"}); code != 409 {
+		t.Fatalf("duplicate: %d", code)
+	}
+	if code, n := c.do("PATCH", "/api/v1/nodes/mac", map[string]any{"max_concurrent": 4}); code != 200 || n["max_concurrent"] != float64(4) {
+		t.Fatalf("patch: %d %v", code, n)
+	}
+	if code, _ := c.do("PATCH", "/api/v1/nodes/mac", map[string]any{"max_concurrent": 99}); code != 400 {
+		t.Fatalf("max_concurrent out of range: %d", code)
+	}
+	if code, r := c.do("POST", "/api/v1/nodes/mac/token", nil); code != 200 || r["token"] == created["token"] {
+		t.Fatalf("rotate: %d %v", code, r)
+	}
+	if code, list := c.do("GET", "/api/v1/nodes", nil); code != 200 || len(list["items"].([]any)) != 1 {
+		t.Fatalf("list: %d %v", code, list)
+	}
+
+	// Placement: project default, task override, unknown node, node agents.
+	if code, _ := c.do("POST", "/api/v1/projects", map[string]any{"id": "pl", "name": "Pl", "node": "nope"}); code != 400 {
+		t.Fatalf("unknown project node: %d", code)
+	}
+	c.do("POST", "/api/v1/projects", map[string]any{"id": "pl", "name": "Pl", "node": "mac"})
+	c.do("POST", "/api/v1/projects/pl/repositories", map[string]any{"full_name": "o/r", "installation_id": 1, "base_branch": "main"})
+	// The node has not reported any agent yet.
+	code, body := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "a"})
+	if code != 400 || !strings.Contains(fmt.Sprint(body), "MacBook") {
+		t.Fatalf("agent without credentials on the node: %d %v", code, body)
+	}
+	if _, err := st.NodeSeen(ctx, "mac", []string{"claude", "cursor"}, "darwin/arm64", "1"); err != nil {
+		t.Fatal(err)
+	}
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "a"}); code != 201 || task["node"] != "mac" {
+		t.Fatalf("project node: %d %v", code, task)
+	}
+	// Cursor has a key on the node but not on the server.
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "b", "agent": "cursor"}); code != 201 || task["agent"] != "cursor" {
+		t.Fatalf("node agent: %d %v", code, task)
+	}
+	if code, task := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "c", "node": "server"}); code != 201 || task["node"] != nil {
+		t.Fatalf("server override: %d %v", code, task)
+	}
+	if code, _ := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "d", "node": "server", "agent": "cursor"}); code != 400 {
+		t.Fatalf("cursor on the server: %d", code)
+	}
+	if code, _ := c.do("POST", "/api/v1/tasks", map[string]any{"project_id": "pl", "prompt": "e", "node": "ghost"}); code != 400 {
+		t.Fatalf("unknown node: %d", code)
+	}
+	// The diff of a task on an offline node.
+	_, list := c.do("GET", "/api/v1/tasks?project=pl", nil)
+	first := list["items"].([]any)[0].(map[string]any)
+	id := int64(first["id"].(float64))
+	_ = st.SetBranch(ctx, id, "agent/x")
+	if code, body := c.do("GET", "/api/v1/tasks/"+jsonNum(id)+"/diff", nil); code != 409 && code != 503 {
+		t.Fatalf("diff on offline node: %d %v", code, body)
+	}
+	if code, _ := c.do("DELETE", "/api/v1/nodes/mac", nil); code != 409 {
+		t.Fatalf("delete with live tasks: %d", code)
+	}
+	// The node's WebSocket refuses session cookies: it needs a node token.
+	if code, _ := c.do("GET", "/api/v1/node/connect", nil); code != 401 {
+		t.Fatalf("connect without token: %d", code)
 	}
 }

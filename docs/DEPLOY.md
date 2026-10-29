@@ -140,6 +140,31 @@ Back up Postgres daily with `pg_dump`. Example root crontab line (keeps 14 days)
 
 Restore with `docker compose -f docker-compose.deploy.yml exec -T postgres pg_restore -U fleetpocket -d fleetpocket --clean < backup.dump`. Workspaces are disposable (the branch lives on GitHub); the database is the state. Keep the `caddy_data` volume too (certificates), or Caddy requests new ones.
 
+## 11. Run tasks on your own computer (optional)
+
+A **node** runs tasks on another machine, typically your Mac, with that machine's Docker and its own agent keys. Login, history, the task list and GitHub stay on the server; you pick per project or per task where it runs. The node only connects out (a WebSocket to the server), so it needs no open port or public address. Design: [remote-nodes.md](design/remote-nodes.md).
+
+1. **Register it**: web app → Settings → Computers → Add computer (id e.g. `macbook`). Copy the token; it is shown once.
+2. **Docker**: install Docker Desktop or OrbStack, then pull the agent image (it has a `linux/arm64` variant for Apple silicon): `docker pull ghcr.io/andrewsl105/fleetpocket-agent:latest`. For the secrets scan: `brew install gitleaks`.
+3. **Install the node**: download `fleetpocket-node-darwin-arm64` (or `-darwin-amd64`) from the `node-latest` release, then `chmod +x` it and move it to `/usr/local/bin/fleetpocket-node`. macOS may ask you to allow it in System Settings → Privacy & Security the first time.
+4. **Secrets go to the Keychain**, never to a file:
+
+   ```sh
+   security add-generic-password -U -s fleetpocket-node -a FLEETPOCKET_NODE_TOKEN -w   # paste the node token
+   security add-generic-password -U -s fleetpocket-node -a CLAUDE_CODE_OAUTH_TOKEN -w  # `claude setup-token`; optional: OPENAI_API_KEY, CURSOR_API_KEY
+   ```
+
+5. **Check and start**:
+
+   ```sh
+   fleetpocket-node doctor --server https://fleetpocket.example.com
+   fleetpocket-node run --server https://fleetpocket.example.com
+   ```
+
+   To start it at login, fill in `deploy/node/com.fleetpocket.node.plist` (server URL, home folder), copy it to `~/Library/LaunchAgents/` and run `launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.fleetpocket.node.plist`. Logs: `~/Library/Logs/fleetpocket-node.log`.
+
+The node shows as online in Settings → Computers, with the agents it has keys for. While a task runs, the node keeps the Mac awake (`caffeinate -i`); if the Mac sleeps or goes offline anyway, queued tasks wait, a running task keeps running in Docker, and its output catches up when the node reconnects. Workspaces live in `~/Library/Application Support/Fleetpocket`.
+
 ## CI/CD
 
 - **`ci.yml`** (every pull request, pushes to `main` and manual runs; a manual run starts every job): path-filtered jobs. `server/**`, `agent/**` or `docs/openapi.yaml` → `go vet`, `go test -p 1` against Postgres with the fake agent image, golangci-lint. `agent/**` → typecheck and tests. `web/**` or `docs/openapi.yaml` → schema check (fails if `schema.ts` is stale), typecheck, lint, unit tests, build, bundle budgets, Playwright (mock mode). `deploy/**` → compose files and Caddyfile validate.

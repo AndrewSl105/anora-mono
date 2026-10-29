@@ -22,11 +22,12 @@ type wsIn struct {
 }
 
 type wsOut struct {
-	Op      string       `json:"op"`
-	TaskID  int64        `json:"task_id,omitempty"`
-	Event   *store.Event `json:"event,omitempty"`
-	Task    *store.Task  `json:"task,omitempty"`
-	Message string       `json:"message,omitempty"`
+	Op      string          `json:"op"`
+	TaskID  int64           `json:"task_id,omitempty"`
+	Event   *store.Event    `json:"event,omitempty"`
+	Task    *store.Task     `json:"task,omitempty"`
+	Node    *store.NodeView `json:"node,omitempty"`
+	Message string          `json:"message,omitempty"`
 }
 
 type wsSubs struct {
@@ -42,6 +43,12 @@ func (s *wsSubs) wants(taskID int64, isEvent bool) bool {
 		return true
 	}
 	return s.all && !isEvent
+}
+
+func (s *wsSubs) wantsAll() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.all
 }
 
 func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
@@ -112,6 +119,10 @@ func (s *Server) websocket(w http.ResponseWriter, r *http.Request) {
 				}
 			case m.Task != nil && subs.wants(m.TaskID, false):
 				if !write(wsOut{Op: "task", Task: m.Task}) {
+					return
+				}
+			case m.Node != nil && subs.wantsAll():
+				if !write(wsOut{Op: "node", Node: m.Node}) {
 					return
 				}
 			}

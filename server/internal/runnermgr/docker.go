@@ -242,15 +242,19 @@ type RunnerSpec struct {
 	CPUs        float64
 	// User is "uid:gid"; default 1000:1000 (shared with Fleetpocket).
 	User string
+	// ExtraHosts are "name:ip" entries for the runner's /etc/hosts.
+	ExtraHosts []string
 }
 
-// Runner is an attached runner container.
+// Runner is an attached runner container: its parsed stdout events and its
+// stdin. The stream comes from a Docker attach (local) or a node (remote).
 type Runner struct {
 	ContainerID string
 	Events      <-chan Event // closed when stdout ends
 	BadLines    <-chan string
 
-	conn    *client.HijackedResponse
+	send    func([]byte) error
+	closeFn func()
 	writeMu sync.Mutex
 	done    chan struct{}
 }
@@ -263,14 +267,75 @@ func (r *Runner) Send(cmd any) error {
 	}
 	r.writeMu.Lock()
 	defer r.writeMu.Unlock()
-	_, err = r.conn.Conn.Write(b)
-	return err
+	return r.send(b)
+}
+
+// WriteLine writes one raw command line (with its trailing newline) to the
+// runner's stdin; a node uses it to relay the server's commands.
+func (r *Runner) WriteLine(line []byte) error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	return r.send(line)
 }
 
 // Done is closed when the output stream ends.
 func (r *Runner) Done() <-chan struct{} { return r.done }
 
-func (r *Runner) Close() { r.conn.Close() }
+func (r *Runner) Close() {
+	if r.closeFn != nil {
+		r.closeFn()
+	}
+}
+
+// Stream feeds a Runner built by NewStreamRunner.
+type Stream struct {
+	r      *Runner
+	events chan Event
+	bad    chan string
+	mu     sync.Mutex
+	ended  bool
+}
+
+// NewStreamRunner returns a runner whose events come from Stream.Line and
+// whose stdin goes to send. close (optional) runs on Runner.Close.
+func NewStreamRunner(containerID string, send func([]byte) error, close func()) (*Runner, *Stream) {
+	events := make(chan Event, 256)
+	bad := make(chan string, 16)
+	r := &Runner{ContainerID: containerID, Events: events, BadLines: bad, send: send, closeFn: close, done: make(chan struct{})}
+	return r, &Stream{r: r, events: events, bad: bad}
+}
+
+// Line parses one stdout line and delivers it. Invalid lines go to BadLines
+// (dropped when nobody reads them). Lines after End are ignored.
+func (s *Stream) Line(line []byte) {
+	ev, err := ParseEvent(append([]byte(nil), line...))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	if err != nil {
+		select {
+		case s.bad <- fmt.Sprintf("%v: %s", err, truncate(string(line), 200)):
+		default:
+		}
+		return
+	}
+	s.events <- ev
+}
+
+// End closes the event stream (stdout ended). Safe to call twice.
+func (s *Stream) End() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.ended {
+		return
+	}
+	s.ended = true
+	close(s.events)
+	close(s.bad)
+	close(s.r.done)
+}
 
 // StartRunner creates the runner container, attaches to it, then starts it,
 // so no output is lost.
@@ -303,6 +368,7 @@ func (m *Manager) StartRunner(ctx context.Context, s RunnerSpec) (*Runner, error
 		HostConfig: &container.HostConfig{
 			NetworkMode: container.NetworkMode(NetworkName(s.TaskID)),
 			Binds:       binds(s),
+			ExtraHosts:  s.ExtraHosts,
 			Resources: container.Resources{
 				Memory:    memory,
 				NanoCPUs:  int64(s.CPUs * 1e9),
@@ -339,9 +405,10 @@ func (m *Manager) attach(ctx context.Context, id string) (*Runner, error) {
 		return nil, fmt.Errorf("attach runner: %w", err)
 	}
 	hr := res.HijackedResponse
-	events := make(chan Event, 256)
-	bad := make(chan string, 16)
-	r := &Runner{ContainerID: id, Events: events, BadLines: bad, conn: &hr, done: make(chan struct{})}
+	r, stream := NewStreamRunner(id, func(b []byte) error {
+		_, err := hr.Conn.Write(b)
+		return err
+	}, hr.Close)
 
 	outR, outW := io.Pipe()
 	errR, errW := io.Pipe()
@@ -358,22 +425,11 @@ func (m *Manager) attach(ctx context.Context, id string) (*Runner, error) {
 		}
 	}()
 	go func() {
-		defer close(r.done)
-		defer close(events)
-		defer close(bad)
+		defer stream.End()
 		sc := bufio.NewScanner(outR)
 		sc.Buffer(make([]byte, 64*1024), 8<<20)
 		for sc.Scan() {
-			line := append([]byte(nil), sc.Bytes()...)
-			ev, err := ParseEvent(line)
-			if err != nil {
-				select {
-				case bad <- fmt.Sprintf("%v: %s", err, truncate(string(line), 200)):
-				default:
-				}
-				continue
-			}
-			events <- ev
+			stream.Line(sc.Bytes())
 		}
 	}()
 	return r, nil
@@ -426,11 +482,11 @@ func (m *Manager) Remove(ctx context.Context, containerID string) error {
 
 // ContainerInfo is what reconciliation needs to know about a runner.
 type ContainerInfo struct {
-	ID       string
-	TaskID   int64
-	RunID    int64
-	Running  bool
-	ExitCode int
+	ID       string `json:"id"`
+	TaskID   int64  `json:"task_id"`
+	RunID    int64  `json:"run_id"`
+	Running  bool   `json:"running"`
+	ExitCode int    `json:"exit_code"`
 }
 
 // ListRunners returns all runner containers, running or exited.

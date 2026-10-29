@@ -11,27 +11,29 @@ import (
 )
 
 // Publisher implements scheduler.Publisher: validate, push, open or update the PR.
+// The workspace operations run on the task's host (PublishInput.Host).
 type Publisher struct {
-	App       *App
-	Workspace *workspace.Manager
-	Scanner   workspace.SecretsScanner
+	App *App
+	// RequireScanner fails the publish when the host cannot run the secrets
+	// scan (SECRETS_SCAN=gitleaks).
+	RequireScanner bool
 	// TaskURL links back to the task in the web app.
 	TaskURL func(taskID int64) string
 }
 
 func (p *Publisher) Publish(ctx context.Context, in scheduler.PublishInput) (*scheduler.PublishResult, error) {
-	t, repo := in.Task, in.Repo
-	if err := p.Workspace.Validate(ctx, t.ID, repo.BaseBranch, p.Scanner); err != nil {
+	t, repo, h := in.Task, in.Repo, in.Host
+	if err := h.Validate(ctx, t.ID, repo.BaseBranch, p.RequireScanner); err != nil {
 		if errors.Is(err, workspace.ErrInvalidDiff) {
 			return nil, fmt.Errorf("%w: %v", scheduler.ErrRejected, err)
 		}
 		return nil, err
 	}
 	wsRepo := workspace.Repo{FullName: repo.FullName, InstallationID: repo.InstallationID, BaseBranch: repo.BaseBranch}
-	if err := p.Workspace.Push(ctx, t.ID, wsRepo, in.Branch); err != nil {
+	if err := h.Push(ctx, t.ID, wsRepo, in.Branch); err != nil {
 		return nil, fmt.Errorf("push: %w", err)
 	}
-	stat, _ := p.Workspace.DiffStat(ctx, t.ID, repo.BaseBranch)
+	stat, _ := h.DiffStat(ctx, t.ID, repo.BaseBranch)
 
 	number := 0
 	if t.PRNumber != nil {

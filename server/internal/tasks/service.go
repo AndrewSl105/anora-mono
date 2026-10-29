@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -56,6 +57,9 @@ type Service struct {
 	AgentEnabled func(agent string) bool
 }
 
+// ServerNode is the placement value for the server itself.
+const ServerNode = "server"
+
 // View is a task with its latest run, open question and PR info.
 type View struct {
 	*store.Task
@@ -70,7 +74,9 @@ type CreateInput struct {
 	Title        string `json:"title"`
 	Prompt       string `json:"prompt"`
 	// Agent overrides the project's agent; "" uses it.
-	Agent  string `json:"agent"`
+	Agent string `json:"agent"`
+	// Node overrides the project's host: "server" or a node id; "" uses it.
+	Node   string `json:"node"`
 	Source string `json:"-"`
 	// Images are validated uploads (attachments.Process).
 	Images []*attachments.Image `json:"-"`
@@ -108,7 +114,11 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
 	if in.Source == "" {
 		in.Source = "api"
 	}
-	agent, err := s.agentFor(p, in.Agent)
+	node, err := s.nodeFor(ctx, p, in.Node)
+	if err != nil {
+		return nil, err
+	}
+	agent, err := s.agentFor(p, in.Agent, node)
 	if err != nil {
 		return nil, err
 	}
@@ -116,7 +126,7 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source, Agent: agent}, up)
+	t, err := s.Store.CreateTask(ctx, store.Task{ProjectID: p.ID, RepositoryID: repoID, Title: title, Prompt: in.Prompt, Source: in.Source, Agent: agent, Node: nodeID(node)}, up)
 	release()
 	if err != nil {
 		return nil, err
@@ -149,14 +159,45 @@ func (s *Service) EnabledAgents() []string {
 	return out
 }
 
-// agentFor resolves a new task's agent and checks that it can run.
-func (s *Service) agentFor(p *store.Project, override string) (string, error) {
+// nodeFor resolves a new task's host: nil for the server, else a node.
+func (s *Service) nodeFor(ctx context.Context, p *store.Project, override string) (*store.Node, error) {
+	id := strings.TrimSpace(override)
+	if id == "" && p.Node != nil {
+		id = *p.Node
+	}
+	if id == "" || id == ServerNode {
+		return nil, nil
+	}
+	n, err := s.Store.GetNode(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("%w: no computer %q", ErrInvalid, id)
+	}
+	return n, err
+}
+
+func nodeID(n *store.Node) *string {
+	if n == nil {
+		return nil
+	}
+	return &n.ID
+}
+
+// agentFor resolves a new task's agent and checks that it can run: on the
+// server it needs the server's credentials, on a node the node must have
+// reported it (the node uses its own credentials).
+func (s *Service) agentFor(p *store.Project, override string, node *store.Node) (string, error) {
 	agent := strings.TrimSpace(override)
 	if agent == "" {
 		agent = ProjectAgent(p, s.DefaultAgent)
 	}
 	if !config.ValidAgent(agent) {
 		return "", fmt.Errorf("%w: agent must be one of %s", ErrInvalid, strings.Join(config.Agents, ", "))
+	}
+	if node != nil {
+		if !slices.Contains(node.Agents, agent) {
+			return "", fmt.Errorf("%w: agent %s has no credentials on %s (set %s there)", ErrInvalid, agent, node.Name, config.AgentKeyHint(agent))
+		}
+		return agent, nil
 	}
 	if s.AgentEnabled != nil && !s.AgentEnabled(agent) {
 		return "", fmt.Errorf("%w: agent %s is not configured (set %s)", ErrInvalid, agent, config.AgentKeyHint(agent))

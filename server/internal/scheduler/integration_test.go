@@ -17,6 +17,7 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
 	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
@@ -76,7 +77,8 @@ func newEnv(t *testing.T, questionTimeout time.Duration, services []string) *env
 	hub := events.NewHub()
 	files := &attachments.Files{Dir: filepath.Join(t.TempDir(), "attachments")}
 	svc := &tasks.Service{Store: st, Hub: hub, Files: files}
-	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Docker: docker, Workspace: ws, Files: files})
+	local := &hosts.Local{Docker: docker, Workspace: ws, AttachmentsDir: files.TaskDir, AgentEnv: cfg.AgentEnv}
+	sched := scheduler.New(&scheduler.Scheduler{Cfg: cfg, Store: st, Hub: hub, Tasks: svc, Hosts: &hosts.Registry{Local: local}, Files: files})
 	svc.Executor = sched
 
 	ps := &projects.Service{Store: st}

@@ -43,7 +43,7 @@ A **project** groups repositories and holds run settings. All override fields ar
   "instructions": "appended to Claude's system prompt",
   "services": ["postgres", "redis"],
   "env": {"NODE_ENV": "test"},
-  "runner_image": null, "agent": null, "model": null, "max_turns": null, "max_budget_usd": null,
+  "runner_image": null, "agent": null, "node": null, "model": null, "max_turns": null, "max_budget_usd": null,
   "max_duration_sec": null, "runner_memory": null, "runner_cpus": null,
   "telegram_thread_id": null, "archived": false,
   "created_at": "…", "updated_at": "…",
@@ -68,6 +68,8 @@ A **project** groups repositories and holds run settings. All override fields ar
 
 `agent` is `claude`, `codex` or `cursor` (`null`: the server's `default_agent`); it may name an agent without credentials, but creating a task with it fails. `model` is a model of the project's agent and applies only to tasks that run with that agent; a task that overrides the agent uses that agent's default model (Claude: the server's `DEFAULT_MODEL`).
 
+`node` is the computer the project's tasks run on (a node id, see [Computers](#computers-nodes)); `null`, `""` or `"server"` is the server. An unknown id is `400 invalid`; removing the node resets it to `null`.
+
 `services` accepts `postgres` and `redis`. `env` keys must match `[A-Z_][A-Z0-9_]*`; auth and service variables (`DATABASE_URL`, `REDIS_URL`, Claude, OpenAI and Cursor keys, `CODEX_HOME`, …) are reserved.
 
 ## Tasks
@@ -79,7 +81,7 @@ A **project** groups repositories and holds run settings. All override fields ar
   "status": "running", "status_reason": null,
   "branch": "agent/12-add-csv-export-to-tables", "session_id": "…",
   "pr_number": null, "pr_url": null, "ci_status": null,
-  "cost_usd_total": 0.42, "turns": 17, "source": "web", "agent": "claude",
+  "cost_usd_total": 0.42, "turns": 17, "source": "web", "agent": "claude", "node": null,
   "created_at": "…", "updated_at": "…", "finished_at": null, "paused_at": null,
   "last_activity": "Edit src/tables/export.ts", "last_activity_at": "…",
   "queued_message": null
@@ -87,6 +89,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 ```
 
 - `agent`: the coding agent, fixed when the task is created (the request's `agent`, else the project's, else the server default), so follow-ups and resumes continue the same session.
+- `node`: the computer the task runs on (`null`: the server), fixed when the task is created: its workspace, agent session and containers live there. While that node is offline the task waits (`queued` tasks stay queued; a live task keeps its status and its stream resumes when the node reconnects; actions that need the workspace answer `503 host_offline`).
 - `cost_usd_total`: reported by Claude only; Codex and Cursor tasks stay at `0` (their usage still shows as tokens in `usage` events).
 - `turns`: agent turns across all runs of the task (sum of each run's last reported `usage.turns`).
 - `last_activity`: one line (max 120 characters) describing the latest thing that happened: the latest `tool_use` summary, or the latest status change as `<status>` / `<status>: <reason>`, whichever came last. `last_activity_at` is when it was set. Both are `null` only for tasks that predate the field and have no surviving events.
@@ -98,7 +101,7 @@ A **project** groups repositories and holds run settings. All override fields ar
 
 | status | meaning | actions available |
 |---|---|---|
-| `queued` | waiting for a slot | message (queued), cancel |
+| `queued` | waiting for a slot on its host (or for its node to come online) | message (queued), cancel |
 | `preparing` | cloning, creating branch and sidecars | message (queued), cancel |
 | `running` | Claude is working | message (queued), interrupt, cancel |
 | `waiting_input` | Claude asked a question (`open_question`) | answer, message (queued), interrupt, cancel |
@@ -114,12 +117,12 @@ A **project** groups repositories and holds run settings. All override fields ar
 | | |
 |---|---|
 | `GET /tasks?project=&status=` | newest first. `status` takes a comma-separated list |
-| `POST /tasks` `{project_id, prompt, repository_id?, title?, agent?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars); `agent` to the project's agent. `400 invalid` when the agent has no credentials on the server. As multipart, add images in `files[]` |
+| `POST /tasks` `{project_id, prompt, repository_id?, title?, agent?, node?}` | `repository_id` defaults to the project's default repo; `title` to the first line of the prompt (80 chars); `agent` to the project's agent; `node` (`"server"` or a node id) to the project's host. `400 invalid` when the agent has no credentials on that host (for a node: the agents it reported when it last connected) or the node is unknown. As multipart, add images in `files[]` |
 | `GET /tasks/{id}` | task view (see above) |
 | `GET /tasks/{id}/events?after_id=` | timeline, oldest first; `after_id` (or `cursor`) is the last event id you have. Heartbeats are not returned |
 | `GET /tasks/{id}/events?before_id=` | timeline backwards, **newest first**: events older than `before_id`; `before_id=0` starts at the newest event. Pass `next_cursor` back as `before_id` (not as `cursor`, which means `after_id`). Combining `before_id` with `after_id`/`cursor` is `400 invalid` |
 | `GET /tasks/{id}/runs` | the task's runs, oldest first, including a queued one (`started_at: null`): `{id, task_id, kind, input, container_id, exit_code, last_seq, cost_usd, turns, started_at, finished_at}`. `kind` is `initial`, `resume`, `followup` or `retry`; `cost_usd` is the run's own cost. Paginated with `limit`/`cursor` |
-| `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup |
+| `GET /tasks/{id}/diff` | `{"diff", "truncated", "base", "branch"}`: `git diff base...branch` from the workspace, capped at 1 MB. `409 no_workspace` before cloning or after cleanup; `503 host_offline` while the task's node is offline |
 | `POST /tasks/{id}/answer` `{question_id, text}` | the first answer wins; a second gets `409 already_answered`. Answering a `paused` task resumes it |
 | `POST /tasks/{id}/message` `{text}` (multipart: plus `files[]`) | `queued`/`preparing`/`running`/`waiting_input`/`pushing`: **queued** (a run handles one prompt; nothing is injected into a live session). The text is kept in `queued_message` and starts the next run (same branch, same session) as soon as the current run ends: on `pr_open`/`completed` as a follow-up, on `paused` as a resume. If the task fails or is cancelled first, the text is dropped and a `message_dropped` event shows it. `paused`/`pr_open`/`completed`: starts a new run right away. Otherwise `409` |
 | `POST /tasks/{id}/interrupt` | `running`/`waiting_input`: stops Claude and **ends the run** ("Interrupted by the user."); what it committed is pushed as for any finished run, and the session is kept. A queued message then starts the next run; otherwise send a follow-up message |
@@ -170,6 +173,27 @@ Images go with a task's prompt or with a message. Send the request as `multipart
 - Download with `GET /tasks/{id}/attachments/{attachmentId}` (session required like every endpoint; `?thumb=1` for a thumbnail). Telegram Web clients send the bearer token, so fetch the image and show it from a blob URL rather than an `<img src>`.
 - The agent sees the images of the input it is working on (the prompt, or the messages a run starts with) at `/attachments/<id>.<ext>`, plus the task's earlier images. They are removed (`410 gone`, files deleted) when the task becomes `completed`, and with the workspace for `failed` and `cancelled` tasks (`WORKSPACE_RETENTION`), so Retry and follow-ups still have them until then. Images of a queued message that is dropped (`message_dropped`) are removed with it.
 
+## Computers (nodes)
+
+A **node** is a computer that runs tasks next to the server, with its own Docker and its own agent credentials (`fleetpocket-node`, see docs/design/remote-nodes.md). Everything else (auth, history, the task list, GitHub) stays on the server.
+
+```json
+{"id": "macbook", "name": "MacBook Pro", "max_concurrent": 2, "agents": ["claude", "codex"],
+ "platform": "darwin/arm64", "version": "1.4.0", "last_seen_at": "…", "created_at": "…", "updated_at": "…",
+ "online": true, "active_tasks": 1}
+```
+
+| | |
+|---|---|
+| `GET /nodes` | `{"items": [node…]}` |
+| `POST /nodes` `{id, name?}` | registers a node; `id` is a slug (`[a-z0-9-]`, max 32, not `server`). Returns `201 {"node", "token"}`: the token (`fpn_<id>.<secret>`) is shown only here. `409` if the id exists |
+| `PATCH /nodes/{id}` `{name?, max_concurrent?}` | `max_concurrent` 1–32 (default 2): tasks the node runs at once. The server's own limit stays `MAX_CONCURRENT_TASKS` |
+| `POST /nodes/{id}/token` | new token; the old one stops working for new connections |
+| `DELETE /nodes/{id}` | `409 conflict` while unfinished tasks run on it; projects that used it go back to the server |
+| `GET /node/connect` | the node's WebSocket, `Authorization: Bearer <token>`; not for clients |
+
+`agents` and `platform`/`version` are what the node reported when it last connected. A node's tasks count only against its `max_concurrent`.
+
 ## WebSocket
 
 `GET /api/v1/ws` (session cookie required; same origin). Without a cookie (Telegram Web), first `POST /api/v1/ws/ticket` with the bearer token → `{"ticket":"…","expires_in":30}`, then connect to `/api/v1/ws?ticket=…`. A ticket works once and only within `expires_in` seconds, so fetch a new one for every (re)connect. After connecting, send one or more subscriptions:
@@ -185,11 +209,12 @@ The server pushes:
 ```json
 {"op": "event", "task_id": 123, "event": { /* timeline event as above */ }}
 {"op": "task", "task": { /* task object */ }}
+{"op": "node", "node": { /* node object */ }}
 {"op": "error", "message": "…"}
 ```
 
 - `task_id` subscriptions receive that task's `event` and `task` messages.
-- `scope: "tasks"` receives `task` messages for every task (for the list view), no events.
+- `scope: "tasks"` receives `task` messages for every task (for the list view) and `node` messages (a node connected, disconnected or changed), no events.
 - A `task` message is sent on every status change and also whenever `turns`, `last_activity`, `last_activity_at` or `queued_message` change (each `tool_use` and `usage` event, each queued message), so the list view stays live without event subscriptions.
 - The server pings every 30 s. Messages to a slow client may be dropped. **On (re)connect, reload missed events with `GET /tasks/{id}/events?after_id=<last id>`**, then rely on pushes.
 

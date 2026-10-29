@@ -1,32 +1,33 @@
 package scheduler
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
-// Reconcile brings the database and Docker back in line after a restart:
-// re-attaches running runners, applies exits that happened while we were
-// down, fails runs whose container is gone, re-queues interrupted
+// Reconcile brings the database and the server's Docker back in line after
+// a restart: re-attaches running runners, applies exits that happened while
+// we were down, fails runs whose container is gone, re-queues interrupted
 // preparation, resumes interrupted pushes and removes orphaned resources.
+// Tasks placed on nodes are reconciled when their node connects
+// (ReconcileNode); interrupted preparation is re-queued for every host.
 func (s *Scheduler) Reconcile(ctx context.Context) error {
-	runners, err := s.Docker.ListRunners(ctx)
+	local := s.Hosts.Local
+	runners, err := local.ListRunners(ctx)
 	if err != nil {
 		return err
 	}
 	seen := map[int64]bool{}
 	for _, c := range runners {
 		seen[c.TaskID] = true
-		s.reconcileRunner(ctx, c)
+		s.reconcileRunner(ctx, local, c)
 	}
 
 	live, err := s.Store.TasksByStatus(ctx, tasks.Running, tasks.WaitingInput)
@@ -34,15 +35,10 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		return err
 	}
 	for _, t := range live {
-		if seen[t.ID] {
+		if seen[t.ID] || t.Node != nil {
 			continue
 		}
-		run, err := s.Store.LatestRun(ctx, t.ID)
-		if err == nil {
-			s.replayFile(ctx, t, run.ID, &runOutcome{})
-			_, _ = s.Store.FinishRun(ctx, run.ID, -1)
-		}
-		s.fail(ctx, t, "lost")
+		s.lost(ctx, local, t)
 	}
 
 	preparing, err := s.Store.TasksByStatus(ctx, tasks.Preparing)
@@ -58,70 +54,146 @@ func (s *Scheduler) Reconcile(ctx context.Context) error {
 		}
 	}
 
+	s.resumePushes(ctx, nil)
+	return s.removeOrphans(ctx, local)
+}
+
+// ReconcileNode runs when a node connects: runners the server did not know
+// about (a server restart) are re-attached or their exit applied; live tasks
+// of the node without a runner are lost; cancelled tasks whose runner kept
+// going while the node was away are cancelled again; interrupted pushes resume.
+func (s *Scheduler) ReconcileNode(ctx context.Context, h *hosts.Remote, unknown []runnermgr.ContainerInfo) {
+	node := h.ID()
+	seen := map[int64]bool{}
+	for _, c := range unknown {
+		seen[c.TaskID] = true
+		s.reconcileRunner(ctx, h, c)
+	}
+	live, err := s.Store.TasksByStatus(ctx, tasks.Running, tasks.WaitingInput)
+	if err != nil {
+		slog.Error("reconcile node", "node", node, "err", err)
+		return
+	}
+	for _, t := range live {
+		if t.Node == nil || *t.Node != node || seen[t.ID] {
+			continue
+		}
+		if _, ok := s.liveRunner(t.ID); ok {
+			continue
+		}
+		s.lost(ctx, h, t)
+	}
+	s.mu.Lock()
+	var cancel []*runnermgr.Runner
+	for id, l := range s.live {
+		if l.host != hosts.Host(h) {
+			continue
+		}
+		if t, err := s.Store.GetTask(ctx, id); err == nil && t.Status == tasks.Cancelled {
+			cancel = append(cancel, l.runner)
+		}
+	}
+	s.mu.Unlock()
+	for _, r := range cancel {
+		_ = r.Send(runnermgr.Cancel())
+	}
+	s.resumePushes(ctx, &node)
+	if err := s.removeOrphans(ctx, h); err != nil {
+		slog.Warn("reconcile node: orphans", "node", node, "err", err)
+	}
+	s.Wake()
+}
+
+// lost fails a live task whose runner is gone, after saving what its event
+// log has.
+func (s *Scheduler) lost(ctx context.Context, h hosts.Host, t *store.Task) {
+	run, err := s.Store.LatestRun(ctx, t.ID)
+	if err == nil {
+		s.replayFile(ctx, h, t, run.ID, &runOutcome{})
+		_, _ = s.Store.FinishRun(ctx, run.ID, -1)
+	}
+	s.fail(ctx, t, "lost")
+}
+
+// resumePushes restarts afterRun for tasks stuck in pushing on one host
+// (node nil: the server).
+func (s *Scheduler) resumePushes(ctx context.Context, node *string) {
 	pushing, err := s.Store.TasksByStatus(ctx, tasks.Pushing)
 	if err != nil {
-		return err
+		slog.Error("resume pushes", "err", err)
+		return
 	}
 	for _, t := range pushing {
+		if (node == nil) != (t.Node == nil) || (node != nil && *node != *t.Node) {
+			continue
+		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
 			s.afterRun(context.WithoutCancel(ctx), t, s.lastSummary(ctx, t.ID), 0, "")
 		}()
 	}
-
-	return s.removeOrphans(ctx)
 }
 
-func (s *Scheduler) reconcileRunner(ctx context.Context, c runnermgr.ContainerInfo) {
+func (s *Scheduler) reconcileRunner(ctx context.Context, h hosts.Host, c runnermgr.ContainerInfo) {
 	t, err := s.Store.GetTask(ctx, c.TaskID)
 	if err != nil {
-		_ = s.Docker.Remove(ctx, c.ID)
+		_ = h.Remove(ctx, c.ID)
 		return
 	}
 	run, err := s.Store.GetRun(ctx, c.RunID)
-	if err != nil || run.FinishedAt != nil || run.TaskID != t.ID {
-		_ = s.Docker.Remove(ctx, c.ID)
+	if err != nil || run.FinishedAt != nil || run.TaskID != t.ID || placement(t) != h.ID() {
+		_ = h.Remove(ctx, c.ID)
 		return
 	}
 	log := s.log(t, run.ID)
 	if c.Running {
 		// Attach first, then replay the file: nothing emitted in between is lost,
 		// and duplicates are dropped by UNIQUE (run_id, seq).
-		r, err := s.Docker.Attach(ctx, c.ID)
+		r, err := h.Attach(ctx, c.ID)
 		if err != nil {
 			log.Error("re-attach", "err", err)
-			_ = s.Docker.Stop(ctx, c.ID, 5*time.Second)
+			_ = h.Stop(ctx, c.ID, 5*time.Second)
 			return
 		}
 		var out runOutcome
-		s.replayFile(ctx, t, run.ID, &out)
-		s.register(t.ID, run.ID, r)
-		log.Info("re-attached runner", "container", c.ID[:12])
+		s.replayFile(ctx, h, t, run.ID, &out)
+		s.register(t.ID, run.ID, h, r)
+		log.Info("re-attached runner", "container", short(c.ID), "node", h.ID())
+		if t.Status == tasks.Cancelled {
+			_ = r.Send(runnermgr.Cancel())
+		}
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
-			s.supervise(context.WithoutCancel(ctx), t, run, r, time.Now())
+			s.supervise(context.WithoutCancel(ctx), h, t, run, r, time.Now())
 		}()
 		return
 	}
 	var out runOutcome
-	s.replayFile(ctx, t, run.ID, &out)
+	s.replayFile(ctx, h, t, run.ID, &out)
 	log.Info("applying exit that happened while down", "exit_code", c.ExitCode)
 	run.ContainerID = &c.ID
-	s.finishRun(ctx, t.ID, run, c.ExitCode, out, time.Now())
+	s.finishRun(ctx, h, t.ID, run, c.ExitCode, out, time.Now())
+}
+
+// placement is the task's host id ("" for the server).
+func placement(t *store.Task) string {
+	if t.Node == nil {
+		return ""
+	}
+	return *t.Node
 }
 
 // replayFile persists events from <workspace>/.fleetpocket/events.jsonl that are
 // newer than what the database has, and fills out from the run's events.
-func (s *Scheduler) replayFile(ctx context.Context, t *store.Task, runID int64, out *runOutcome) {
-	f, err := os.Open(filepath.Join(s.Workspace.Path(t.ID), ".fleetpocket", "events.jsonl"))
+func (s *Scheduler) replayFile(ctx context.Context, h hosts.Host, t *store.Task, runID int64, out *runOutcome) {
+	maxSeq, err := s.Store.MaxSeq(ctx, t.ID)
 	if err != nil {
 		return
 	}
-	defer f.Close()
-	maxSeq, err := s.Store.MaxSeq(ctx, t.ID)
-	if err != nil {
+	lines, err := h.EventLog(ctx, t.ID, maxSeq)
+	if err != nil || len(lines) == 0 {
 		return
 	}
 	run, err := s.Store.GetRun(ctx, runID)
@@ -132,11 +204,9 @@ func (s *Scheduler) replayFile(ctx context.Context, t *store.Task, runID int64, 
 	if run.Kind == tasks.RunResume || run.Kind == tasks.RunFollowup {
 		baseline, _ = s.Store.SessionBaselineCost(ctx, t.ID, runID)
 	}
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 64*1024), 8<<20)
 	n := 0
-	for sc.Scan() {
-		ev, err := runnermgr.ParseEvent(append([]byte(nil), sc.Bytes()...))
+	for _, line := range lines {
+		ev, err := runnermgr.ParseEvent(line)
 		if err != nil || ev.Seq <= maxSeq {
 			continue
 		}
@@ -160,19 +230,19 @@ func (s *Scheduler) lastSummary(ctx context.Context, taskID int64) string {
 	return ev.Summary
 }
 
-// removeOrphans deletes containers and networks of tasks that are terminal
-// or no longer exist.
-func (s *Scheduler) removeOrphans(ctx context.Context) error {
-	ids, err := s.Docker.TaskIDsWithResources(ctx)
+// removeOrphans deletes a host's containers and networks of tasks that are
+// terminal, no longer exist or belong to another host.
+func (s *Scheduler) removeOrphans(ctx context.Context, h hosts.Host) error {
+	ids, err := h.TaskIDsWithResources(ctx)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for id := range ids {
 		t, err := s.Store.GetTask(ctx, id)
-		if errors.Is(err, store.ErrNotFound) || (err == nil && tasks.IsTerminal(t.Status)) {
-			slog.Info("removing orphaned resources", "task_id", id)
-			errs = append(errs, s.Docker.RemoveAll(ctx, id))
+		if errors.Is(err, store.ErrNotFound) || (err == nil && (tasks.IsTerminal(t.Status) || placement(t) != h.ID())) {
+			slog.Info("removing orphaned resources", "task_id", id, "node", h.ID())
+			errs = append(errs, h.RemoveAll(ctx, id))
 		}
 	}
 	return errors.Join(errs...)

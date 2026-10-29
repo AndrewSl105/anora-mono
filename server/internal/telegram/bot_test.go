@@ -565,3 +565,61 @@ func TestDraftAgentCycleAndCreate(t *testing.T) {
 		t.Fatalf("task: %v %+v", err, list)
 	}
 }
+
+func TestDraftNodeCycleAndCreate(t *testing.T) {
+	st := testutil.DB(t)
+	ctx := context.Background()
+	hub := events.NewHub()
+	svc := &tasks.Service{Store: st, Hub: hub}
+	name := "Demo"
+	_, _ = (&projects.Service{Store: st}).Create(ctx, projects.CreateInput{ID: "demo", ProjectFields: store.ProjectFields{Name: &name}})
+	repo, _ := (&projects.Service{Store: st}).AddRepository(ctx, "demo", projects.RepoInput{FullName: "o/r", InstallationID: 1})
+	d, err := st.MergeTelegramDraft(ctx, owner, 0, 1, "demo", repo.ID, "Cache thumbnails", nil, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := &Bot{API: &fakeAPI{}, Store: st, Tasks: svc, Hub: hub, OwnerID: owner}
+	b.init()
+	labels := func() string {
+		if nd, err := st.TelegramDraft(ctx, d.ID); err == nil {
+			d = nd
+		}
+		out := ""
+		for _, row := range b.draftButtons(ctx, d).InlineKeyboard {
+			for _, button := range row {
+				out += button.Text + "|"
+			}
+		}
+		return out
+	}
+	// No computer registered: no button.
+	if strings.Contains(labels(), "Runs on") {
+		t.Fatalf("host button without computers: %s", labels())
+	}
+	if _, err := st.CreateNode(ctx, "mac", "MacBook", []byte("h")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.NodeSeen(ctx, "mac", []string{"claude"}, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(labels(), "🖥 Runs on: project's") {
+		t.Fatalf("no host button: %s", labels())
+	}
+	var answers []string
+	cb := func(action string) {
+		b.handleDraftCallback(ctx, &telego.CallbackQuery{}, store.TelegramCallback{Action: action, DraftID: d.ID}, func(s string) { answers = append(answers, s) })
+	}
+	cb("draft_node") // server
+	cb("draft_node") // mac
+	if !strings.Contains(labels(), "🖥 Runs on: MacBook") {
+		t.Fatalf("label after cycling: %s", labels())
+	}
+	cb("draft_create")
+	if fmt.Sprint(answers) != "[Server MacBook Task created]" {
+		t.Fatalf("answers: %v", answers)
+	}
+	list, err := st.ListTasks(ctx, store.TaskFilter{ProjectID: "demo", Limit: 10})
+	if err != nil || len(list) != 1 || list[0].Node == nil || *list[0].Node != "mac" {
+		t.Fatalf("task: %v %+v", err, list)
+	}
+}

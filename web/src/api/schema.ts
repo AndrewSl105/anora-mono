@@ -418,6 +418,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/nodes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Computers that run tasks next to the server */
+        get: operations["listNodes"];
+        put?: never;
+        /**
+         * Register a computer
+         * @description Returns the node's token once; the server keeps only its hash.
+         */
+        post: operations["createNode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nodes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Remove a computer
+         * @description 409 while tasks that are not finished run on it.
+         */
+        delete: operations["deleteNode"];
+        options?: never;
+        head?: never;
+        /** Rename a computer or change how many tasks it runs at once */
+        patch: operations["updateNode"];
+        trace?: never;
+    };
+    "/api/v1/nodes/{id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Issue a new token (the old one stops working) */
+        post: operations["rotateNodeToken"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/node/connect": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The node's WebSocket (fleetpocket-node only; see docs/design/remote-nodes.md) */
+        get: operations["connectNode"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/ws/ticket": {
         parameters: {
             query?: never;
@@ -545,6 +625,8 @@ export interface components {
              * @enum {string|null}
              */
             agent?: "claude" | "codex" | "cursor" | "" | null;
+            /** @description Where the project's tasks run: a node id; null, empty or `server` is the server */
+            node?: string | null;
             /** @description Model of the project's agent; tasks that override the agent use that agent's default */
             model?: string | null;
             max_turns?: number | null;
@@ -571,6 +653,8 @@ export interface components {
              * @enum {string|null}
              */
             agent?: "claude" | "codex" | "cursor" | null;
+            /** @description Node that runs the project's tasks; null is the server */
+            node?: string | null;
             model?: string | null;
             max_turns?: number | null;
             max_budget_usd?: number | null;
@@ -605,6 +689,26 @@ export interface components {
             /** Format: int64 */
             installation_id: number;
         };
+        Node: {
+            id: string;
+            name: string;
+            /** @description Tasks it runs at once */
+            max_concurrent: number;
+            /** @description Agents with credentials on the node, reported when it connects */
+            agents: components["schemas"]["Agent"][];
+            /** @example darwin/arm64 */
+            platform: string;
+            version: string;
+            /** Format: date-time */
+            last_seen_at: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            online: boolean;
+            /** @description Tasks preparing */
+            active_tasks: number;
+        };
         /** @enum {string} */
         TaskStatus: "queued" | "preparing" | "running" | "waiting_input" | "paused" | "pushing" | "pr_open" | "completed" | "failed" | "cancelled";
         Task: {
@@ -631,6 +735,8 @@ export interface components {
             source: "web" | "telegram" | "api";
             /** @description Fixed when the task is created: the request's agent, else the project's, else the server default */
             agent: components["schemas"]["Agent"];
+            /** @description Node the task runs on, fixed when it is created; null is the server */
+            node: string | null;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -1660,8 +1766,10 @@ export interface operations {
                     /** @description Defaults to the first line of the prompt */
                     title?: string;
                     prompt: string;
-                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the server */
+                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the task's host */
                     agent?: components["schemas"]["Agent"];
+                    /** @description Where the task runs: `server` or a node id. Defaults to the project's host; 400 when the node is unknown or lacks the agent's credentials */
+                    node?: string;
                 };
                 "multipart/form-data": {
                     project_id: string;
@@ -1673,8 +1781,10 @@ export interface operations {
                     /** @description Defaults to the first line of the prompt */
                     title?: string;
                     prompt: string;
-                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the server */
+                    /** @description Defaults to the project's agent; 400 when the agent has no credentials on the task's host */
                     agent?: components["schemas"]["Agent"];
+                    /** @description Where the task runs: `server` or a node id. Defaults to the project's host; 400 when the node is unknown or lacks the agent's credentials */
+                    node?: string;
                     /** @description PNG, JPEG, WebP or GIF (not animated), at most 40 MB each, 100 MB together; type detected from the content */
                     "files[]"?: string[];
                 };
@@ -2050,6 +2160,171 @@ export interface operations {
                         cost_usd_month: number;
                     };
                 };
+            };
+        };
+    };
+    listNodes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Nodes */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["Node"][];
+                    };
+                };
+            };
+        };
+    };
+    createNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Slug; not `server` */
+                    id: string;
+                    /** @description Defaults to the id */
+                    name?: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Registered */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        node: components["schemas"]["Node"];
+                        /** @description fpn_<id>.<secret>, shown once */
+                        token: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    deleteNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: components["responses"]["OK"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
+    updateNode: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    name?: string;
+                    max_concurrent?: number;
+                };
+            };
+        };
+        responses: {
+            /** @description Updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Node"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    rotateNodeToken: {
+        parameters: {
+            query?: never;
+            header: {
+                "X-Requested-With": components["parameters"]["XRequestedWith"];
+            };
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description New token */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        token: string;
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    connectNode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Bearer fpn_<id>.<secret> */
+                Authorization: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Switching protocols */
+            101: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Invalid node token */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

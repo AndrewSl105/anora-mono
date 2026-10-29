@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
@@ -197,9 +198,10 @@ func TestPublisherCreatesThenComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	commit(t, ws.Path(7), "a.txt", "a\n")
-	p := &Publisher{App: app, Workspace: ws, TaskURL: func(id int64) string { return "https://fleetpocket.example.com/tasks/7" }}
+	p := &Publisher{App: app, TaskURL: func(id int64) string { return "https://fleetpocket.example.com/tasks/7" }}
+	host := &hosts.Local{Workspace: ws}
 	task := &store.Task{ID: 7, Title: "Do X", Prompt: "Do X\nplease"}
-	res, err := p.Publish(ctx, scheduler.PublishInput{Task: task, Repo: repo, Branch: "agent/7-x", Summary: "Did X", CostUSD: 0.5, Turns: 3})
+	res, err := p.Publish(ctx, scheduler.PublishInput{Host: host, Task: task, Repo: repo, Branch: "agent/7-x", Summary: "Did X", CostUSD: 0.5, Turns: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +223,7 @@ func TestPublisherCreatesThenComments(t *testing.T) {
 	commit(t, ws.Path(7), "b.txt", "b\n")
 	n := 5
 	task.PRNumber = &n
-	res, err = p.Publish(ctx, scheduler.PublishInput{Task: task, Repo: repo, Branch: "agent/7-x", Summary: "Did Y"})
+	res, err = p.Publish(ctx, scheduler.PublishInput{Host: host, Task: task, Repo: repo, Branch: "agent/7-x", Summary: "Did Y"})
 	if err != nil || res.Created || res.PRNumber != 5 {
 		t.Fatalf("%+v %v", res, err)
 	}
@@ -231,7 +233,7 @@ func TestPublisherCreatesThenComments(t *testing.T) {
 
 	// A rejected diff never pushes.
 	commit(t, ws.Path(7), ".github/workflows/x.yml", "on: push\n")
-	_, err = p.Publish(ctx, scheduler.PublishInput{Task: task, Repo: repo, Branch: "agent/7-x"})
+	_, err = p.Publish(ctx, scheduler.PublishInput{Host: host, Task: task, Repo: repo, Branch: "agent/7-x"})
 	if err == nil || !strings.Contains(err.Error(), "diff rejected") {
 		t.Fatalf("expected rejection, got %v", err)
 	}

@@ -56,6 +56,28 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 		} else {
 			answer(agentName(next))
 		}
+	case "draft_node":
+		// Cycle: the project's host, the server, then each computer.
+		nodes, err := b.Store.ListNodes(ctx)
+		if err != nil {
+			answer("Could not list computers")
+			return
+		}
+		cycle := []string{"server"}
+		for _, n := range nodes {
+			cycle = append(cycle, n.ID)
+		}
+		next := nextAgent(d.Node, cycle)
+		if err := b.Store.SetTelegramDraftNode(ctx, d.ID, next); err != nil {
+			answer("Could not change where it runs")
+			return
+		}
+		_ = b.refreshDraft(ctx, d.ID)
+		if next == "" {
+			answer("Project's host")
+		} else {
+			answer(b.nodeName(ctx, next))
+		}
 	case "draft_project":
 		projects, err := b.Store.ListProjects(ctx, false, "", 50)
 		if err != nil {
@@ -132,7 +154,7 @@ func (b *Bot) handleDraftCallback(ctx context.Context, cq *telego.CallbackQuery,
 		}
 		b.createMu.Lock()
 		v, err := b.Tasks.Create(ctx, tasks.CreateInput{ProjectID: d.ProjectID, RepositoryID: d.RepositoryID,
-			Title: tasks.TitleFromPrompt(prompt), Prompt: prompt, Agent: d.Agent, Source: "telegram", Images: images})
+			Title: tasks.TitleFromPrompt(prompt), Prompt: prompt, Agent: d.Agent, Node: d.Node, Source: "telegram", Images: images})
 		if err == nil {
 			err = b.Store.SetTaskTelegram(ctx, v.ID, store.TelegramTarget{ChatID: d.ChatID, ThreadID: d.ThreadID})
 		}
@@ -166,6 +188,17 @@ func nextAgent(cur string, enabled []string) string {
 		return enabled[0]
 	}
 	return ""
+}
+
+// nodeName is a host's display name ("Server" for the server).
+func (b *Bot) nodeName(ctx context.Context, id string) string {
+	if id == "" || id == "server" {
+		return "Server"
+	}
+	if n, err := b.Store.GetNode(ctx, id); err == nil {
+		return n.Name
+	}
+	return id
 }
 
 func agentName(agent string) string {

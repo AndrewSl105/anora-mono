@@ -42,6 +42,9 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (*store.Project, e
 	if err := validate(in.ProjectFields); err != nil {
 		return nil, err
 	}
+	if err := s.checkNode(ctx, in.Node); err != nil {
+		return nil, err
+	}
 	return s.Store.CreateProject(ctx, in.ID, in.ProjectFields)
 }
 
@@ -49,7 +52,23 @@ func (s *Service) Update(ctx context.Context, id string, f store.ProjectFields) 
 	if err := validate(f); err != nil {
 		return nil, err
 	}
+	if err := s.checkNode(ctx, f.Node); err != nil {
+		return nil, err
+	}
 	return s.Store.UpdateProject(ctx, id, f)
+}
+
+// checkNode accepts nil, "", "server" and registered node ids.
+func (s *Service) checkNode(ctx context.Context, node *string) error {
+	if node == nil || *node == "" || *node == "server" {
+		return nil
+	}
+	if _, err := s.Store.GetNode(ctx, *node); errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("%w: no computer %q", ErrInvalid, *node)
+	} else if err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *Service) Archive(ctx context.Context, id string) (*store.Project, error) {

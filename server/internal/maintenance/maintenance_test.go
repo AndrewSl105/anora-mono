@@ -30,6 +30,18 @@ type fakeWS struct{ removed []int64 }
 
 func (f *fakeWS) Remove(id int64) error { f.removed = append(f.removed, id); return nil }
 
+// fakeHost combines the two fakes into a maintenance.Host.
+type fakeHost struct {
+	*fakeDocker
+	ws *fakeWS
+}
+
+func (h fakeHost) RemoveWorkspace(_ context.Context, id int64) error { return h.ws.Remove(id) }
+
+func hostOf(d *fakeDocker, ws *fakeWS) func(*store.Task) (Host, bool) {
+	return func(*store.Task) (Host, bool) { return fakeHost{d, ws}, true }
+}
+
 func TestOnce(t *testing.T) {
 	st := testutil.DB(t)
 	ctx := context.Background()
@@ -54,7 +66,7 @@ func TestOnce(t *testing.T) {
 	_ = st.CreateSession(ctx, "expired", "web", time.Now().Add(-time.Hour))
 
 	d, ws := &fakeDocker{}, &fakeWS{}
-	m := &Maintainer{Store: st, Docker: d, Workspaces: ws, EventRetention: 720 * time.Hour,
+	m := &Maintainer{Store: st, Host: hostOf(d, ws), EventRetention: 720 * time.Hour,
 		WorkspaceRetention: 7 * 24 * time.Hour, SidecarIdleTTL: 30 * time.Minute}
 	m.Once(ctx)
 
@@ -112,7 +124,7 @@ func TestRetentionRemovesAttachments(t *testing.T) {
 	_, _ = st.Pool.Exec(ctx, `UPDATE tasks SET finished_at = now() - interval '8 days' WHERE id = $1`, old.ID)
 
 	a := &fakeAttachments{}
-	m := &Maintainer{Store: st, Docker: &fakeDocker{}, Workspaces: &fakeWS{}, Attachments: a,
+	m := &Maintainer{Store: st, Host: hostOf(&fakeDocker{}, &fakeWS{}), Attachments: a,
 		EventRetention: 720 * time.Hour, WorkspaceRetention: 7 * 24 * time.Hour, SidecarIdleTTL: time.Hour}
 	m.Once(ctx)
 

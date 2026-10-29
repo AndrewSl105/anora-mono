@@ -11,6 +11,7 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/auth"
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
+	"github.com/andrewsl105/fleetpocket/server/internal/nodes"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
@@ -41,13 +42,15 @@ type Server struct {
 	Projects *projects.Service
 	Auth     *auth.Manager
 	Hub      *events.Hub
-	GitHub   GitHub
-	Diff     DiffFunc
-	Webhook  http.Handler
-	Metrics  http.Handler
-	Health   func(ctx context.Context) map[string]error
-	Limiter  *auth.FailLimiter
-	Tickets  *auth.Tickets
+	// Nodes registers computers that run tasks; nil disables the endpoints.
+	Nodes   *nodes.Service
+	GitHub  GitHub
+	Diff    DiffFunc
+	Webhook http.Handler
+	Metrics http.Handler
+	Health  func(ctx context.Context) map[string]error
+	Limiter *auth.FailLimiter
+	Tickets *auth.Tickets
 	// Files serves attachments; nil disables the download endpoint.
 	Files *attachments.Files
 	Now   func() time.Time
@@ -99,6 +102,15 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/tasks/{id}/retry", a(s.control(s.Tasks.Retry)))
 	mux.HandleFunc("POST /api/v1/tasks/{id}/merge", a(s.control(s.Tasks.Merge)))
 	mux.HandleFunc("GET /api/v1/stats", a(s.stats))
+	if s.Nodes != nil {
+		mux.HandleFunc("GET /api/v1/nodes", a(s.listNodes))
+		mux.HandleFunc("POST /api/v1/nodes", a(s.createNode))
+		mux.HandleFunc("PATCH /api/v1/nodes/{id}", a(s.updateNode))
+		mux.HandleFunc("POST /api/v1/nodes/{id}/token", a(s.rotateNodeToken))
+		mux.HandleFunc("DELETE /api/v1/nodes/{id}", a(s.deleteNode))
+		// The node's own WebSocket: bearer node token, no session.
+		mux.HandleFunc("GET /api/v1/node/connect", s.Nodes.Serve)
+	}
 	mux.HandleFunc("POST /api/v1/ws/ticket", a(s.wsTicket))
 	mux.HandleFunc("GET /api/v1/ws", s.requireSessionOrTicket(s.websocket))
 

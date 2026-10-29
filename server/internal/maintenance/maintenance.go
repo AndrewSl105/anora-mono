@@ -11,15 +11,12 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
 )
 
-// Docker is the part of the runner manager cleanup needs.
-type Docker interface {
+// Host is the part of a task's host (hosts.Host) cleanup needs.
+type Host interface {
 	RemoveAll(ctx context.Context, taskID int64) error
 	RemoveSidecars(ctx context.Context, taskID int64) error
 	RemoveVolume(ctx context.Context, taskID int64) error
-}
-
-type Workspaces interface {
-	Remove(taskID int64) error
+	RemoveWorkspace(ctx context.Context, taskID int64) error
 }
 
 // Attachments is the attachment file store.
@@ -29,9 +26,10 @@ type Attachments interface {
 }
 
 type Maintainer struct {
-	Store              *store.Store
-	Docker             Docker
-	Workspaces         Workspaces
+	Store *store.Store
+	// Host returns a task's host, or false when it is a node that is offline
+	// (its cleanup waits for the next pass).
+	Host               func(t *store.Task) (Host, bool)
 	Attachments        Attachments // nil: no attachment cleanup
 	EventRetention     time.Duration
 	WorkspaceRetention time.Duration
@@ -78,14 +76,18 @@ func (m *Maintainer) Once(ctx context.Context) {
 	}
 	for _, t := range old {
 		log := slog.With("task_id", t.ID, "project", t.ProjectID)
-		if err := m.Docker.RemoveAll(ctx, t.ID); err != nil {
+		h, ok := m.Host(t)
+		if !ok {
+			continue
+		}
+		if err := h.RemoveAll(ctx, t.ID); err != nil {
 			log.Warn("cleanup containers", "err", err)
 		}
-		if err := m.Docker.RemoveVolume(ctx, t.ID); err != nil {
+		if err := h.RemoveVolume(ctx, t.ID); err != nil {
 			log.Warn("cleanup volume", "err", err)
 			continue
 		}
-		if err := m.Workspaces.Remove(t.ID); err != nil {
+		if err := h.RemoveWorkspace(ctx, t.ID); err != nil {
 			log.Warn("cleanup workspace", "err", err)
 			continue
 		}
@@ -108,7 +110,11 @@ func (m *Maintainer) Once(ctx context.Context) {
 		slog.Error("retention: idle tasks", "err", err)
 	}
 	for _, t := range idle {
-		if err := m.Docker.RemoveSidecars(ctx, t.ID); err != nil {
+		h, ok := m.Host(t)
+		if !ok {
+			continue
+		}
+		if err := h.RemoveSidecars(ctx, t.ID); err != nil {
 			slog.Warn("remove idle sidecars", "task_id", t.ID, "err", err)
 		}
 	}

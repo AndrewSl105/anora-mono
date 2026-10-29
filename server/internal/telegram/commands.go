@@ -456,6 +456,9 @@ func (b *Bot) renderDraft(ctx context.Context, d *store.TelegramDraft) string {
 	if d.Agent != "" {
 		fmt.Fprintf(&bld, "\nAgent: %s", agentName(d.Agent))
 	}
+	if d.Node != "" {
+		fmt.Fprintf(&bld, "\nRuns on: %s", b.nodeName(ctx, d.Node))
+	}
 	return bld.String()
 }
 
@@ -478,6 +481,16 @@ func (b *Bot) draftButtons(ctx context.Context, d *store.TelegramDraft) *telego.
 		}
 		rows = append(rows, tu.InlineKeyboardRow(
 			tu.InlineKeyboardButton(label).WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_agent", DraftID: d.ID})),
+		))
+	}
+	// Where to run: only once a computer is registered.
+	if nodes, err := b.Store.ListNodes(ctx); err == nil && len(nodes) > 0 {
+		label := "🖥 Runs on: project's"
+		if d.Node != "" {
+			label = "🖥 Runs on: " + b.nodeName(ctx, d.Node)
+		}
+		rows = append(rows, tu.InlineKeyboardRow(
+			tu.InlineKeyboardButton(label).WithCallbackData(b.callback(ctx, store.TelegramCallback{Action: "draft_node", DraftID: d.ID})),
 		))
 	}
 	return tu.InlineKeyboard(rows...)

@@ -18,6 +18,7 @@ tags:
   - name: auth
   - name: projects
   - name: tasks
+  - name: nodes
   - name: system
 
 paths:
@@ -321,7 +322,8 @@ paths:
                 repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
                 title: { type: string, description: Defaults to the first line of the prompt }
                 prompt: { type: string }
-                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the server" }
+                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the task's host" }
+                node: { type: string, description: "Where the task runs: `server` or a node id. Defaults to the project's host; 400 when the node is unknown or lacks the agent's credentials" }
           multipart/form-data:
             schema:
               type: object
@@ -332,7 +334,8 @@ paths:
                 repository_id: { type: integer, format: int64, description: Defaults to the project's default repository }
                 title: { type: string, description: Defaults to the first line of the prompt }
                 prompt: { type: string }
-                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the server" }
+                agent: { $ref: '#/components/schemas/Agent', description: "Defaults to the project's agent; 400 when the agent has no credentials on the task's host" }
+                node: { type: string, description: "Where the task runs: `server` or a node id. Defaults to the project's host; 400 when the node is unknown or lacks the agent's credentials" }
                 'files[]':
                   type: array
                   maxItems: 10
@@ -602,6 +605,123 @@ paths:
                   cost_usd_today: { type: number }
                   cost_usd_month: { type: number }
 
+  /api/v1/nodes:
+    get:
+      operationId: listNodes
+      tags: [nodes]
+      summary: Computers that run tasks next to the server
+      responses:
+        '200':
+          description: Nodes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: '#/components/schemas/Node' } }
+    post:
+      operationId: createNode
+      tags: [nodes]
+      summary: Register a computer
+      description: Returns the node's token once; the server keeps only its hash.
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              additionalProperties: false
+              properties:
+                id: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,31}$', description: Slug; not `server` }
+                name: { type: string, description: Defaults to the id }
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [node, token]
+                properties:
+                  node: { $ref: '#/components/schemas/Node' }
+                  token: { type: string, description: 'fpn_<id>.<secret>, shown once' }
+        '400': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/nodes/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    patch:
+      operationId: updateNode
+      tags: [nodes]
+      summary: Rename a computer or change how many tasks it runs at once
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name: { type: string }
+                max_concurrent: { type: integer, minimum: 1, maximum: 32 }
+      responses:
+        '200':
+          description: Updated
+          content: { application/json: { schema: { $ref: '#/components/schemas/Node' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: deleteNode
+      tags: [nodes]
+      summary: Remove a computer
+      description: 409 while tasks that are not finished run on it.
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200': { $ref: '#/components/responses/OK' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+
+  /api/v1/nodes/{id}/token:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string } }
+    post:
+      operationId: rotateNodeToken
+      tags: [nodes]
+      summary: Issue a new token (the old one stops working)
+      parameters: [{ $ref: '#/components/parameters/XRequestedWith' }]
+      responses:
+        '200':
+          description: New token
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token]
+                properties:
+                  token: { type: string }
+        '404': { $ref: '#/components/responses/Error' }
+
+  /api/v1/node/connect:
+    get:
+      operationId: connectNode
+      tags: [nodes]
+      summary: The node's WebSocket (fleetpocket-node only; see docs/design/remote-nodes.md)
+      security: []
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema: { type: string }
+          description: 'Bearer fpn_<id>.<secret>'
+      responses:
+        '101': { description: Switching protocols }
+        '401': { description: Invalid node token }
+
   /api/v1/ws/ticket:
     post:
       operationId: createWebSocketTicket
@@ -760,6 +880,7 @@ components:
           type: [string, 'null']
           enum: [claude, codex, cursor, '', null]
           description: Agent for the project's tasks; empty or null uses the server's default_agent
+        node: { type: [string, 'null'], description: "Where the project's tasks run: a node id; null, empty or `server` is the server" }
         model: { type: [string, 'null'], description: Model of the project's agent; tasks that override the agent use that agent's default }
         max_turns: { type: [integer, 'null'] }
         max_budget_usd: { type: [number, 'null'] }
@@ -780,6 +901,7 @@ components:
         env: { type: object, additionalProperties: { type: string } }
         runner_image: { type: [string, 'null'] }
         agent: { type: [string, 'null'], enum: [claude, codex, cursor, null], description: null uses the server's default_agent }
+        node: { type: [string, 'null'], description: Node that runs the project's tasks; null is the server }
         model: { type: [string, 'null'] }
         max_turns: { type: [integer, 'null'] }
         max_budget_usd: { type: [number, 'null'] }
@@ -818,13 +940,32 @@ components:
         private: { type: boolean }
         installation_id: { type: integer, format: int64 }
 
+    Node:
+      type: object
+      required: [id, name, max_concurrent, agents, platform, version, last_seen_at, created_at, updated_at, online, active_tasks]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        max_concurrent: { type: integer, description: Tasks it runs at once }
+        agents:
+          type: array
+          items: { $ref: '#/components/schemas/Agent' }
+          description: Agents with credentials on the node, reported when it connects
+        platform: { type: string, example: darwin/arm64 }
+        version: { type: string }
+        last_seen_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        online: { type: boolean }
+        active_tasks: { type: integer, description: Tasks preparing, running, waiting for input or pushing on it }
+
     TaskStatus:
       type: string
       enum: [queued, preparing, running, waiting_input, paused, pushing, pr_open, completed, failed, cancelled]
 
     Task:
       type: object
-      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, agent, created_at, updated_at, last_activity, last_activity_at, queued_message]
+      required: [id, project_id, repository_id, title, prompt, status, cost_usd_total, turns, source, agent, node, created_at, updated_at, last_activity, last_activity_at, queued_message]
       properties:
         id: { type: integer, format: int64 }
         project_id: { type: string }
@@ -842,6 +983,7 @@ components:
         turns: { type: integer, description: Agent turns across all runs }
         source: { type: string, enum: [web, telegram, api] }
         agent: { $ref: '#/components/schemas/Agent', description: 'Fixed when the task is created: the request''s agent, else the project''s, else the server default' }
+        node: { type: [string, 'null'], description: 'Node the task runs on, fixed when it is created; null is the server' }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         finished_at: { type: [string, 'null'], format: date-time }

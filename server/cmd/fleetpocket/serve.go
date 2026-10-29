@@ -17,8 +17,10 @@ import (
 	"github.com/andrewsl105/fleetpocket/server/internal/config"
 	"github.com/andrewsl105/fleetpocket/server/internal/events"
 	"github.com/andrewsl105/fleetpocket/server/internal/githubapp"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/maintenance"
 	"github.com/andrewsl105/fleetpocket/server/internal/metrics"
+	"github.com/andrewsl105/fleetpocket/server/internal/nodes"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/runnermgr"
 	"github.com/andrewsl105/fleetpocket/server/internal/scheduler"
@@ -56,14 +58,39 @@ func runServe() error {
 	ws := &workspace.Manager{Dir: cfg.WorkspacesDir}
 	files := &attachments.Files{Dir: cfg.AttachmentsDir}
 
+	local := &hosts.Local{
+		Docker: docker, Workspace: ws, AttachmentsDir: files.TaskDir, AgentEnv: cfg.AgentEnv,
+	}
+	if cfg.SecretsScan == "gitleaks" {
+		local.Scanner = workspace.Gitleaks("gitleaks")
+	}
+	registry := &hosts.Registry{Local: local, MaxSeq: st.MaxSeq}
+
 	met := metrics.New(st)
 	hub := events.NewHub()
 	taskSvc := &tasks.Service{Store: st, Hub: hub, Files: files, DefaultAgent: cfg.DefaultAgent, AgentEnabled: cfg.AgentEnabled}
 	sched := scheduler.New(&scheduler.Scheduler{
-		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Docker: docker, Workspace: ws, Files: files,
+		Cfg: cfg, Store: st, Hub: hub, Tasks: taskSvc, Hosts: registry, Files: files,
 		Hooks: scheduler.Hooks{RunFinished: met.RunFinished},
 	})
 	taskSvc.Executor = sched
+	nodeSvc := &nodes.Service{Store: st, Hub: hub, Registry: registry}
+	registry.OnChange = func(id string, online bool) {
+		nodeSvc.Changed(id, online)
+		if online {
+			sched.Wake() // its queued tasks may start now
+		}
+	}
+	registry.OnConnect = func(ctx context.Context, h *hosts.Remote, runners []runnermgr.ContainerInfo) {
+		sched.ReconcileNode(ctx, h, runners)
+	}
+	// hostOf resolves a task's host; offline nodes report false.
+	hostOf := func(t *store.Task) (maintenance.Host, bool) {
+		if t.Node != nil && !registry.IsOnline(*t.Node) {
+			return nil, false
+		}
+		return registry.For(t.Node), true
+	}
 
 	var gh *githubapp.App
 	var webhook http.Handler
@@ -75,14 +102,17 @@ func runServe() error {
 		gh.OnError = met.GitHubError
 		taskSvc.GitHub = gh
 		ws.Auth = gh.Token
-		var scanner workspace.SecretsScanner
-		if cfg.SecretsScan == "gitleaks" {
-			scanner = workspace.Gitleaks("gitleaks")
-		}
-		sched.Publisher = &githubapp.Publisher{App: gh, Workspace: ws, Scanner: scanner, TaskURL: taskURL(cfg)}
+		registry.Auth = gh.Token
+		sched.Publisher = &githubapp.Publisher{App: gh, RequireScanner: cfg.SecretsScan == "gitleaks", TaskURL: taskURL(cfg)}
 		webhook = &githubapp.Webhook{
 			Secret: []byte(cfg.GitHubWebhookSecret), Store: st, Hub: hub, Tasks: taskSvc,
-			Cleanup: func(ctx context.Context, id int64) { _ = docker.RemoveAll(ctx, id) },
+			Cleanup: func(ctx context.Context, id int64) {
+				if t, err := st.GetTask(ctx, id); err == nil {
+					if h, ok := hostOf(t); ok {
+						_ = h.RemoveAll(ctx, id)
+					}
+				}
+			},
 			OnCIFailed: func(ctx context.Context, f githubapp.CIFailure) {
 				// Hook point for automatic CI fixing (not in v1).
 				slog.Info("CI failed", "task_id", f.Task.ID, "check", f.Name)
@@ -104,9 +134,10 @@ func runServe() error {
 			SessionSecret: []byte(cfg.SessionSecret), CookieInsecure: cfg.CookieInsecure,
 		},
 		Hub:   hub,
+		Nodes: nodeSvc,
 		Files: files,
 		Diff: func(ctx context.Context, t *store.Task, repo *store.Repository, limit int) (string, bool, error) {
-			return ws.Diff(ctx, t.ID, repo.BaseBranch, limit)
+			return registry.For(t.Node).Diff(ctx, t.ID, repo.BaseBranch, limit)
 		},
 		Health: func(ctx context.Context) map[string]error {
 			return map[string]error{"database": st.Ping(ctx), "docker": docker.Ping(ctx)}
@@ -145,7 +176,7 @@ func runServe() error {
 	go func() {
 		defer wg.Done()
 		(&maintenance.Maintainer{
-			Store: st, Docker: docker, Workspaces: ws, Attachments: files,
+			Store: st, Host: hostOf, Attachments: files,
 			EventRetention: cfg.EventRetention, WorkspaceRetention: cfg.WorkspaceRetention, SidecarIdleTTL: cfg.SidecarIdleTTL,
 		}).Run(ctx)
 	}()

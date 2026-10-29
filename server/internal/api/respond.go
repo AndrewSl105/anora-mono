@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
+	"github.com/andrewsl105/fleetpocket/server/internal/nodes"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -38,7 +40,7 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, store.ErrConflict):
 		writeError(w, http.StatusConflict, "conflict", err.Error())
-	case errors.Is(err, tasks.ErrInvalid), errors.Is(err, projects.ErrInvalid):
+	case errors.Is(err, tasks.ErrInvalid), errors.Is(err, projects.ErrInvalid), errors.Is(err, nodes.ErrInvalid):
 		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 	case errors.Is(err, tasks.ErrNotRunning):
 		writeError(w, http.StatusConflict, "not_running", err.Error())
@@ -46,6 +48,8 @@ func writeErr(w http.ResponseWriter, r *http.Request, err error) {
 		writeError(w, http.StatusConflict, "not_mergeable", err.Error())
 	case errors.Is(err, errGitHubDisabled), errors.Is(err, tasks.ErrGitHubDisabled):
 		writeError(w, http.StatusServiceUnavailable, "github_disabled", err.Error())
+	case errors.Is(err, hosts.ErrOffline):
+		writeError(w, http.StatusServiceUnavailable, "host_offline", "the computer this task runs on is offline")
 	default:
 		slog.ErrorContext(r.Context(), "request failed", "method", r.Method, "path", r.URL.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, "internal", "internal error")

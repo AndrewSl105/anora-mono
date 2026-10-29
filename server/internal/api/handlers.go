@@ -10,6 +10,7 @@ import (
 
 	"github.com/andrewsl105/fleetpocket/server/internal/attachments"
 	"github.com/andrewsl105/fleetpocket/server/internal/auth"
+	"github.com/andrewsl105/fleetpocket/server/internal/hosts"
 	"github.com/andrewsl105/fleetpocket/server/internal/projects"
 	"github.com/andrewsl105/fleetpocket/server/internal/store"
 	"github.com/andrewsl105/fleetpocket/server/internal/tasks"
@@ -274,7 +275,7 @@ func (s *Server) listTasks(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	var in tasks.CreateInput
 	if isMultipart(r) {
-		f, imgs, ok := readMultipart(w, r, "project_id", "repository_id", "title", "prompt", "agent")
+		f, imgs, ok := readMultipart(w, r, "project_id", "repository_id", "title", "prompt", "agent", "node")
 		if !ok {
 			return
 		}
@@ -283,7 +284,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "invalid", err.Error())
 			return
 		}
-		in = tasks.CreateInput{ProjectID: f["project_id"], RepositoryID: repoID, Title: f["title"], Prompt: f["prompt"], Agent: f["agent"], Images: imgs}
+		in = tasks.CreateInput{ProjectID: f["project_id"], RepositoryID: repoID, Title: f["title"], Prompt: f["prompt"], Agent: f["agent"], Node: f["node"], Images: imgs}
 	} else if !decode(w, r, &in) {
 		return
 	}
@@ -407,6 +408,10 @@ func (s *Server) taskDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	diff, truncated, err := s.Diff(r.Context(), t, repo, maxDiff)
+	if errors.Is(err, hosts.ErrOffline) {
+		writeErr(w, r, err)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusConflict, "no_workspace", err.Error())
 		return

@@ -11,27 +11,30 @@ import (
 )
 
 type Task struct {
-	ID           int64      `json:"id"`
-	ProjectID    string     `json:"project_id"`
-	RepositoryID int64      `json:"repository_id"`
-	Title        string     `json:"title"`
-	Prompt       string     `json:"prompt"`
-	Status       string     `json:"status"`
-	StatusReason *string    `json:"status_reason"`
-	Branch       *string    `json:"branch"`
-	SessionID    *string    `json:"session_id"`
-	PRNumber     *int       `json:"pr_number"`
-	PRURL        *string    `json:"pr_url"`
-	CIStatus     *string    `json:"ci_status"`
-	CostUSDTotal float64    `json:"cost_usd_total"`
-	Turns        int        `json:"turns"`
-	Source       string     `json:"source"`
-	Agent        string     `json:"agent"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	FinishedAt   *time.Time `json:"finished_at"`
-	PausedAt     *time.Time `json:"paused_at"`
-	CleanedAt    *time.Time `json:"-"`
+	ID           int64   `json:"id"`
+	ProjectID    string  `json:"project_id"`
+	RepositoryID int64   `json:"repository_id"`
+	Title        string  `json:"title"`
+	Prompt       string  `json:"prompt"`
+	Status       string  `json:"status"`
+	StatusReason *string `json:"status_reason"`
+	Branch       *string `json:"branch"`
+	SessionID    *string `json:"session_id"`
+	PRNumber     *int    `json:"pr_number"`
+	PRURL        *string `json:"pr_url"`
+	CIStatus     *string `json:"ci_status"`
+	CostUSDTotal float64 `json:"cost_usd_total"`
+	Turns        int     `json:"turns"`
+	Source       string  `json:"source"`
+	Agent        string  `json:"agent"`
+	// Node is the computer the task runs on; nil is the server. Fixed when
+	// the task is created (its workspace and session live there).
+	Node       *string    `json:"node"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
+	FinishedAt *time.Time `json:"finished_at"`
+	PausedAt   *time.Time `json:"paused_at"`
+	CleanedAt  *time.Time `json:"-"`
 
 	// LastActivity is the latest tool_use summary or status change, one line.
 	LastActivity   *string    `json:"last_activity"`
@@ -48,13 +51,13 @@ type Task struct {
 
 const taskCols = `id, project_id, repository_id, title, prompt, status, status_reason, branch, session_id,
 	pr_number, pr_url, ci_status, cost_usd_total::float8, turns, source, created_at, updated_at, finished_at, paused_at, cleaned_at,
-	last_activity, last_activity_at, queued_message, agent`
+	last_activity, last_activity_at, queued_message, agent, node`
 
 func scanTask(row interface{ Scan(...any) error }) (*Task, error) {
 	var t Task
 	err := row.Scan(&t.ID, &t.ProjectID, &t.RepositoryID, &t.Title, &t.Prompt, &t.Status, &t.StatusReason, &t.Branch,
 		&t.SessionID, &t.PRNumber, &t.PRURL, &t.CIStatus, &t.CostUSDTotal, &t.Turns, &t.Source, &t.CreatedAt, &t.UpdatedAt,
-		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt, &t.QueuedMessage, &t.Agent)
+		&t.FinishedAt, &t.PausedAt, &t.CleanedAt, &t.LastActivity, &t.LastActivityAt, &t.QueuedMessage, &t.Agent, &t.Node)
 	if err != nil {
 		return nil, err
 	}
@@ -68,9 +71,9 @@ func (s *Store) CreateTask(ctx context.Context, t Task, up *Upload) (*Task, erro
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
 		var err error
 		out, err = scanTask(tx.QueryRow(ctx, `INSERT INTO tasks (project_id, repository_id, title, prompt, status, source,
-				last_activity, last_activity_at, agent)
-			VALUES ($1, $2, $3, $4, 'queued', $5, 'queued', now(), coalesce(nullif($6, ''), 'claude')) RETURNING `+taskCols,
-			t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source, t.Agent))
+				last_activity, last_activity_at, agent, node)
+			VALUES ($1, $2, $3, $4, 'queued', $5, 'queued', now(), coalesce(nullif($6, ''), 'claude'), $7) RETURNING `+taskCols,
+			t.ProjectID, t.RepositoryID, t.Title, t.Prompt, t.Source, t.Agent, t.Node))
 		if err != nil {
 			return err
 		}
@@ -369,24 +372,36 @@ func (s *Store) MarkCleaned(ctx context.Context, id int64) error {
 	return err
 }
 
-// ClaimNext moves the oldest queued task to preparing when fewer than max
-// tasks are active. Returns nil when nothing was claimed.
-func (s *Store) ClaimNext(ctx context.Context, max int) (*Task, error) {
+// ClaimNext moves the oldest queued task whose host has room to preparing:
+// server tasks (node NULL) count against max, a node's tasks against that
+// node's max_concurrent, and tasks of nodes not in online wait. Returns nil
+// when nothing was claimed.
+func (s *Store) ClaimNext(ctx context.Context, max int, online []string) (*Task, error) {
 	var out *Task
+	if online == nil {
+		online = []string{}
+	}
 	err := s.Tx(ctx, func(tx pgx.Tx) error {
-		// Serialise claimers so the active count cannot race.
+		// Serialise claimers so the active counts cannot race.
 		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(7413001)`); err != nil {
 			return err
 		}
-		var active int
-		if err := tx.QueryRow(ctx, `SELECT count(*) FROM tasks WHERE status IN ('preparing', 'running', 'waiting_input', 'pushing')`).Scan(&active); err != nil {
-			return err
-		}
-		if active >= max {
-			return nil
-		}
 		var id int64
-		err := tx.QueryRow(ctx, `SELECT id FROM tasks WHERE status = 'queued' ORDER BY updated_at, id LIMIT 1 FOR UPDATE SKIP LOCKED`).Scan(&id)
+		err := tx.QueryRow(ctx, `
+			WITH active AS (
+				SELECT coalesce(node, '') AS host, count(*) AS n FROM tasks
+				WHERE status IN ('preparing', 'running', 'waiting_input', 'pushing')
+				GROUP BY 1
+			), room AS (
+				SELECT '' AS host WHERE coalesce((SELECT n FROM active WHERE host = ''), 0) < $1
+				UNION ALL
+				SELECT nd.id FROM nodes nd
+				WHERE nd.id = ANY($2::text[])
+				  AND coalesce((SELECT n FROM active WHERE host = nd.id), 0) < nd.max_concurrent
+			)
+			SELECT t.id FROM tasks t
+			WHERE t.status = 'queued' AND coalesce(t.node, '') IN (SELECT host FROM room)
+			ORDER BY t.updated_at, t.id LIMIT 1 FOR UPDATE OF t SKIP LOCKED`, max, online).Scan(&id)
 		if err == pgx.ErrNoRows {
 			return nil
 		}
